@@ -1,6 +1,9 @@
 import type { PlanQuota, QuotaWindow } from './api';
 import { formatDate, t } from './i18n';
 
+// A legacy wire value, independent of the interface language.
+const LEGACY_ACCOUNT_QUOTA_SCOPE = '全部模型';
+
 /** Colour class for a bar: calm under half, warning past it, danger when nearly full. */
 export function quotaLevel(usedPercent: number): 'ok' | 'warn' | 'danger' {
   return usedPercent >= 80 ? 'danger' : usedPercent >= 50 ? 'warn' : 'ok';
@@ -55,11 +58,23 @@ export function periodName(label: string): string {
 export function quotaGroups(windows: QuotaWindow[]): Array<{ scope?: string; windows: QuotaWindow[] }> {
   const groups: Array<{ scope?: string; windows: QuotaWindow[] }> = [];
   for (const w of windows) {
-    const group = groups.find((g) => g.scope === w.scope);
+    // Keep readings from older servers and caches in the same account-wide pool.
+    const scope = w.scope === LEGACY_ACCOUNT_QUOTA_SCOPE ? undefined : w.scope;
+    const group = groups.find((g) => g.scope === scope);
     if (group) group.windows.push(w);
-    else groups.push({ scope: w.scope, windows: [w] });
+    else groups.push({ scope, windows: [w] });
   }
   return groups.sort((a, b) => Number(a.scope !== undefined) - Number(b.scope !== undefined));
+}
+
+/** Keep short and weekly readings side by side, without inventing a value for a missing window. */
+export function quotaSlots(windows: QuotaWindow[]): Array<{ label: string; window?: QuotaWindow }> {
+  const labels = [...new Set(windows.map(window => window.label))].sort((a, b) => periodLength(a) - periodLength(b));
+  const periods = labels.includes('5H') || labels.includes('7D') ? ['5H', '7D', ...labels.filter(label => label !== '5H' && label !== '7D')] : labels;
+  return periods.flatMap(label => {
+    const matches = windows.filter(window => window.label === label);
+    return matches.length ? matches.map(window => ({ label, window })) : [{ label }];
+  });
 }
 
 /** When a window resets, as short as a table cell allows: "14:40" today, "10/12" later. */

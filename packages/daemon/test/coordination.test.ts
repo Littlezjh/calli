@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawn as spawnProcess } from 'node:child_process';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -10,6 +11,8 @@ import { ThreadManager } from '../src/threads.js';
 import { AttachmentStore } from '../src/attachments.js';
 import { PiRpcAdapter } from '../src/adapters/pi.js';
 import { ClaudeAcpAdapter } from '../src/adapters/claude.js';
+import { DshAcpAdapter } from '../src/adapters/dsh.js';
+import { DoubaoAdapter } from '../src/adapters/doubao.js';
 import { CodexAppServerAdapter } from '../src/adapters/codex.js';
 import { AgyAdapter } from '../src/adapters/agy.js';
 import { TraexAcpAdapter } from '../src/adapters/traex.js';
@@ -33,18 +36,22 @@ async function setup() {
     ['codex', new CodexAppServerAdapter([process.execPath, join(fixtures, 'fake-codex.mjs')])],
     ['agy', new AgyAdapter([process.execPath, join(fixtures, 'fake-agy.mjs')])],
     ['traex', new TraexAcpAdapter([process.execPath, join(fixtures, 'fake-acp.mjs')])],
+    ['dsh', new DshAcpAdapter([process.execPath, join(fixtures, 'fake-acp.mjs')], { FAKE_ACP_FLAVOR: 'dsh' })],
+    ['doubao', new DoubaoAdapter([process.execPath, join(fixtures, 'fake-doubao.mjs')])],
   ]);
   const store = new Store(dir);
-  const manager = new ThreadManager(store, adapters, [cwd, other], new AttachmentStore(dir));
+  /** Mutable, so a test can make an instance hidden or account-linked after the fact. */
+  const meta: Array<{ id: string; adapter?: string; account?: string | null; hidden?: boolean }> = [];
+  const manager = new ThreadManager(store, adapters, [cwd, other], new AttachmentStore(dir), () => meta);
   const socket = join(dir, 'ipc', 'calli.sock');
-  const team = new CoordinationManager(store, manager, socket);
+  const team = new CoordinationManager(store, manager, socket, { exchangeRoot: join(dir, 'exchange'), resultDir: join(dir, 'results') });
   const local = coordinationServer(team); await listenPrivate(local, socket);
   const server = createHttpServer({ manager, token: 'test-token', webDir: null, version: 'test' });
   await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const api = (path: string, body?: unknown, token = 'test-token') => fetch(base + path, { method: body ? 'POST' : 'GET', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, ...(body ? { body: JSON.stringify(body) } : {}) });
   const root = await manager.createThread({ agent: 'pi', cwd });
-  return { dir, cwd, other, store, manager, team, root, api, async close() { team.dispose(); await manager.shutdown(); await new Promise<void>(r => local.close(() => r())); await new Promise<void>(r => server.close(() => r())); store.close(); rmSync(dir, { recursive: true, force: true }); } };
+  return { dir, cwd, other, store, manager, team, root, api, adapters, meta, async close() { team.dispose(); await manager.shutdown(); await new Promise<void>(r => local.close(() => r())); await new Promise<void>(r => server.close(() => r())); store.close(); rmSync(dir, { recursive: true, force: true }); } };
 }
 const spawn = (name: string, agent = 'pi', text = 'hello', extra = {}) => ({ op: 'spawn', name, agent, text, requestId: name, ...extra });
 
@@ -82,7 +89,7 @@ test('coordination preserves slash commands and their arguments while enriching 
 test('each advertised adapter passes the runtime environment to its fixture', async () => {
   const h = await setup();
   try {
-    for (const agent of ['pi', 'claude', 'codex', 'agy', 'traex']) {
+    for (const agent of ['pi', 'claude', 'codex', 'agy', 'traex', 'dsh', 'doubao']) {
       const thread = await h.manager.createThread({ agent, cwd: h.cwd });
       await h.team.enable(thread.id);
       await h.manager.startTurn(thread.id, { text: 'CALLI_ENV' });
@@ -310,6 +317,39 @@ test('members start with the model and effort chosen for their instance, unless 
   } finally { await h.close(); }
 });
 
+test('an instance that joins the hub after the collaboration started is offered to it', async () => {
+  const h = await setup();
+  try {
+    await h.team.enable(h.root.id);
+    assert.equal(h.team.view(h.root.id)!.agents.includes('late'), false);
+    // The hub joins two more instances: a second copy of a CLI, and one hidden on purpose.
+    h.adapters.set('late', new PiRpcAdapter([process.execPath, join(fixtures, 'fake-pi.mjs')]));
+    h.adapters.set('shy', new PiRpcAdapter([process.execPath, join(fixtures, 'fake-pi.mjs')]));
+    h.meta.push({ id: 'shy', hidden: true });
+    // Still the old roster until something uses the team.
+    assert.equal(h.team.view(h.root.id)!.agents.includes('late'), false);
+    // A mention of the latecomer is accepted and brings it onto the roster; the hidden one is not.
+    const text = await h.team.previewMentions(h.root.id, 'do it', [{ kind: 'agent', id: 'late', label: 'late' }]);
+    assert.match(text, /"agent":"late"/);
+    assert.equal(h.team.view(h.root.id)!.agents.includes('late'), true);
+    assert.equal(h.team.view(h.root.id)!.agents.includes('shy'), false);
+    await assert.rejects(h.team.previewMentions(h.root.id, 'no', [{ kind: 'agent', id: 'shy', label: 'shy' }]), /实例不在本次协作中/);
+    await assert.rejects(h.team.previewMentions(h.root.id, 'no', [{ kind: 'agent', id: 'ghost', label: 'ghost' }]), /实例不在本次协作中/);
+    // The same through a whole turn, the path the page takes, and through the lead's own spawn.
+    await h.manager.startTurn(h.root.id, { text: 'go', mentions: [{ kind: 'agent', id: 'late', label: 'late' }] });
+    await wait(() => h.manager.threadView(h.root.id).status !== 'running');
+    const started = h.store.listEvents(h.root.id, 0, -1).filter(e => e.type === 'turn.started').at(-1)!;
+    assert.match(String(started.data.text), /"agent":"late"/);
+    const job = await h.team.command(h.root.id, spawn('latecomer', 'late')) as any;
+    assert.equal(h.manager.threadView(job.to).agent, 'late');
+    await assert.rejects(h.team.command(h.root.id, spawn('quiet', 'shy')), /实例不在本次协作范围内/);
+    // The lead's own list of instances says the same.
+    const agents = await h.team.command(h.root.id, { op: 'agents' }) as any[];
+    assert.ok(agents.some(a => a.id === 'late'));
+    assert.ok(!agents.some(a => a.id === 'shy'));
+  } finally { await h.close(); }
+});
+
 test('members run with full access unless the team says otherwise, and a change reaches the members there are', async () => {
   const h = await setup();
   try {
@@ -394,7 +434,11 @@ test('running unconfigured threads queue collaboration without refreshing until 
   const h = await setup();
   try {
     await h.manager.startTurn(h.root.id, { text: 'slow' });
-    const mentions = [{ id: 'claude', label: 'Claude Code', kind: 'agent', task: '只给建议' }];
+    const mentions = [
+      { id: 'claude', label: 'Claude Code', kind: 'agent', task: '只给建议' },
+      // No task of its own: the lead assigns it, and the queue's chip should not name it.
+      { id: 'pi', label: 'pi', kind: 'agent' },
+    ];
     const earlier = await h.manager.startTurn(h.root.id, { text: 'slow earlier', queue: true });
     assert.ok('queued' in earlier);
     const response = await h.api(`/api/threads/${h.root.id}/turns`, { text: '一起分析', mentions, queue: true,
@@ -403,8 +447,7 @@ test('running unconfigured threads queue collaboration without refreshing until 
     const queued = await response.json() as { id: string };
     assert.equal(h.team.view(h.root.id), null);
     assert.equal(h.manager.threadView(h.root.id).status, 'running');
-    assert.deepEqual(h.manager.threadView(h.root.id).queued[1].targets, ['Claude Code']);
-    await h.manager.cancelTurn(h.root.id, { keepQueue: true });
+    assert.deepEqual(h.manager.threadView(h.root.id).queued[1].targets, ['Claude Code']);    await h.manager.cancelTurn(h.root.id, { keepQueue: true });
     await wait(() => h.store.listEvents(h.root.id, 0, -1).some(e => e.type === 'turn.started' && e.data.text === 'slow earlier'));
     assert.equal(h.team.view(h.root.id), null, 'an earlier queued turn must not gain collaboration');
     await h.manager.cancelTurn(h.root.id, { keepQueue: true });
@@ -527,6 +570,7 @@ async function otherMachine() {
   let online = true;
   const hosts: RemoteHosts = {
     list: () => [{ id: 'devbox', label: 'Devbox', status: online ? 'online' : 'offline' }],
+    exec: (_id, command, opts) => localExec(command, opts),
     async call<T>(_id: string, method: string, path: string, body?: unknown): Promise<T> {
       if (!online) throw new HttpError(502, 'this machine is not connected', { code: 'host_offline' });
       const res = await fetch(base + path, { method, headers: { Authorization: 'Bearer node-token', 'Content-Type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
@@ -535,8 +579,22 @@ async function otherMachine() {
       return value as T;
     },
   };
-  return { cwd, store, manager, hosts, setOnline(v: boolean) { online = v; },
+  return { base, dir, cwd, store, manager, hosts, setOnline(v: boolean) { online = v; },
     async close() { await manager.shutdown(); await new Promise<void>(r => server.close(() => r())); store.close(); rmSync(dir, { recursive: true, force: true }); } };
+}
+
+/** ssh is a local sh here: the machine's folders are this machine's folders. */
+function localExec(command: string, opts: { input?: string } = {}): Promise<{ stdout: Buffer; stderr: string; code: number }> {
+  return new Promise((resolve, reject) => {
+    const child = spawnProcess('sh', ['-c', command], { stdio: ['pipe', 'pipe', 'pipe'] });
+    const out: Buffer[] = [];
+    let stderr = '';
+    child.stdout.on('data', (chunk: Buffer) => out.push(chunk));
+    child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString('utf8'); });
+    child.on('error', reject);
+    child.on('exit', (code) => resolve({ stdout: Buffer.concat(out), stderr, code: code ?? 255 }));
+    child.stdin.end(opts.input ?? '');
+  });
 }
 
 test('a member on another machine runs there and its answer comes back to the lead', async () => {
@@ -580,6 +638,170 @@ test('a member on another machine runs there and its answer comes back to the le
   } finally { await h.close(); await far.close(); }
 });
 
+test('a remote member reads its task from a handoff file, writes a result file, and the lead gets both', async () => {
+  const h = await setup();
+  const far = await otherMachine();
+  try {
+    h.team.hosts = far.hosts;
+    await h.team.enable(h.root.id);
+    // The member leaves its report as soon as it has the handoff, as a real one would while working.
+    const plainExec = far.hosts.exec;
+    far.hosts.exec = async (id, command, opts) => {
+      const run = await plainExec(id, command, opts);
+      if (command.includes('handoff.md') && opts?.input) {
+        const dir = opts.input.split('\n')[0];
+        writeFileSync(join(dir, 'result.md'), '# REPORT\n\nall done\n', { mode: 0o600 });
+      }
+      return run;
+    };
+    const delivery = await h.team.command(h.root.id, spawn('far', 'pi@devbox', 'SHORT_INSTRUCTION', {
+      cwd: far.cwd, handoff: '# 交接\n\n实现 REMOTE_RULE', requestId: 'far-handoff',
+    })) as { id: string };
+    // The file is read after the turn ends, so the result message is the sign that both are in.
+    await wait(() => h.team.view(h.root.id)!.messages.some(m => m.kind === 'result' && m.resultFile));
+    const member = h.team.view(h.root.id)!.members[0];
+    const dir = join(h.dir, 'exchange', h.root.id, delivery.id);
+    const handoff = readFileSync(join(dir, 'handoff.md'), 'utf8');
+    assert.match(handoff, /REMOTE_RULE/, 'the explicit handoff file is the task');
+    assert.match(handoff, new RegExp(join(dir, 'result.md')), 'and it says where the result goes');
+    const started = far.store.listEvents(member.id, 0, -1).find(e => e.type === 'turn.started');
+    assert.match(String(started?.data.text), /交接文件/, 'the member is pointed at the file');
+    assert.match(String(started?.data.text), /SHORT_INSTRUCTION/, 'the message itself stays short');
+    assert.ok(String(started?.data.text).includes(join(dir, 'handoff.md')));
+    // The result comes back as a file, and the hub keeps its own copy for the page.
+    const view = h.team.view(h.root.id)!;
+    const result = view.messages.find(m => m.kind === 'result' && m.from === member.id)!;
+    assert.ok(result.resultFile, 'the result names the file');
+    assert.equal(result.resultFile!.name, 'result.md');
+    assert.ok(!result.text.includes('结果文件：'), 'the page uses the button instead of a folder name');
+    const rawResult = await h.team.command(h.root.id, { op: 'result', target: result.id }) as { text: string };
+    assert.match(rawResult.text, /结果文件：/, 'the agent-facing result keeps the path');
+    const local = join(h.dir, 'results', h.root.id, `${delivery.id}.md`);
+    assert.equal(readFileSync(local, 'utf8'), '# REPORT\n\nall done\n');
+    // The lead reads the same copy through calli result, which is what it can open with its own tools.
+    const raw = await h.team.command(h.root.id, { op: 'result', target: delivery.id }) as { resultFile?: { localPath: string } };
+    assert.equal(raw.resultFile?.localPath, local);
+    const res = await h.api(`/api/threads/${h.root.id}/coordination/result/${delivery.id}`);
+    assert.equal(res.status, 200);
+    assert.equal(await res.text(), '# REPORT\n\nall done\n');
+    assert.equal((await h.api(`/api/threads/${h.root.id}/coordination/result/${delivery.id}`, undefined, 'wrong')).status, 401);
+    assert.equal((await h.api(`/api/threads/${h.root.id}/coordination/result/${'0'.repeat(36)}`)).status, 404);
+  } finally { await h.close(); await far.close(); }
+});
+
+test('the calli CLI carries a local handoff file to the member machine', async () => {
+  const h = await setup();
+  const far = await otherMachine();
+  try {
+    h.team.hosts = far.hosts;
+    await h.team.enable(h.root.id);
+    const file = join(h.dir, 'task.md');
+    writeFileSync(file, '# CLI 交接\n\nCLI_RULE 请按文件执行\n');
+    // The same directive the fake agent's CLI runs: the flag is read by bin/calli, not by the hub.
+    const directive = Buffer.from(JSON.stringify({
+      args: ['spawn', '--agent', 'pi@devbox', '--name', 'cli-far', '--cwd', far.cwd, '--handoff-file', file, '--request-id', 'cli-far'],
+      text: '',
+    })).toString('base64');
+    await h.manager.startTurn(h.root.id, { text: `CALLI_COMMAND:${directive}` });
+    await wait(() => h.team.view(h.root.id)!.members.length === 1);
+    const member = h.team.view(h.root.id)!.members[0];
+    await wait(() => h.team.view(h.root.id)!.messages.some(m => m.to === member.id && m.state === 'returned'));
+    const delivery = h.team.view(h.root.id)!.messages.find(m => m.to === member.id)!;
+    const handoff = readFileSync(join(h.dir, 'exchange', h.root.id, delivery.id, 'handoff.md'), 'utf8');
+    assert.match(handoff, /CLI_RULE/, 'the local file is the task');
+    const started = far.store.listEvents(member.id, 0, -1).find(e => e.type === 'turn.started');
+    assert.match(String(started?.data.text), /CLI_RULE/, 'and the member is pointed at it');
+    assert.ok(String(started?.data.text).includes(join(h.dir, 'exchange', h.root.id, delivery.id, 'handoff.md')));
+  } finally { await h.close(); await far.close(); }
+});
+
+test('the lead reads and writes a remote member folder over ssh; other members only read', async () => {
+  const h = await setup();
+  const far = await otherMachine();
+  try {
+    h.team.hosts = far.hosts;
+    await h.team.enable(h.root.id);
+    writeFileSync(join(far.cwd, 'data.txt'), 'remote content\n');
+    await h.team.command(h.root.id, spawn('far', 'pi@devbox', 'TASK', { cwd: far.cwd }));
+    const member = h.team.view(h.root.id)!.members[0];
+    const listed = await h.team.command(h.root.id, { op: 'remote', action: 'ls', target: 'far' }) as { entries: Array<{ name: string }> };
+    assert.ok(listed.entries.some(e => e.name === 'data.txt'));
+    const read = await h.team.command(h.root.id, { op: 'remote', action: 'read', target: 'far', path: 'data.txt' }) as { text: string; hash: string; size: number; truncated: boolean };
+    assert.equal(read.text, 'remote content\n');
+    assert.equal(read.size, 15);
+    assert.equal(read.truncated, false);
+    const partial = await h.team.command(h.root.id, { op: 'remote', action: 'read', target: 'far', path: 'data.txt', offset: 7, limit: 7 }) as { text: string; truncated: boolean };
+    assert.equal(partial.text, 'content');
+    assert.equal(partial.truncated, true);
+    const written = await h.team.command(h.root.id, { op: 'remote', action: 'write', target: 'far', path: 'data.txt', text: 'changed\n', expectHash: read.hash }) as { size: number };
+    assert.equal(written.size, 8);
+    assert.equal(readFileSync(join(far.cwd, 'data.txt'), 'utf8'), 'changed\n');
+    assert.equal((await h.team.command(member.id, { op: 'remote', action: 'read', target: 'far', path: 'data.txt' }) as { text: string }).text, 'changed\n');
+    await assert.rejects(h.team.command(member.id, { op: 'remote', action: 'write', target: 'far', path: 'data.txt', text: 'no' }), (err: any) => err.status === 403);
+    // A stale hash does not overwrite what someone else wrote.
+    await assert.rejects(
+      h.team.command(h.root.id, { op: 'remote', action: 'write', target: 'far', path: 'data.txt', text: 'stale', expectHash: '0'.repeat(64) }),
+      (err: any) => err.status === 409,
+    );
+    // Outside the member's own folder is refused, however the path is spelled.
+    await assert.rejects(h.team.command(h.root.id, { op: 'remote', action: 'read', target: 'far', path: '../outside.txt' }), (err: any) => err.status === 403);
+    await assert.rejects(h.team.command(h.root.id, { op: 'remote', action: 'write', target: 'far', path: '/etc/calli-nope', text: 'no' }), (err: any) => err.status === 403);
+    writeFileSync(join(far.dir, 'outside.txt'), 'outside\n');
+    symlinkSync(join(far.dir, 'outside.txt'), join(far.cwd, 'link.txt'));
+    await assert.rejects(h.team.command(h.root.id, { op: 'remote', action: 'read', target: 'far', path: 'link.txt' }), (err: any) => err.status === 403);
+    // Binary files are not read as text.
+    writeFileSync(join(far.cwd, 'bin'), Buffer.from([0, 1, 2]));
+    await assert.rejects(h.team.command(h.root.id, { op: 'remote', action: 'read', target: 'far', path: 'bin' }), (err: any) => err.status === 415);
+    // A local member has no folder on another machine.
+    await h.team.command(h.root.id, spawn('local', 'pi', 'LOCAL_TASK', {}));
+    await assert.rejects(h.team.command(h.root.id, { op: 'remote', action: 'read', target: 'local', path: 'x' }), (err: any) => err.status === 400);
+  } finally { await h.close(); await far.close(); }
+});
+
+test('a handoff stays inline when the machine cannot take the file', async () => {
+  const h = await setup();
+  const far = await otherMachine();
+  try {
+    h.team.hosts = far.hosts;
+    await h.team.enable(h.root.id);
+    far.hosts.exec = async () => { throw new HttpError(502, 'ssh is down'); };
+    await h.team.command(h.root.id, spawn('far', 'pi@devbox', 'INLINE_TASK', { cwd: far.cwd }));
+    const member = h.team.view(h.root.id)!.members[0];
+    await wait(() => h.team.view(h.root.id)!.members[0].latest?.state === 'returned');
+    const started = far.store.listEvents(member.id, 0, -1).find(e => e.type === 'turn.started');
+    assert.match(String(started?.data.text), /INLINE_TASK/);
+    assert.ok(!String(started?.data.text).includes('交接文件'), 'no pointer to a file that is not there');
+    assert.equal(h.team.view(h.root.id)!.messages.find(m => m.kind === 'result')?.resultFile, undefined);
+  } finally { await h.close(); await far.close(); }
+});
+
+test('a member on another machine works in a temporary worktree of a git repository there, and the branch it was on stays', async () => {
+  const h = await setup();
+  const far = await otherMachine();
+  try {
+    h.team.hosts = far.hosts;
+    await h.team.enable(h.root.id);
+    const repo = join(far.cwd, 'repo'); mkdirSync(repo);
+    const git = (...args: string[]) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], { cwd: repo, encoding: 'utf8' }).trim();
+    git('init', '-q', '-b', 'main'); writeFileSync(join(repo, 'a.txt'), 'one\n'); git('add', '.'); git('commit', '-q', '-m', 'one');
+    await h.team.command(h.root.id, spawn('far', 'pi@devbox', 'REMOTE_TASK', { cwd: repo }));
+    const member = h.team.view(h.root.id)!.members[0] as { id: string; worktree?: string };
+    const there = far.manager.threadView(member.id);
+    assert.ok(there.worktree, 'a worktree was made over there');
+    assert.ok(there.cwd.startsWith(join(repo, '.worktrees')), 'the member stands in it, not in the folder it was given');
+    assert.equal(member.worktree, there.worktree!.branch, 'the lead can see which branch it is');
+    assert.equal(git('rev-parse', '--abbrev-ref', 'HEAD'), 'main', 'the branch checked out there is untouched');
+    await wait(() => h.team.view(h.root.id)!.members[0].latest?.state === 'returned');
+    assert.match(h.team.view(h.root.id)!.members[0].latest!.result, /临时 git worktree/, 'and the member is told');
+    // A folder that is no repository there is used as it is.
+    mkdirSync(join(far.cwd, 'plain'));
+    await h.team.command(h.root.id, spawn('plain', 'pi@devbox', 'PLAIN_TASK', { cwd: join(far.cwd, 'plain') }));
+    const plain = h.team.view(h.root.id)!.members.find(m => m.name === 'plain') as { id: string; worktree?: string };
+    assert.equal(plain.worktree, undefined);
+    assert.equal(far.manager.threadView(plain.id).worktree, null);
+  } finally { await h.close(); await far.close(); }
+});
+
 test('messages for a machine that is away wait for it, and the user can @ an instance there', async () => {
   const h = await setup();
   const far = await otherMachine();
@@ -599,4 +821,71 @@ test('messages for a machine that is away wait for it, and the user can @ an ins
     far.setOnline(true);
     await wait(() => h.team.view(h.root.id)!.messages.some(d => d.text === 'LATER' && d.state === 'returned'));
   } finally { await h.close(); await far.close(); }
+});
+
+test('the person talking to a member directly is answered there and told to the lead once, without waking it', async () => {
+  const h = await setup();
+  try {
+    await h.team.enable(h.root.id);
+    const worker = (await h.team.command(h.root.id, spawn('worker')) as { to: string }).to;
+    // The spawn's own result reaches the lead and is answered before the person steps in.
+    await wait(() => h.team.view(h.root.id)!.messages.some(d => d.to === h.root.id && d.state === 'returned'));
+    await wait(() => h.manager.threadView(h.root.id).status === 'idle' && h.manager.threadView(worker).status === 'idle');
+    const before = h.team.view(h.root.id)!.messages.filter(d => d.to === h.root.id).length;
+    const leadTurns = () => h.store.listEvents(h.root.id, 0, -1).filter(e => e.type === 'turn.started').length;
+    const turnsBefore = leadTurns();
+
+    const response = await h.api(`/api/threads/${worker}/turns`, { text: 'tighten the summary' });
+    assert.equal(response.status, 202);
+    const { turnId } = await response.json() as { turnId: string };
+    await wait(() => h.team.view(h.root.id)!.messages.some(d => d.from === 'user'));
+    const started = h.store.listEvents(worker, 0, -1).find(e => e.turnId === turnId && e.type === 'turn.started')!;
+    assert.equal(started.data.fromUser, true);
+    assert.equal(started.data.displayText, 'tighten the summary');
+    assert.match(String(started.data.text), /用户直接发给你的/);
+
+    const view = h.team.view(h.root.id)!;
+    const talk = view.messages.find(d => d.from === 'user')!;
+    assert.equal(talk.to, worker);
+    assert.equal(talk.text, 'tighten the summary');
+    assert.equal(talk.state, 'returned');
+    assert.match(talk.result, /there tighten the summary/);
+    assert.equal(talk.replyTo, null);
+    // Nothing went to the lead, and it did not run.
+    await new Promise(r => setTimeout(r, 200));
+    assert.equal(h.team.view(h.root.id)!.messages.filter(d => d.to === h.root.id).length, before);
+    assert.equal(leadTurns(), turnsBefore);
+
+    // The lead hears of it with its next turn, once.
+    await h.manager.startTurn(h.root.id, { text: 'how is it going' });
+    await wait(() => h.manager.threadView(h.root.id).status === 'idle');
+    const told = h.store.listEvents(h.root.id, 0, -1).filter(e => e.type === 'turn.started').at(-1)!;
+    assert.match(String(told.data.text), /用户对 worker 说：tighten the summary/);
+    await h.manager.startTurn(h.root.id, { text: 'and now' });
+    await wait(() => h.manager.threadView(h.root.id).status === 'idle');
+    const later = h.store.listEvents(h.root.id, 0, -1).filter(e => e.type === 'turn.started').at(-1)!;
+    assert.doesNotMatch(String(later.data.text), /用户对 worker 说/);
+  } finally { await h.close(); }
+});
+
+test('a message the person queues behind a member\'s task is still theirs when it goes out', async () => {
+  const h = await setup();
+  try {
+    await h.team.enable(h.root.id);
+    const worker = (await h.team.command(h.root.id, spawn('worker', 'pi', 'slow')) as { to: string }).to;
+    await wait(() => h.manager.threadView(worker).status === 'running');
+    const queued = await h.api(`/api/threads/${worker}/turns`, { text: 'after that, add tests', queue: true });
+    assert.equal(queued.status, 202);
+    const { id } = await queued.json() as { id: string };
+    await h.manager.sendQueuedNow(worker, id);
+    await wait(() => h.team.view(h.root.id)!.messages.some(d => d.from === 'user' && d.state === 'returned'));
+    const starts = h.store.listEvents(worker, 0, -1).filter(e => e.type === 'turn.started');
+    assert.equal(starts.length, 2);
+    assert.equal(starts[0].data.fromUser, undefined);
+    assert.equal(starts[1].data.fromUser, true);
+    // Turns the hub starts in a member stay deliveries; the lead's own thread is never "direct".
+    await h.api(`/api/threads/${h.root.id}/turns`, { text: 'lead turn' });
+    await wait(() => h.manager.threadView(h.root.id).status === 'idle');
+    assert.equal(h.store.listEvents(h.root.id, 0, -1).filter(e => e.type === 'turn.started').at(-1)!.data.fromUser, undefined);
+  } finally { await h.close(); }
 });

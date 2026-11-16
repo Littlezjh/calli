@@ -4,14 +4,59 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store } from '../../daemon/src/store';
-import { buildTimeline, hydrateHistoryFiles, liveWorkFromEvents, type Item } from '../src/timeline';
-import { hydrateWork, mergeHistory } from '../src/history';
+import { buildTimeline, hydrateHistoryFiles, liveWorkFromEvents, type Item, type StoredEvent } from '../src/timeline';
+import { historyPage, hydrateWork, mergeHistory, mergeHistoryPage, prependHistory, refreshHistoryPage, watchHistory, type HistoryPage } from '../src/history';
 import type { EventType } from '../../daemon/src/events';
+import type { Api } from '../src/api';
 
 const visible = (items: Item[]) => items.map(i => i.kind === 'work' ? { kind: i.kind, key: i.key, count: i.count ?? i.steps.length, done: i.done, stopped: i.stopped, startedAt: i.startedAt, endedAt: i.endedAt }
   : i.kind === 'changes' ? { kind: i.kind, added: i.added, removed: i.removed, files: i.files.map(f => ({ path: f.path, added: f.added, removed: f.removed })) } : i);
 const thoughts = (item: Extract<Item, { kind: 'work' }> | undefined) =>
   item?.entries.filter(e => e.kind === 'thought').map(e => e.thought.text) ?? [];
+
+const pageEvent = (threadId: string, seq: number): StoredEvent => ({ threadId, seq, turnId: `turn-${seq}`, type: 'turn.started', ts: '', data: { text: `question ${seq}` } });
+
+test('history pages are cached per api, thread and cursor', async () => {
+  let calls = 0;
+  const api = {
+    demo: false,
+    historyPage: async (id: string, before?: number, after?: number, chain?: boolean): Promise<HistoryPage> => {
+      calls++;
+      return { events: [pageEvent(id, calls)], snapshotSeq: calls, nextCursor: before ?? after ?? null, hasOlder: chain === true };
+    },
+  } as unknown as Api;
+  const first = await historyPage(api, 'thread-a');
+  assert.equal(calls, 1);
+  assert.equal((await historyPage(api, 'thread-a')).snapshotSeq, first.snapshotSeq);
+  assert.equal(calls, 1);
+  await historyPage(api, 'thread-a', 10);
+  await historyPage(api, 'thread-b');
+  assert.equal(calls, 3);
+});
+
+test('history cache is cleared when a historyChanged event streams in', async () => {
+  let calls = 0;
+  const id = 'thread-reset-cache';
+  const api = {
+    demo: false,
+    historyPage: async (): Promise<HistoryPage> => {
+      calls++;
+      return { events: [pageEvent(id, calls)], snapshotSeq: calls, nextCursor: null, hasOlder: false };
+    },
+    stream: async (_path: string, push: (ev: StoredEvent) => void) => {
+      push({ threadId: id, seq: 2, turnId: null, type: 'thread.historyChanged', ts: '', data: {} });
+      throw new Error('stop stream');
+    },
+  } as unknown as Api;
+  await historyPage(api, id);
+  assert.equal(calls, 1);
+  const ctrl = new AbortController();
+  setTimeout(() => ctrl.abort(), 0);
+  await watchHistory(api, id, ctrl.signal, { page: () => {}, events: () => {}, error: () => {} });
+  assert.equal(calls, 1);
+  assert.equal((await historyPage(api, id)).snapshotSeq, 2);
+  assert.equal(calls, 2);
+});
 
 test('projected completed histories have the same visible answers, boundaries, status and file counts', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'calli-view-'));
@@ -62,6 +107,53 @@ test('reconnect replaces existing turns without deleting earlier pages or a newe
   const events = [event(1,'old'), event(4,'a'), event(8,'new')];
   const reset = { ...event(7,''), type: 'history.reset', data: { turns: ['a'], events: [event(2,'a'),event(7,'a')] } };
   assert.deepEqual(mergeHistory(events,[reset]).map(e => e.seq), [1,2,7,8]);
+});
+
+test('an earlier page goes in front without dropping answers listed after their work', () => {
+  const event = (seq: number, turnId: string, type: string, data: Record<string, unknown> = {}): StoredEvent => ({ seq, turnId, threadId: 'th', ts: '', type: type as EventType, data });
+  // As the daemon sends a page: the answer (seq 3) comes after the work that ended later (seq 4).
+  const turn = (base: number, id: string) => [event(base, id, 'turn.started', { text: id }), event(base + 3, id, 'usage.updated'), event(base + 2, id, 'message.delta', { text: `answer ${id}` }), event(base + 4, id, 'turn.done')];
+  const loaded = [...turn(10, 'b'), ...turn(20, 'c')];
+  const merged = prependHistory(turn(1, 'a'), loaded);
+  assert.equal(merged.length, 12);
+  const answers = buildTimeline(merged).items.filter(i => i.kind === 'assistant').map(i => i.kind === 'assistant' ? i.text : '');
+  assert.deepEqual(answers, ['answer a', 'answer b', 'answer c']);
+  assert.deepEqual(prependHistory(loaded.slice(0, 2), loaded).map(e => e.seq), loaded.map(e => e.seq));
+});
+
+test('decision recovery replaces stale approval state without dropping older pages or newer events', () => {
+  const event = (seq: number, turnId: string, type: string, data: Record<string, unknown>): StoredEvent => ({ threadId: 'th', seq, turnId, type, data, ts: '' });
+  const request = event(4, 'active', 'approval.request', { approvalId: 'approval-1', title: 'Run', options: [], toolCall: { rawInput: { command: 'long command' } } });
+  const previous = [event(1, 'old', 'turn.started', { text: 'old' }), request, event(9, 'new', 'turn.started', { text: 'newer live turn' })];
+  const page = { events: [event(3, 'active', 'turn.started', { text: 'current' }), { ...request, data: { ...request.data, toolCall: undefined } },
+    event(7, 'active', 'approval.resolved', { approvalId: 'approval-1', decision: { cancelled: true } })], snapshotSeq: 8, nextCursor: 3, hasOlder: true };
+  const merged = mergeHistoryPage(previous, page);
+  assert.deepEqual(merged.map(event => event.seq), [1, 3, 4, 7, 9]);
+  const approval = buildTimeline(merged).items.find(item => item.kind === 'approval');
+  assert.ok(approval?.kind === 'approval');
+  assert.deepEqual(approval.decision, { cancelled: true });
+  assert.equal(approval.command, null, 'obsolete command payload is not retained');
+});
+
+test('decision recovery bypasses cached pages and refreshes the compact page cache', async context => {
+  context.mock.timers.enable({ apis: ['setTimeout'] });
+  let calls = 0;
+  let signal: AbortSignal | undefined;
+  const api = {
+    demo: false,
+    historyPage: async (_id: string, _before?: number, _after?: number, chain?: boolean, requestSignal?: AbortSignal): Promise<HistoryPage> => {
+      assert.equal(chain, true);
+      signal = requestSignal;
+      return { events: [pageEvent('th', ++calls)], snapshotSeq: calls, nextCursor: null, hasOlder: false };
+    },
+  } as unknown as Api;
+  await historyPage(api, 'th', undefined, undefined, true);
+  const fresh = await refreshHistoryPage(api, 'th', true);
+  assert.equal(fresh.snapshotSeq, 2);
+  context.mock.timers.tick(20_000);
+  assert.equal(signal?.aborted, false, 'the completed refresh clears its timer');
+  assert.equal((await historyPage(api, 'th', undefined, undefined, true)).snapshotSeq, 2);
+  assert.equal(calls, 2);
 });
 
 test('reset keeps already received work visible while lazy details reload', async () => {

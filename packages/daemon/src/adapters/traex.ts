@@ -8,13 +8,14 @@ import { AcpAdapter, airForkPoint } from './acp.js';
 import { CodexAppServerAdapter } from './codex.js';
 import { TRAE_ICON } from './icons.js';
 import { configDirectory, findSessionFile, quoteArg } from './session-location.js';
-import type { AgentSession, ModelOption, PermissionMode, PlanQuota, QuotaWindow, SlashCommand, StartOptions } from './types.js';
+import type { AgentSession, HistoryTurn, ModelOption, PermissionMode, PlanQuota, QuotaWindow, SlashCommand, StartOptions } from './types.js';
 
 const execFileAsync = promisify(execFile);
 
 /**
  * TRAE CLI uses the Codex-compatible app-server for live turns and native goals.
- * ACP remains the metadata/history/fork transport; both address the same native sessions.
+ * ACP remains the metadata transport; live turns, history and fork use app-server so one protocol owns
+ * the native thread while it is active.
  * What is TRAE-specific:
  *
  * - it has no mode that asks before every action. "Workspace Edit" (its default) already approves
@@ -23,8 +24,8 @@ const execFileAsync = promisify(execFile);
  * - the effort config option is called `reasoning_effort` and offers low..xhigh. The shared code
  *   finds it by its category, so nothing here has to know the id;
  * - its ACP server cannot delete a session, but its CLI can (`traex delete --force`);
- * - `session/fork` takes the same fork point as claude-agent-acp, and a copy asked for from another
- *   directory is filed and loads there (both tried against traecli 0.209);
+ * - app-server `thread/fork` can copy through or before a turn, and a copy asked for from another
+ *   directory is filed and loads there;
  * - it keeps a per-session folder of files it generated, next to its session log.
  */
 
@@ -70,6 +71,14 @@ export function parseTraexModelStatus(stdout: string): TraexModelStatus[] {
   });
 }
 
+/** Shared read-only metadata query for TRAE and its local Ferry gateway. */
+export async function readTraexModelStatus(cli: string[], env: NodeJS.ProcessEnv): Promise<TraexModelStatus[]> {
+  const { stdout } = await execFileAsync(cli[0], [...cli.slice(1), 'models', '--json'], {
+    env: { ...process.env, ...env }, timeout: 15_000, maxBuffer: 2 * 1024 * 1024,
+  });
+  return parseTraexModelStatus(stdout);
+}
+
 export const TRAEX_METADATA = {
   adapter: 'traex' as const,
   label: 'TRAE CLI',
@@ -108,6 +117,16 @@ export class TraexAcpAdapter extends AcpAdapter {
     return airForkPoint(forkRef);
   }
 
+  /** Keep history refs in the same turn-id space as the app-server fork RPC. */
+  override loadHistory(agentSessionId: string, _cwd: string): Promise<HistoryTurn[]> {
+    return this.execution.loadHistory(agentSessionId);
+  }
+
+  /** Fork through a finished turn with app-server; ACP session/fork conflicts with active writers. */
+  override forkSession(agentSessionId: string, cwd: string, forkRef?: string, intoCwd?: string): Promise<string> {
+    return this.execution.forkSession(agentSessionId, cwd, forkRef, intoCwd);
+  }
+
   /**
    * Editing goes through the app-server, which can fork before a turn; ACP's fork point only names
    * a message to keep, so it cannot express a first turn's empty prefix.
@@ -129,7 +148,11 @@ export class TraexAcpAdapter extends AcpAdapter {
     super(command, env);
     const endsWithServe = command.length > 2 && command.at(-2) === 'acp' && command.at(-1) === 'serve';
     this.cli = cli ?? (endsWithServe ? command.slice(0, -2) : command);
-    this.execution = new CodexAppServerAdapter([...this.cli, 'app-server'], env, 'TRAE CLI');
+    // TRAE's ImageX references can produce 4016 Invalid image even after a successful upload.
+    // Inline image bytes remain readable and do not leave an invalid CDN reference in history.
+    // The copy-in staging folder of importSession follows CODEX_HOME; point it at TRAE's own home.
+    this.execution = new CodexAppServerAdapter([...this.cli, 'app-server'],
+      env.CALLI_TRAEX_HOME ? { ...env, CODEX_HOME: env.CALLI_TRAEX_HOME } : env, 'TRAE CLI', true);
   }
 
   override diagnose() { return cliDiagnostic(this.cli, this.env, 'app-server / ACP 1'); }
@@ -154,9 +177,7 @@ export class TraexAcpAdapter extends AcpAdapter {
   /** Coalesce concurrent requests only; quota caching belongs to ThreadManager. */
   private readModelStatus(): Promise<TraexModelStatus[]> {
     if (this.statusRead) return this.statusRead;
-    const read = execFileAsync(this.cli[0], [...this.cli.slice(1), 'models', '--json'], {
-      env: { ...process.env, ...this.env }, timeout: 15_000, maxBuffer: 2 * 1024 * 1024,
-    }).then(({ stdout }) => parseTraexModelStatus(stdout));
+    const read = readTraexModelStatus(this.cli, this.env);
     this.statusRead = read;
     void read.finally(() => { if (this.statusRead === read) this.statusRead = null; }).catch(() => undefined);
     return read;
@@ -203,6 +224,11 @@ export class TraexAcpAdapter extends AcpAdapter {
     const configDir = configDirectory(this.env, 'CALLI_TRAEX_HOME', ['.trae', 'cli'], cwd);
     const sessionPath = await findSessionFile(join(configDir, 'sessions'), agentSessionId, 3, (name, id) => name.startsWith('rollout-') && name.endsWith(`-${id}.jsonl`));
     return { configDir, sessionPath };
+  }
+
+  /** Another account's session, forked in through the app-server as Codex does it. */
+  importSession(sourcePath: string): Promise<string> {
+    return this.execution.importSession(sourcePath);
   }
 
   /** The ACP server has no session/delete; the CLI does it in one short run. */

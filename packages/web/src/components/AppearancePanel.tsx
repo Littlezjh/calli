@@ -1,6 +1,6 @@
-import { useEffect } from 'react';
+import { SettingsSection } from './PageNavigation';
 import { MODES, PALETTES, type Appearance, type Theme } from '../appearance';
-import { IconCheck, IconClose, IconPalette } from './icons';
+import { IconCheck } from './icons';
 import { t } from '../i18n';
 
 interface Props {
@@ -36,27 +36,8 @@ function Thumb({ palette, theme }: { palette: string; theme: Theme }) {
 
 /** Light or dark, and which palette. Every choice shows at once on the page behind, and is kept on this device. */
 export function AppearancePanel({ appearance, theme, onChange, onClose }: Props) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
-
   return (
-    <div className="dialog-scrim" onClick={onClose}>
-      <div className="panel look-panel" role="dialog" aria-modal="true" aria-labelledby="look-title" onClick={(e) => e.stopPropagation()}>
-        <header className="panel-head">
-          <h2 id="look-title" className="panel-title">
-            <IconPalette size={20} /> {t('appearance.title')}
-          </h2>
-          <button className="icon-btn" aria-label={t('common.close')} onClick={onClose}>
-            <IconClose size={18} />
-          </button>
-        </header>
-        <p className="panel-hint">{t('appearance.hint')}</p>
-
+    <SettingsSection title={t('appearance.title')} hint={t('appearance.hint')} className="look-panel">
         <div className="panel-list look-body">
           <h3 id="look-mode" className="look-heading">
             {t('appearance.mode')}
@@ -109,7 +90,6 @@ export function AppearancePanel({ appearance, theme, onChange, onClose }: Props)
             ))}
           </div>
         </div>
-      </div>
-    </div>
+    </SettingsSection>
   );
 }

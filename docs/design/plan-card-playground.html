@@ -1,0 +1,491 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Calli 计划呈现 · 方案对比</title>
+  <style>
+    /* Tokens copied from packages/web/src/styles.css (paper), so the sketch opens on its own. */
+    :root {
+      --bg: #f8f6f1; --sidebar: #f1efe9; --surface: #ffffff; --surface-2: #fbfaf7;
+      --text: #1f1e1c; --muted: #827f77; --faint: #a9a69e; --border: #e5e2da; --border-strong: #d6d2c8;
+      --hover: rgba(31, 30, 28, 0.045); --active: rgba(31, 30, 28, 0.08);
+      --accent: #1f1e1c; --accent-fg: #ffffff; --positive: #2f7d5b; --positive-bg: #e6f3eb;
+      --user-bg: #eceae4; --code-bg: #efede7; --warn: #c2410c; --danger: #b42318; --danger-bg: #fdecea;
+      --scrim: rgba(24, 23, 21, 0.32);
+      --shadow-pop: 0 14px 40px rgba(31, 30, 28, 0.14), 0 2px 6px rgba(31, 30, 28, 0.06);
+      --shadow-card: 0 1px 2px rgba(31, 30, 28, 0.04), 0 6px 20px rgba(31, 30, 28, 0.05);
+      --radius-pill: 999px; --radius-sm: 8px; --radius: 12px; --radius-lg: 18px; --radius-xl: 30px;
+      --font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Helvetica Neue', 'Noto Sans CJK SC', 'Microsoft YaHei', sans-serif;
+      --mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    [data-theme='dark'] {
+      --bg: #1b1a18; --sidebar: #161514; --surface: #252422; --surface-2: #201f1d;
+      --text: #ecebe7; --muted: #9a978f; --faint: #6f6c65; --border: #32302c; --border-strong: #423f3a;
+      --hover: rgba(236, 235, 231, 0.06); --active: rgba(236, 235, 231, 0.1);
+      --accent: #ecebe7; --accent-fg: #1b1a18; --positive: #3f9a72; --positive-bg: #1d3327;
+      --user-bg: #2f2d2a; --code-bg: #201f1d; --warn: #f0894e; --danger: #f07167; --danger-bg: #3a2220;
+      --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 6px 20px rgba(0, 0, 0, 0.25);
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; color: var(--text); background: var(--bg); font-family: var(--font); font-size: 14px; }
+    button { font: inherit; cursor: pointer; color: inherit; border: 0; background: none; }
+    [hidden] { display: none !important; }
+    svg { display: block; }
+
+    /* Sketch chrome */
+    .bar { position: sticky; top: 0; z-index: 50; display: flex; gap: 10px 16px; align-items: center; flex-wrap: wrap;
+      padding: 12px 24px; background: var(--bg); border-bottom: 1px solid var(--border); }
+    .bar h1 { font-size: 15px; font-weight: 650; margin: 0 6px 0 0; }
+    .seg { display: inline-flex; padding: 3px; border-radius: var(--radius-pill); background: var(--sidebar); border: 1px solid var(--border); }
+    .seg button { padding: 6px 12px; border-radius: var(--radius-pill); font-size: 12.5px; color: var(--muted); white-space: nowrap; }
+    .seg button[aria-pressed='true'] { background: var(--surface); color: var(--text); box-shadow: var(--shadow-card); font-weight: 600; }
+    .note { max-width: 860px; margin: 18px auto 0; padding: 0 24px 6px; color: var(--muted); font-size: 12.5px; line-height: 1.85; }
+    .note b { color: var(--text); font-weight: 600; }
+    .note .v { display: none; }
+    .note .v.on { display: block; }
+
+    /* The frame: a thread window, desktop-wide or phone-narrow */
+    .stage { display: flex; justify-content: center; padding: 14px 16px 60px; }
+    .frame { width: 780px; max-width: 100%; height: 820px; display: flex; flex-direction: column;
+      border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; background: var(--bg); box-shadow: var(--shadow-card); }
+    .frame.phone { width: 390px; height: 760px; }
+    .ftop { display: flex; align-items: center; gap: 10px; padding: 13px 20px; border-bottom: 1px solid var(--border); flex: none; }
+    .ftop .t { font-weight: 600; font-size: 14px; }
+    .ftop .s { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+    .ftop .sp { flex: 1; }
+    .icon-btn { width: 32px; height: 32px; border-radius: var(--radius-pill); display: grid; place-items: center; color: var(--muted); }
+    .icon-btn:hover { background: var(--hover); }
+    .scroll { flex: 1; overflow: auto; padding: 20px 26px 16px; }
+    .frame.phone .scroll { padding: 16px 16px 12px; }
+
+    /* The conversation around the plan, the same in every variant */
+    .row { margin: 0 0 16px; }
+    .msg-user { margin-left: auto; max-width: 82%; background: var(--user-bg); border-radius: var(--radius-lg); padding: 11px 14px; line-height: 1.7; font-size: 13.5px; }
+    .msg-user .chip { display: inline-block; margin-right: 7px; padding: 1px 7px; border-radius: 999px; background: var(--hover); color: var(--muted); font-size: 11px; vertical-align: 1px; }
+    .msg-agent { max-width: 100%; line-height: 1.8; font-size: 13.5px; color: var(--text); }
+    .msg-agent .dim { color: var(--muted); font-size: 12.5px; }
+    .work { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12.5px; padding: 4px 0; }
+    .work .chev { color: var(--faint); }
+    .changes { display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--border); background: var(--surface); border-radius: var(--radius); padding: 8px 12px; font-size: 12.5px; color: var(--muted); }
+    .changes b { color: var(--text); font-weight: 550; }
+    .changes .add { color: var(--positive); font-family: var(--mono); font-size: 12px; }
+    .changes .del { color: var(--danger); font-family: var(--mono); font-size: 12px; }
+
+    /* Shared plan typography */
+    .plan-prose { font-size: 13.5px; line-height: 1.8; }
+    .plan-prose h2 { font-size: 15px; font-weight: 650; margin: 0 0 8px; letter-spacing: 0.1px; }
+    .plan-prose p { margin: 0 0 10px; }
+    .plan-prose code { padding: 0.1em 0.36em; border-radius: 5px; background: var(--code-bg); font-family: var(--mono); font-size: 0.88em; }
+    .plan-prose table { border-collapse: collapse; font-size: 13px; margin: 2px 0 10px; }
+    .plan-prose th { text-align: left; font-weight: 600; color: var(--muted); font-size: 12px; padding: 6px 14px 6px 0; border-bottom: 1px solid var(--border); }
+    .plan-prose td { padding: 7px 14px 7px 0; border-bottom: 1px solid var(--border); vertical-align: top; }
+    .plan-prose .why { color: var(--muted); font-size: 12.5px; margin: 8px 0 0; }
+
+    /* A quiet line the decision leaves behind */
+    .trace { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 12.5px; margin: -6px 0 16px; }
+    .trace .ok { color: var(--positive); }
+
+    /* Inline decision affordances (variants B and D, when waiting) */
+    .ask-row { display: flex; align-items: center; gap: 8px; margin: -4px 0 16px; }
+    .ask-row .primary { padding: 8px 16px; border-radius: var(--radius-pill); background: var(--accent); color: var(--accent-fg); font-size: 13px; font-weight: 550; }
+    .ask-row .ghost { padding: 8px 14px; border-radius: var(--radius-pill); color: var(--muted); font-size: 13px; }
+    .ask-row .ghost:hover { background: var(--hover); }
+    .ask-row .when { color: var(--faint); font-size: 11.5px; margin-left: auto; }
+
+    /* ── Variant A: today's card ─────────────────────────────────────────── */
+    .va .proposal { border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-card); }
+    .va .proposal-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 8px 0 16px; }
+    .va .proposal-title { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); font-size: 13px; font-weight: 600; }
+    .va .proposal-tools { display: inline-flex; }
+    .va .proposal-tools .icon-btn { width: 32px; height: 32px; }
+    .va .proposal-body { display: block; width: 100%; padding: 2px 16px 12px; text-align: left; cursor: pointer; }
+    .va .proposal-scroll { max-height: 260px; overflow: hidden; }
+    .va .proposal.overflow .proposal-scroll { mask-image: linear-gradient(#000 calc(100% - 64px), transparent 100%); }
+
+    /* ── Variant B: the plan as a document, no box ───────────────────────── */
+    .vb .doc { position: relative; padding: 0 4px 0 18px; }
+    /* The rule softens in over its first stretch and dissolves with the text at the cut, so the
+       document reads as flowing on the page instead of ending in a hard frame. */
+    .vb .doc::before { content: ''; position: absolute; left: 0; top: 3px; bottom: 0; width: 2px; border-radius: 2px;
+      background: linear-gradient(to bottom, transparent, var(--border-strong) 22px, var(--border-strong) calc(100% - 60px), transparent); }
+    .vb .doc-head { display: flex; align-items: center; gap: 6px; margin: 0 0 6px; }
+    .vb .doc-over { color: var(--faint); font-size: 11.5px; font-weight: 600; letter-spacing: 3px; }
+    .vb .doc-head .sp { flex: 1; }
+    .vb .doc-head .icon-btn { width: 28px; height: 28px; }
+    /* The text itself fades out (a mask, not an overlay), so the cut lands on whatever is behind
+       it — page background here, a card elsewhere — with no colored band at the seam. */
+    .vb .doc-scroll { max-height: 228px; overflow: hidden; }
+    .vb .doc.overflow .doc-scroll { mask-image: linear-gradient(#000 calc(100% - 64px), transparent 100%); }
+    .vb .doc.full .doc-scroll { max-height: none; }
+    .vb .doc.full.overflow .doc-scroll { mask-image: none; }
+    .vb .doc-more { display: inline-flex; align-items: center; gap: 6px; margin: 6px 0 0 18px; padding: 5px 10px;
+      color: var(--muted); font-size: 12.5px; border-radius: var(--radius-sm); }
+    .vb .doc-more:hover { background: var(--hover); color: var(--text); }
+    .vb .doc-more svg { color: var(--faint); transition: transform 0.15s ease; }
+    .vb .doc.full ~ .doc-more svg { transform: rotate(180deg); }
+
+    /* ── Variant C: one line, expanding in place ─────────────────────────── */
+    .vc .plan-line { display: flex; align-items: center; gap: 9px; width: 100%; padding: 9px 10px; margin-left: -10px;
+      border-radius: var(--radius); font-size: 13px; text-align: left; }
+    .vc .plan-line:hover { background: var(--hover); }
+    .vc .plan-line .chev { color: var(--faint); flex: none; transition: transform 0.15s ease; }
+    .vc .plan-line .what { font-weight: 600; }
+    .vc .plan-line .sum { color: var(--muted); }
+    .vc .plan-line .st { margin-left: auto; flex: none; }
+    .vc .plan-line .st .ok { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+    .vc .plan-line .st .ok svg { color: var(--positive); }
+    .vc .plan-line .st .wait { display: inline-flex; align-items: center; gap: 6px; color: var(--warn); font-size: 12px; }
+    .vc .plan-line .st .wait .dot { width: 7px; height: 7px; border-radius: 999px; background: var(--warn); }
+    .vc .plan-body { overflow: hidden; max-height: 0; opacity: 0; transition: max-height 0.22s ease, opacity 0.18s ease, margin 0.22s ease; margin: 0; }
+    .vc .open .plan-line .chev { transform: rotate(90deg); }
+    .vc .open .plan-body { max-height: 640px; opacity: 1; margin: 2px 0 4px 21px; padding-left: 14px; border-left: 1px solid var(--border); }
+    .vc .plan-foot { display: flex; gap: 8px; margin: 4px 0 0 21px; padding-left: 14px; }
+
+    /* ── Variant D: a card re-authored around the plan's own shape ───────── */
+    .vd .plan-card { border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-card); padding: 14px 16px 0; }
+    .vd .pc-over { display: flex; align-items: baseline; gap: 8px; color: var(--faint); font-size: 11.5px; font-weight: 600; letter-spacing: 3px; }
+    .vd .pc-over .n { letter-spacing: 0; color: var(--muted); font-weight: 500; }
+    .vd .pc-head { display: flex; align-items: center; gap: 8px; margin: 3px 0 10px; }
+    .vd .pc-title { font-size: 15px; font-weight: 650; flex: 1; min-width: 0; }
+    .vd .pc-head .icon-btn { width: 28px; height: 28px; }
+    .vd .pc-intro { margin: 0 0 4px; }
+    .vd .pc-files { margin: 6px 0 2px; }
+    .vd .pc-file { display: flex; align-items: baseline; gap: 10px; padding: 9px 0; border-top: 1px solid var(--border); font-size: 13px; }
+    .vd .pc-file .fic { flex: none; color: var(--faint); align-self: center; }
+    .vd .pc-file .path { font-family: var(--mono); font-size: 12.5px; min-width: 0; overflow-wrap: anywhere; }
+    .vd .pc-file .desc { color: var(--muted); font-size: 12.5px; text-align: right; flex: 1; min-width: 120px; }
+    .vd .pc-footnote { color: var(--muted); font-size: 12px; padding: 8px 0 0; border-top: 1px solid var(--border); margin-top: 2px; }
+    .vd .pc-footnote b { font-weight: 600; color: var(--muted); }
+    .vd .pc-foot { display: flex; align-items: center; gap: 10px; padding: 9px 0 10px; margin-top: 10px; border-top: 1px solid var(--border); }
+    .vd .pc-foot .st { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); font-size: 12.5px; }
+    .vd .pc-foot .st svg { color: var(--positive); }
+    .vd .pc-foot .sp { flex: 1; }
+    .vd .pc-foot .more { color: var(--muted); font-size: 12.5px; padding: 6px 10px; border-radius: var(--radius-pill); }
+    .vd .pc-foot .more:hover { background: var(--hover); }
+    .frame.phone .vd .pc-file { flex-wrap: wrap; }
+    .frame.phone .vd .pc-file .desc { text-align: left; flex-basis: 100%; padding-left: 25px; margin-top: -4px; }
+
+    /* Composer and, in variant A while waiting, the sheet standing in for it */
+    .composer-wrap { position: relative; padding: 0 22px 18px; flex: none; }
+    .frame.phone .composer-wrap { padding: 0 12px 12px; }
+    .composer { border: 1px solid var(--border); background: var(--surface); border-radius: 22px; padding: 12px 12px 10px 16px; box-shadow: var(--shadow-card); }
+    .composer .ph { color: var(--faint); min-height: 38px; font-size: 13.5px; }
+    .composer .crow { display: flex; align-items: center; justify-content: space-between; margin-top: 6px; }
+    .composer .plus { width: 32px; height: 32px; border-radius: var(--radius-pill); border: 1px solid var(--border); display: grid; place-items: center; color: var(--muted); }
+    .composer .send { width: 32px; height: 32px; border-radius: var(--radius-pill); background: var(--accent); color: var(--accent-fg); display: grid; place-items: center; }
+    .sheet { position: absolute; left: 22px; right: 22px; bottom: 18px; background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius-lg); box-shadow: var(--shadow-pop); padding: 14px 14px 12px; }
+    .frame.phone .sheet { left: 12px; right: 12px; bottom: 12px; }
+    .sheet .lab { color: var(--faint); font-size: 11.5px; letter-spacing: 3px; font-weight: 600; }
+    .sheet h3 { margin: 6px 0 10px; font-size: 15px; font-weight: 650; }
+    .sheet .opt { display: flex; align-items: center; gap: 10px; width: 100%; padding: 11px 12px; border-radius: var(--radius); font-size: 13.5px; font-weight: 550; background: var(--accent); color: var(--accent-fg); }
+    .sheet .inp { display: flex; gap: 8px; margin-top: 8px; align-items: center; }
+    .sheet .inp .box { flex: 1; border: 1px solid var(--border); border-radius: var(--radius-pill); padding: 9px 14px; color: var(--faint); font-size: 13px; }
+    .sheet .inp .skip { color: var(--muted); font-size: 12.5px; padding: 8px 10px; }
+  </style>
+</head>
+<body>
+  <div class="bar">
+    <h1>计划呈现 · 方案对比</h1>
+    <div class="seg" id="variant">
+      <button data-v="a" aria-pressed="true">A 现状卡片</button>
+      <button data-v="b" aria-pressed="false">B 文档式</button>
+      <button data-v="c" aria-pressed="false">C 摘要行</button>
+      <button data-v="d" aria-pressed="false">D 重排版卡片</button>
+    </div>
+    <div class="seg" id="state">
+      <button data-s="auto" aria-pressed="true">已自动执行 · 完全访问</button>
+      <button data-s="asked" aria-pressed="false">待确认</button>
+    </div>
+    <div class="seg" id="theme">
+      <button data-t="light" aria-pressed="true">亮</button>
+      <button data-t="dark" aria-pressed="false">暗</button>
+    </div>
+    <div class="seg" id="width">
+      <button data-w="desk" aria-pressed="true">桌面</button>
+      <button data-w="phone" aria-pressed="false">手机</button>
+    </div>
+  </div>
+
+  <div class="note" id="note">
+    <div class="v on" data-v="a">
+      <b>A · 现状卡片</b>——今天线上的样子：通用「计划」卡片，正文渐隐，点开整页；决策在底部 sheet（切到「待确认」可见），事后留一行痕迹。作为对照保留。
+    </div>
+    <div class="v" data-v="b">
+      <b>B · 文档式</b>——去掉卡片框，方案作为一份文档排在对话里：小字「计划」抬头的细线引文区，标题就是方案自己的标题，长文同样渐隐。参考：Claude Code 终端里计划就是正文直排，Zed 也把计划当文档读。决策改到文档脚下的两个按钮，不再弹 sheet。
+    </div>
+    <div class="v" data-v="c">
+      <div><b>C · 摘要行</b>——计划折成一行「计划 · 商品筛选 · 改 3 个文件」，和「用时 10 分 · 3 步」同一层级，点开原地展开全文；状态写在行尾。参考：Codex 把做过的事折成摘要行的做法——计划是发生过的动作，不是一件摆出来的东西。最省高度，适合长的线程。</div>
+    </div>
+    <div class="v" data-v="d">
+      <b>D · 重排版卡片</b>——保留卡片，但内部按方案的结构重排：卡片标题用方案自己的标题，文件表变成路径清单（等宽、按分隔符折行），「明确不做」做脚注，状态进卡脚。渐隐取消（内容有界），整页阅读从标题进。代价：要解析方案的 markdown，没有表格的方案退回普通排版。
+    </div>
+  </div>
+
+  <div class="stage">
+    <div class="frame" id="frame">
+
+      <div class="ftop">
+        <div>
+          <div class="t">商品列表加筛选</div>
+          <div class="s">claude · storefront</div>
+        </div>
+        <div class="sp"></div>
+        <button class="icon-btn" aria-label="概况"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h10"/></svg></button>
+        <button class="icon-btn" aria-label="更多"><svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg></button>
+      </div>
+
+      <div class="scroll">
+
+        <div class="row msg-user"><span class="chip">计划</span>商品列表想按类目和价格筛一下，先出个方案，先别动代码。</div>
+
+        <div class="row msg-agent">看完了，接口本身已经收查询参数，只差前端把筛选接进去。方案如下，改动都落在列表页这一侧。</div>
+
+        <!-- ── A ─────────────────────────────────────────────────────────── -->
+        <section class="row va" data-variant="a">
+          <div class="proposal overflow">
+            <div class="proposal-head">
+              <span class="proposal-title">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M9 6h11M9 12h11M9 18h11"/><path d="M4 6l.01 0M4 12l.01 0M4 18l.01 0"/></svg>
+                计划
+              </span>
+              <span class="proposal-tools">
+                <button class="icon-btn" aria-label="下载"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11m0 0 4-4m-4 4-4-4"/><path d="M4 19h16"/></svg></button>
+                <button class="icon-btn" aria-label="拷贝"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2.5"/><path d="M5 15V6.5A2.5 2.5 0 0 1 7.5 4H15"/></svg></button>
+              </span>
+            </div>
+            <button class="proposal-body" aria-label="查看整份方案">
+              <div class="proposal-scroll">
+                <div class="plan-prose">
+                  <h2>商品筛选方案</h2>
+                  <p>筛选状态放进 URL 查询参数（<code>?category=&amp;max=</code>），刷新、后退和分享链接都能保住；数据层只做透传，不另建状态。</p>
+                  <table>
+                    <thead><tr><th>文件</th><th>改动</th></tr></thead>
+                    <tbody>
+                      <tr><td><code>src/<wbr>pages/<wbr>Products.tsx</code></td><td>筛选栏 UI，读写查询参数</td></tr>
+                      <tr><td><code>src/<wbr>api/<wbr>products.ts</code></td><td>类型补上筛选字段</td></tr>
+                      <tr><td><code>src/<wbr>i18n/<wbr>locales/{zh,en}.ts</code></td><td>筛选项文案</td></tr>
+                    </tbody>
+                  </table>
+                  <p class="why">明确不做：服务端聚合筛选（接口已支持）、价格区间滑块（先用两个输入框）。</p>
+                </div>
+              </div>
+            </button>
+          </div>
+          <div class="trace" data-state="auto">
+            <svg class="ok" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 12.5 10 18 19.5 7"/></svg>
+            已自动执行 · 完全访问
+          </div>
+        </section>
+
+        <!-- ── B ─────────────────────────────────────────────────────────── -->
+        <section class="row vb" data-variant="b">
+          <div class="doc" id="vb-doc">
+            <div class="doc-head">
+              <span class="doc-over">计 划</span>
+              <span class="sp"></span>
+              <button class="icon-btn" aria-label="下载"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11m0 0 4-4m-4 4-4-4"/><path d="M4 19h16"/></svg></button>
+              <button class="icon-btn" aria-label="拷贝"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2.5"/><path d="M5 15V6.5A2.5 2.5 0 0 1 7.5 4H15"/></svg></button>
+            </div>
+            <div class="doc-scroll" id="vb-scroll">
+              <div class="plan-prose">
+                <h2>商品筛选方案</h2>
+                <p>筛选状态放进 URL 查询参数（<code>?category=&amp;max=</code>），刷新、后退和分享链接都能保住；数据层只做透传，不另建状态。</p>
+                <table>
+                  <thead><tr><th>文件</th><th>改动</th></tr></thead>
+                  <tbody>
+                    <tr><td><code>src/<wbr>pages/<wbr>Products.tsx</code></td><td>筛选栏 UI，读写查询参数</td></tr>
+                    <tr><td><code>src/<wbr>api/<wbr>products.ts</code></td><td>类型补上筛选字段</td></tr>
+                    <tr><td><code>src/<wbr>i18n/<wbr>locales/{zh,en}.ts</code></td><td>筛选项文案</td></tr>
+                  </tbody>
+                </table>
+                <p class="why">明确不做：服务端聚合筛选（接口已支持）、价格区间滑块（先用两个输入框）。</p>
+              </div>
+            </div>
+          </div>
+          <button class="doc-more" id="vb-more" hidden>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 9l7 7 7-7"/></svg>
+            <span id="vb-more-label">查看整份</span>
+          </button>
+          <div class="trace" data-state="auto">
+            <svg class="ok" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 12.5 10 18 19.5 7"/></svg>
+            已自动执行 · 完全访问
+          </div>
+          <div class="ask-row" data-state="asked">
+            <button class="primary">确认执行</button>
+            <button class="ghost">说明修改</button>
+            <span class="when">方案已就绪，随时可执行</span>
+          </div>
+        </section>
+
+        <!-- ── C ─────────────────────────────────────────────────────────── -->
+        <section class="row vc" data-variant="c">
+          <div class="plan" id="vc-plan">
+            <button class="plan-line" aria-expanded="false" id="vc-toggle">
+              <svg class="chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg>
+              <span class="what">计划</span>
+              <span class="sum">商品筛选 · 改 3 个文件</span>
+              <span class="st" data-state="auto">
+                <span class="ok"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 12.5 10 18 19.5 7"/></svg>已自动执行 · 完全访问</span>
+              </span>
+              <span class="st" data-state="asked" hidden><span class="wait"><span class="dot"></span>待确认</span></span>
+            </button>
+            <div class="plan-body">
+              <div class="plan-prose">
+                <h2>商品筛选方案</h2>
+                <p>筛选状态放进 URL 查询参数（<code>?category=&amp;max=</code>），刷新、后退和分享链接都能保住；数据层只做透传，不另建状态。</p>
+                <table>
+                  <thead><tr><th>文件</th><th>改动</th></tr></thead>
+                  <tbody>
+                    <tr><td><code>src/<wbr>pages/<wbr>Products.tsx</code></td><td>筛选栏 UI，读写查询参数</td></tr>
+                    <tr><td><code>src/<wbr>api/<wbr>products.ts</code></td><td>类型补上筛选字段</td></tr>
+                    <tr><td><code>src/<wbr>i18n/<wbr>locales/{zh,en}.ts</code></td><td>筛选项文案</td></tr>
+                  </tbody>
+                </table>
+                <p class="why">明确不做：服务端聚合筛选（接口已支持）、价格区间滑块（先用两个输入框）。</p>
+              </div>
+            </div>
+            <div class="plan-foot" data-state="asked" hidden>
+              <button class="primary" style="padding:7px 15px;border-radius:var(--radius-pill);background:var(--accent);color:var(--accent-fg);font-size:12.5px;font-weight:550;">确认执行</button>
+              <button class="ghost" style="padding:7px 13px;border-radius:var(--radius-pill);color:var(--muted);font-size:12.5px;">说明修改</button>
+            </div>
+          </div>
+        </section>
+
+        <!-- ── D ─────────────────────────────────────────────────────────── -->
+        <section class="row vd" data-variant="d">
+          <div class="plan-card">
+            <div class="pc-over">计 划 <span class="n">改 3 个文件</span></div>
+            <div class="pc-head">
+              <div class="pc-title">商品筛选方案</div>
+              <button class="icon-btn" aria-label="下载"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11m0 0 4-4m-4 4-4-4"/><path d="M4 19h16"/></svg></button>
+              <button class="icon-btn" aria-label="拷贝"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2.5"/><path d="M5 15V6.5A2.5 2.5 0 0 1 7.5 4H15"/></svg></button>
+            </div>
+            <div class="plan-prose pc-intro">筛选状态放进 URL 查询参数（<code>?category=&amp;max=</code>），刷新、后退和分享链接都能保住；数据层只做透传，不另建状态。</div>
+            <div class="pc-files">
+              <div class="pc-file">
+                <svg class="fic" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M13.5 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8.5z"/><path d="M13.5 3v5.5H19"/></svg>
+                <span class="path">src/<wbr>pages/<wbr>Products.tsx</span>
+                <span class="desc">筛选栏 UI，读写查询参数</span>
+              </div>
+              <div class="pc-file">
+                <svg class="fic" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M13.5 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8.5z"/><path d="M13.5 3v5.5H19"/></svg>
+                <span class="path">src/<wbr>api/<wbr>products.ts</span>
+                <span class="desc">类型补上筛选字段</span>
+              </div>
+              <div class="pc-file">
+                <svg class="fic" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M13.5 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8.5z"/><path d="M13.5 3v5.5H19"/></svg>
+                <span class="path">src/<wbr>i18n/<wbr>locales/{zh,en}.ts</span>
+                <span class="desc">筛选项文案</span>
+              </div>
+            </div>
+            <div class="pc-footnote"><b>明确不做</b>：服务端聚合筛选（接口已支持）、价格区间滑块（先用两个输入框）。</div>
+            <div class="pc-foot" data-state="auto">
+              <span class="st"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 12.5 10 18 19.5 7"/></svg>已自动执行 · 完全访问</span>
+              <span class="sp"></span>
+              <button class="more">查看整份 ›</button>
+            </div>
+            <div class="pc-foot" data-state="asked" hidden>
+              <button class="primary" style="padding:8px 16px;border-radius:var(--radius-pill);background:var(--accent);color:var(--accent-fg);font-size:13px;font-weight:550;">确认执行</button>
+              <button class="ghost" style="padding:8px 14px;border-radius:var(--radius-pill);color:var(--muted);font-size:13px;">说明修改</button>
+              <span class="sp"></span>
+              <button class="more">查看整份 ›</button>
+            </div>
+          </div>
+        </section>
+
+        <div class="row work">
+          <svg class="chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg>
+          用时 10 分 0 秒 · 3 步
+        </div>
+
+        <div class="row msg-agent">筛选栏接好了：类目和价格都进 URL，刷新后还在。文案中英文各补了三条，测试跑过，改动就这些。</div>
+
+        <div class="row">
+          <span class="changes"><b>已更改 1 个文件</b><span class="add">+2</span><span class="del">−1</span></span>
+        </div>
+
+      </div>
+
+      <div class="composer-wrap">
+        <div class="composer">
+          <div class="ph">继续这个线程</div>
+          <div class="crow">
+            <button class="plus" aria-label="添加"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+            <button class="send" aria-label="发送"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5m0 0-6 6m6-6 6 6"/></svg></button>
+          </div>
+        </div>
+        <!-- Variant A keeps its decision in the sheet over the composer, as it is today. -->
+        <div class="sheet" data-variant="a" data-state="asked" hidden>
+          <div class="lab">方 案</div>
+          <h3>是否执行该方案？</h3>
+          <button class="opt">确认执行该方案</button>
+          <div class="inp"><div class="box">拒绝并说明修改要求</div><button class="skip">跳过</button></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <script>
+    const byAttr = (sel, attr, value) => [...document.querySelectorAll(sel)].filter(el => el.dataset[attr] === value);
+    function show(variant, state) {
+      document.querySelectorAll('[data-variant], [data-state]').forEach(el => {
+        const vOk = !el.dataset.variant || el.dataset.variant === variant;
+        const sOk = !el.dataset.state || el.dataset.state === state;
+        el.hidden = !(vOk && sOk);
+      });
+      // Only variant A moves the decision into the sheet; there the composer steps aside for it.
+      document.querySelector('.composer').hidden = variant === 'a' && state === 'asked';
+    }
+    function bindSeg(id, attr, fn) {
+      const seg = document.getElementById(id);
+      seg.addEventListener('click', e => {
+        const button = e.target.closest('button'); if (!button) return;
+        [...seg.children].forEach(b => b.setAttribute('aria-pressed', String(b === button)));
+        fn(button.dataset[attr], button);
+      });
+    }
+    bindSeg('variant', 'v', v => { show(v, currentState()); document.querySelectorAll('#note .v').forEach(n => n.classList.toggle('on', n.dataset.v === v)); });
+    bindSeg('state', 's', s => show(currentVariant(), s));
+    bindSeg('theme', 't', t => document.documentElement.dataset.theme = t);
+    bindSeg('width', 'w', w => document.getElementById('frame').classList.toggle('phone', w === 'phone'));
+    const currentVariant = () => document.querySelector('#variant [aria-pressed="true"]').dataset.v;
+    const currentState = () => document.querySelector('#state [aria-pressed="true"]').dataset.s;
+    document.getElementById('vc-toggle').addEventListener('click', () => {
+      const plan = document.getElementById('vc-plan');
+      const open = plan.classList.toggle('open');
+      document.getElementById('vc-toggle').setAttribute('aria-expanded', String(open));
+    });
+    // Variant B: the document measures its own cut. Fading and the "whole plan" link appear only
+    // where there is something below the cut, and give it up again once it is all shown.
+    const vbDoc = document.getElementById('vb-doc');
+    const vbScroll = document.getElementById('vb-scroll');
+    const vbMore = document.getElementById('vb-more');
+    const vbLabel = document.getElementById('vb-more-label');
+    const vbMeasure = () => {
+      const cut = vbScroll.scrollHeight - vbScroll.clientHeight > 8;
+      const full = vbDoc.classList.contains('full');
+      vbDoc.classList.toggle('overflow', cut && !full);
+      vbMore.hidden = !cut;
+      vbLabel.textContent = full ? '收起' : '查看整份';
+    };
+    vbMore.addEventListener('click', () => { vbDoc.classList.toggle('full'); vbMeasure(); });
+    window.addEventListener('resize', vbMeasure);
+    document.getElementById('width').addEventListener('click', e => { if (e.target.closest('button')) setTimeout(vbMeasure, 30); });
+    vbMeasure();
+
+    // Deep links like #d-dark-phone: open the sketch straight at a variant.
+    const [vHash, tHash, wHash] = (location.hash.slice(1) || '').split('-');
+    const press = (segId, attr, value) => {
+      const button = document.querySelector(`#${segId} button[data-${attr}="${value}"]`);
+      if (button) button.click();
+    };
+    if (tHash === 'dark') press('theme', 't', 'dark');
+    if (wHash === 'phone') press('width', 'w', 'phone');
+    if (/^[abcd]$/.test(vHash)) press('variant', 'v', vHash);
+    else show('a', 'auto');
+  </script>
+</body>
+</html>

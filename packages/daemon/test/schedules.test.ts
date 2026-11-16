@@ -326,6 +326,39 @@ test('schedules: restart recovery fires once when catchUp is enabled', async () 
   }
 });
 
+test('schedules: auto archive hides only old idle threads that need no attention', async () => {
+  await api('/api/general-settings', { method: 'PUT', body: JSON.stringify({ startupPage: 'new-thread', autoArchiveDays: 7 }) });
+  const make = async (id: string, updatedAt: string) => {
+    const thread = await manager.createThread({ agent: 'stub', cwd: workroot, title: id });
+    store.db.prepare('UPDATE threads SET updated_at = ? WHERE id = ?').run(updatedAt, thread.id);
+    return thread.id;
+  };
+  const now = new Date('2026-11-02T12:00:00.000Z');
+  const old = await make('old', '2026-10-20T00:00:00.000Z');
+  const pinned = await make('pinned', '2026-10-20T00:00:00.000Z'); store.updateThread(pinned, { pinned: true });
+  const unread = await make('unread', '2026-10-20T00:00:00.000Z'); store.updateThread(unread, { unread: true });
+  const running = await make('running', '2026-10-20T00:00:00.000Z'); store.updateThread(running, { status: 'running' });
+  const waiting = await make('waiting', '2026-10-20T00:00:00.000Z');
+  const recent = await make('recent', '2026-10-31T00:00:00.000Z');
+  const approvals = (manager as unknown as { approvals: Map<string, { threadId: string; optionIds: string[]; resolve: () => void }> }).approvals;
+  approvals.set('auto-archive-waiting', { threadId: waiting, optionIds: ['allow'], resolve: () => {} });
+
+  try {
+    await scheduler.tick(now);
+
+    assert.equal(store.getThread(old)?.archivedAt !== null, true);
+    assert.equal(store.getThread(pinned)?.archivedAt, null);
+    assert.equal(store.getThread(unread)?.archivedAt, null);
+    assert.equal(store.getThread(running)?.archivedAt, null);
+    assert.equal(store.getThread(waiting)?.archivedAt, null);
+    assert.equal(store.getThread(recent)?.archivedAt, null);
+  } finally {
+    approvals.delete('auto-archive-waiting');
+    await api('/api/general-settings', { method: 'PUT', body: JSON.stringify({ startupPage: 'new-thread', autoArchiveDays: null }) });
+    store.updateThread(running, { status: 'idle' });
+  }
+});
+
 test('schedules: enable and disable', async () => {
   const s = await createSchedule({ ...scheduleBody, name: '开关' });
   const off = (await (await api(`/api/schedules/${s.id}`, { method: 'PATCH', body: JSON.stringify({ enabled: false }) })).json()) as ScheduleJson;

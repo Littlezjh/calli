@@ -37,8 +37,8 @@ const painted = (rgb) => page.waitForFunction((c) => getComputedStyle(document.b
 
 async function openPanel() {
   await page.locator('.sidebar').getByRole('button', { name: '配置', exact: true }).click();
-  await page.getByRole('menuitem', { name: '外观', exact: true }).click();
-  await page.getByRole('dialog', { name: '外观' }).waitFor();
+  await page.locator('.settings-nav').getByRole('button', { name: '外观', exact: true }).click();
+  await page.getByRole('region', { name: '外观' }).waitFor();
 }
 
 test('out of the box the page follows the system, in the default palette', async () => {
@@ -56,7 +56,7 @@ test('out of the box the page follows the system, in the default palette', async
 
 test('a palette and a mode chosen in the panel show at once', async () => {
   await openPanel();
-  const panel = page.getByRole('dialog', { name: '外观' });
+  const panel = page.getByRole('region', { name: '外观' });
   assert.equal(await panel.getByRole('radio', { name: '跟随系统' }).getAttribute('aria-checked'), 'true');
   assert.equal(await panel.getByRole('radio', { name: '纸' }).getAttribute('aria-checked'), 'true');
 
@@ -71,7 +71,7 @@ test('a palette and a mode chosen in the panel show at once', async () => {
   assert.deepEqual(await look(), { theme: 'dark', palette: 'nord', bg: '#2e3440', meta: '#2e3440' });
   await painted('rgb(46, 52, 64)');
 
-  await page.keyboard.press('Escape');
+  await page.locator('.settings-topbar').getByRole('button', { name: '返回', exact: true }).click();
   await panel.waitFor({ state: 'detached' });
 });
 
@@ -82,12 +82,12 @@ test('the choice outlives a reload, and a fixed mode does not follow the system'
   assert.deepEqual(await look(), { theme: 'dark', palette: 'nord', bg: '#2e3440', meta: '#2e3440' });
 
   await openPanel();
-  const panel = page.getByRole('dialog', { name: '外观' });
+  const panel = page.getByRole('region', { name: '外观' });
   assert.equal(await panel.getByRole('radio', { name: '深色' }).getAttribute('aria-checked'), 'true');
   assert.equal(await panel.getByRole('radio', { name: 'Nord' }).getAttribute('aria-checked'), 'true');
   await panel.getByRole('radio', { name: '跟随系统' }).click();
   assert.equal((await look()).theme, 'light');
-  await panel.getByRole('button', { name: '关闭' }).click();
+  await page.locator('.settings-topbar').getByRole('button', { name: '返回', exact: true }).click();
   await panel.waitFor({ state: 'detached' });
 });
 
@@ -113,6 +113,6 @@ test('the slash menu opens the panel too', async () => {
   await page.keyboard.type('/外观');
   await page.locator('.command-item', { hasText: '外观' }).first().waitFor();
   await page.keyboard.press('Enter');
-  await page.getByRole('dialog', { name: '外观' }).waitFor();
+  await page.getByRole('region', { name: '外观' }).waitFor();
   await page.keyboard.press('Escape');
 });

@@ -12,6 +12,9 @@ import { AttachmentStore } from '../src/attachments.js';
 import { LEGACY_SOCKET_IN_HOME, SOCKET_IN_HOME } from '../src/config.js';
 import WebSocket from 'ws';
 import { Desktop } from '../src/desktop.js';
+import { ExtensionHost } from '../src/extension-host.js';
+import { loadCatalog } from '../src/extensions.js';
+import { AUTOTITLE_ID, AutoTitle } from '../src/autotitle.js';
 import { createHttpServer, listenPrivate, socketHeld } from '../src/http.js';
 import { HostRegistry, sshConfigHosts, sshFailure, type HostInfo } from '../src/hosts.js';
 import { Store } from '../src/store.js';
@@ -48,7 +51,7 @@ async function waitFor<T>(fn: () => Promise<T | null | undefined | false> | T | 
   }
 }
 
-function makeManager(name: string): { manager: ThreadManager; workdir: string } {
+function makeManager(name: string): { manager: ThreadManager; store: Store; workdir: string } {
   const dataDir = join(root, `${name}-data`);
   const workdir = join(root, `${name}-work`);
   mkdirSync(workdir);
@@ -60,14 +63,21 @@ function makeManager(name: string): { manager: ThreadManager; workdir: string } 
     await manager.shutdown();
     store.close();
   });
-  return { manager, workdir };
+  return { manager, store, workdir };
 }
 
 let node: ReturnType<typeof makeManager>;
 let hub: ReturnType<typeof makeManager>;
+/** The other machine's extensions, as its own daemon would start them. */
+let nodeExtensions: ExtensionHost;
 
 function startNode(): Promise<boolean> {
-  nodeServer = createHttpServer({ manager: node.manager, desktop: nodeDesktop, trusted: true, token: 'never-asked-0123456789', webDir: null, version: 'node-test' });
+  nodeExtensions = new ExtensionHost({ store: node.store.extensions, source: node.manager, catalog: loadCatalog() });
+  const autotitle = new AutoTitle(nodeExtensions.builtin(AUTOTITLE_ID)!, node.manager, node.store, nodeExtensions);
+  nodeExtensions.register(autotitle);
+  nodeExtensions.start();
+  nodeExtensions.install(AUTOTITLE_ID, ['events.summary', 'transcript.read', 'threads.rename', 'agents.ask']);
+  nodeServer = createHttpServer({ manager: node.manager, desktop: nodeDesktop, extensions: nodeExtensions, autotitle, trusted: true, token: 'never-asked-0123456789', webDir: null, version: 'node-test' });
   return listenPrivate(nodeServer, nodeSocket);
 }
 
@@ -122,6 +132,7 @@ before(async () => {
 });
 
 after(async () => {
+  nodeExtensions?.dispose();
   nodeDesktop.dispose();
   hubDesktop.dispose();
   await vnc.close();
@@ -258,6 +269,10 @@ test('adding a machine by its ssh name connects it; its daemon answers through t
   assert.equal(created.status, 201);
   const thread = (await created.json()) as { id: string; cwd: string };
   assert.equal(thread.cwd, node.workdir);
+  const outputs = await hubApi(`/api/hosts/devbox/proxy/threads/${thread.id}/outputs`);
+  assert.equal(outputs.status, 200);
+  assert.deepEqual((await outputs.json() as { changes: unknown }).changes, { files: [], added: 0, removed: 0, total: 0 });
+  assert.equal((await hubApi('/api/hosts/devbox/proxy/threads/nope/outputs')).status, 404);
   const there = (await (await hubApi('/api/hosts/devbox/proxy/threads?archived=0')).json()) as Array<{ id: string }>;
   assert.deepEqual(there.map((t) => t.id), [thread.id]);
   assert.deepEqual(await (await hubApi('/api/threads')).json(), [], "not among the hub's own");
@@ -273,6 +288,36 @@ test('adding a machine by its ssh name connects it; its daemon answers through t
   assert.equal(made.cwd, node.workdir);
   await assert.rejects(hosts.call('devbox', 'GET', '/api/threads/nope'), (err: { status?: number }) => err.status === 404);
   await assert.rejects(hosts.call('other', 'GET', '/api/threads'), (err: { status?: number }) => err.status === 404);
+});
+
+test('a command runs on the machine over ssh, with its input on stdin and its exit code kept', async () => {
+  // Alone, this file's earlier tests have not run; the machine is added the way the page adds it.
+  if (!(await hostNamed('devbox'))) await hubApi('/api/hosts', { method: 'POST', body: JSON.stringify({ target: 'devbox' }) });
+  const echo = await hosts.exec('devbox', 'cat', { input: 'hello\n' });
+  assert.equal(echo.code, 0);
+  assert.equal(echo.stdout.toString('utf8'), 'hello\n');
+  assert.equal(echo.stderr, '');
+  const failed = await hosts.exec('devbox', 'echo oops >&2; exit 7');
+  assert.equal(failed.code, 7);
+  assert.match(failed.stderr, /oops/);
+  // This works without the daemon: it is ssh, not the tunnel.
+  const file = join(root, 'direct-hosts.json');
+  writeFileSync(file, JSON.stringify({ hosts: [{ id: 'bare', label: 'bare', target: 'bare', socket: '/nonexistent' }] }));
+  const direct = new HostRegistry({ file, ssh: [process.execPath, join(here, 'fixtures', 'fake-ssh.mjs')], home: root });
+  const bare = await direct.exec('bare', 'echo here');
+  assert.equal(bare.stdout.toString('utf8').trim(), 'here');
+  direct.dispose();
+  await assert.rejects(hosts.exec('nope', 'true'), (err: { status?: number }) => err.status === 404);
+  await assert.rejects(hosts.exec('devbox', 'head -c 4096 /dev/zero', { maxBytes: 1024 }), (err: { status?: number }) => err.status === 413);
+});
+
+test('the other machine\'s extension settings answer through the hub too', async () => {
+  // The socket server is the road a hub takes: a daemon-side service missing there breaks only
+  // requests from other machines, which is exactly what this must catch (autotitle once was).
+  const settings = await hubApi('/api/hosts/devbox/proxy/extensions/autotitle/settings');
+  assert.equal(settings.status, 200);
+  const body = (await settings.json()) as { settings: { agent: string | null } };
+  assert.equal(body.settings.agent, null, 'the machine\'s own settings, not the hub\'s');
 });
 
 test('a turn on the other machine streams back through the hub as it happens', async () => {

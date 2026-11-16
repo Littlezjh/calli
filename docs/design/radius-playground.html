@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="zh" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>圆角 · Playground</title>
+<style>
+/* Colours copied from packages/web/src/styles.css (paper palette). Radii are what this page varies. */
+:root {
+  --bg: #f8f6f1; --surface: #ffffff; --surface-2: #fbfaf7; --text: #1f1e1c; --muted: #827f77; --faint: #a9a69e;
+  --border: #e5e2da; --border-strong: #d6d2c8; --hover: rgba(31, 30, 28, 0.045); --active: rgba(31, 30, 28, 0.07);
+  --accent: #1f1e1c; --accent-fg: #fff; --positive: #2f7d5b; --warn: #c2410c; --danger: #b42318;
+  --user-bg: #eceae4; --code-bg: #efede7; --sidebar: #f1efe9;
+  --shadow-pop: 0 14px 40px rgba(31, 30, 28, 0.14), 0 2px 6px rgba(31, 30, 28, 0.06);
+  --font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Helvetica Neue', 'Noto Sans CJK SC', sans-serif;
+  --mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
+}
+[data-theme='dark'] {
+  --bg: #1b1a18; --surface: #252422; --surface-2: #201f1d; --text: #ecebe7; --muted: #9a978f; --faint: #6f6c65;
+  --border: #32302c; --border-strong: #423f3a; --hover: rgba(236, 235, 231, 0.06); --active: rgba(236, 235, 231, 0.09);
+  --accent: #ecebe7; --accent-fg: #1b1a18; --positive: #3f9a72; --warn: #f0935a; --danger: #f97066;
+  --user-bg: #2c2b28; --code-bg: #262522; --sidebar: #161513;
+  --shadow-pop: 0 14px 40px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.3);
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--font); -webkit-font-smoothing: antialiased; }
+button { font: inherit; color: inherit; }
+.ic { width: 15px; height: 15px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+.controls { position: sticky; top: 0; z-index: 50; display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; padding: 12px 20px; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(12px); border-bottom: 1px solid var(--border); }
+.ctl { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+.seg { display: inline-flex; padding: 2px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); }
+.seg button { border: 0; background: none; padding: 4px 10px; border-radius: 999px; font-size: 12px; color: var(--muted); cursor: pointer; white-space: nowrap; }
+.seg button[aria-pressed='true'] { background: var(--accent); color: var(--accent-fg); }
+.pick { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; width: 100%; font-size: 12px; color: var(--muted); }
+.pick code { padding: 3px 8px; border-radius: 999px; background: var(--surface); border: 1px solid var(--border); color: var(--text); font-family: var(--mono); font-size: 11.5px; }
+.pick button { border: 0; background: none; color: var(--muted); text-decoration: underline; cursor: pointer; font-size: 12px; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 12px; width: 100%; font-size: 11.5px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.legend b { color: var(--muted); font-weight: 500; }
+
+/* The app, roughly at desktop size */
+.app { position: relative; display: grid; grid-template-columns: 248px 1fr; width: 1280px; height: 920px; margin: 20px auto 60px; border: 1px solid var(--border-strong); border-radius: 14px; overflow: hidden; background: var(--bg); }
+.side { display: flex; flex-direction: column; gap: 4px; padding: 14px 10px; background: var(--sidebar); border-right: 1px solid var(--border); }
+.side h1 { margin: 2px 8px 10px; font-size: 17px; }
+.search { display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 10px; border: 1px solid var(--border); border-radius: var(--r-search); background: var(--surface); color: var(--faint); font-size: 13px; }
+.newbtn { display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 10px; border-radius: var(--r-row); color: var(--text); font-size: 13.5px; }
+.label { margin: 12px 10px 4px; font-size: 12px; color: var(--faint); }
+.trow { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px; border-radius: var(--r-row); font-size: 13.5px; }
+.trow:hover { background: var(--hover); } .trow.on { background: var(--active); }
+.trow .tag { margin-left: auto; padding: 1px 7px; border-radius: 999px; background: var(--hover); color: var(--faint); font-size: 11px; }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--positive); }
+
+.main { position: relative; display: flex; flex-direction: column; min-width: 0; }
+.top { display: flex; align-items: center; gap: 6px; height: 52px; padding: 0 16px; }
+.top .title { font-size: 15px; font-weight: 600; margin-right: auto; }
+.ibtn { display: inline-grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; color: var(--muted); }
+.ibtn:hover { background: var(--hover); }
+.scroll { flex: 1; overflow: hidden; }
+.col { width: 600px; margin: 0 0 0 56px; padding: 8px 0 0; display: flex; flex-direction: column; gap: 14px; }
+.user { align-self: flex-end; max-width: 80%; padding: 9px 15px; border-radius: var(--r-bubble); background: var(--user-bg); font-size: 15px; line-height: 1.6; }
+.work { display: flex; align-items: center; gap: 4px; color: var(--muted); font-size: 13px; }
+.answer { font-size: 15px; line-height: 1.7; margin: 0; }
+.code { position: relative; border: 1px solid var(--border); border-radius: var(--r-card); background: var(--code-bg); padding: 12px 14px; font-family: var(--mono); font-size: 13px; line-height: 1.6; white-space: pre; }
+.code .copy { position: absolute; top: 6px; right: 6px; display: grid; place-items: center; width: 28px; height: 28px; border-radius: var(--r-inner); color: var(--faint); background: var(--hover); }
+.card { border: 1px solid var(--border); border-radius: var(--r-card); background: var(--surface-2); padding: 6px; }
+.card-head { display: flex; align-items: center; gap: 8px; padding: 6px 8px 8px; font-size: 13.5px; font-weight: 600; }
+.row { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: var(--r-inner); font-size: 13px; }
+.row:hover, .row.hl { background: var(--hover); }
+.row .path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 12.5px; }
+.add { color: var(--positive); font-size: 12px; font-variant-numeric: tabular-nums; } .del { color: var(--danger); font-size: 12px; font-variant-numeric: tabular-nums; }
+.mark { flex: none; display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; border: 1px solid var(--border-strong); font-size: 10px; font-weight: 700; color: var(--muted); background: var(--surface); }
+.muted { color: var(--muted); font-weight: 400; } .faint { color: var(--faint); font-weight: 400; font-size: 12px; margin-left: auto; }
+.warn { color: var(--warn); font-weight: 400; font-size: 12.5px; }
+.sum { padding: 0 8px 4px 34px; margin-top: -4px; font-size: 13px; color: var(--muted); }
+
+/* Margin overview card */
+.overview { position: absolute; top: 64px; right: 20px; width: 248px; border: 1px solid var(--border); border-radius: var(--r-card); background: var(--surface-2); padding: 6px; }
+.ov-head { display: flex; align-items: center; gap: 7px; height: 30px; padding: 0 8px; border-radius: var(--r-inner); font-size: 12.5px; color: var(--muted); }
+.ov-head b { color: var(--text); font-size: 13px; }
+.ov-head span:last-child { margin-left: auto; font-variant-numeric: tabular-nums; }
+.ov-row { display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 8px; border-radius: var(--r-inner); font-size: 13px; }
+.ov-row:hover, .ov-row.hl { background: var(--hover); }
+.ov-pics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; padding: 2px 2px 4px; }
+.ov-pics i { aspect-ratio: 1; border-radius: var(--r-inner); background: linear-gradient(135deg, var(--code-bg), var(--border-strong)); }
+.ov-sep { height: 1px; margin: 4px 8px; background: var(--border); }
+
+/* Bottom: decision sheet, composer, popover */
+.bottom { position: relative; width: 600px; margin: 0 0 18px 56px; }
+.sheet { margin-bottom: 10px; border: 1px solid var(--border); border-radius: var(--r-sheet); background: var(--surface); box-shadow: var(--shadow-pop); padding: var(--sheet-pad); }
+.sheet-q { padding: 6px 8px 10px; font-size: 14px; font-weight: 600; }
+.opt { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: var(--r-sheet-inner); font-size: 13.5px; }
+.opt.hl { background: var(--hover); }
+.opt .n { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--hover); color: var(--muted); font-size: 11px; }
+.sheet-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 8px 4px 2px; }
+.btn { height: 32px; padding: 0 14px; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--surface); font-size: 13px; }
+.btn.primary { border-color: var(--accent); background: var(--accent); color: var(--accent-fg); }
+.composer { border: 1px solid var(--border); border-radius: var(--r-composer); background: var(--surface); box-shadow: var(--shadow-pop); padding: 12px 12px 10px 16px; }
+.composer .ph { color: var(--faint); font-size: 15px; padding: 2px 0 14px; }
+.composer .bar { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 13px; }
+.chip { display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 10px; border-radius: var(--r-chip); font-size: 12.5px; }
+.chip.on { background: var(--hover); }
+.send { margin-left: auto; width: 32px; height: 32px; border-radius: 50%; background: var(--accent); }
+.pop { position: absolute; right: 44px; bottom: 58px; width: 240px; border: 1px solid var(--border); border-radius: var(--r-pop); background: var(--surface); box-shadow: var(--shadow-pop); padding: 6px; z-index: 5; }
+.pop .row { font-size: 13.5px; border-radius: var(--r-pop-inner); padding: 8px 10px; }
+.pop .row.hl { background: var(--hover); }
+.pop .check { margin-left: auto; color: var(--muted); }
+
+/* Dialog */
+.scrim { position: absolute; inset: 0; z-index: 20; display: grid; place-items: center; background: rgba(20, 19, 17, 0.32); }
+.dialog { width: 420px; border: 1px solid var(--border); border-radius: var(--r-dialog); background: var(--surface); box-shadow: var(--shadow-pop); padding: 22px 22px 18px; }
+.dialog h2 { margin: 0 0 6px; font-size: 17px; }
+.dialog p { margin: 0 0 14px; color: var(--muted); font-size: 13.5px; line-height: 1.6; }
+.field { height: 38px; padding: 0 12px; display: flex; align-items: center; border: 1px solid var(--border-strong); border-radius: var(--r-field); font-size: 14px; margin-bottom: 16px; }
+.dialog .foot { display: flex; justify-content: flex-end; gap: 8px; }
+
+/* Show the radius of every box, for checking that nested corners share a centre. */
+.outline [style], .outline .code, .outline .card, .outline .row, .outline .overview, .outline .ov-row, .outline .ov-head, .outline .sheet, .outline .opt,
+.outline .composer, .outline .pop, .outline .dialog, .outline .field, .outline .user, .outline .search, .outline .trow, .outline .ov-pics i, .outline .chip { outline: 1px dashed color-mix(in srgb, var(--warn) 60%, transparent); outline-offset: -1px; }
+</style>
+</head>
+<body>
+<div class="controls" id="controls"></div>
+<div id="app"></div>
+<script>
+const OPTIONS = [
+  { key: 'mode', label: '方案', values: [['unified', '统一'], ['current', '现状']] },
+  { key: 'theme', label: '外观', values: [['light', '亮色'], ['dark', '深色']] },
+  { key: 'card', label: '卡片圆角', values: [['12', '12'], ['14', '14'], ['16', '16'], ['18', '18']] },
+  { key: 'sheet', label: '输入框/对话框/弹层', values: [['24', '24'], ['20', '20'], ['same', '同卡片']] },
+  { key: 'concentric', label: '内层', values: [['on', '同心（外层−间距）'], ['off', '和外层一样']] },
+  { key: 'popover', label: '浮动菜单', values: [['card', '跟卡片'], ['sheet', '跟浮层']] },
+  { key: 'dialog', label: '对话框', values: [['off', '隐藏'], ['on', '显示']] },
+  { key: 'outline', label: '描边看圆角', values: [['off', '关'], ['on', '开']] },
+];
+const state = { mode: 'unified', theme: 'light', card: '12', sheet: '24', concentric: 'on', popover: 'card', dialog: 'off', outline: 'off' };
+try { Object.assign(state, Object.fromEntries(new URLSearchParams(location.hash.slice(1)))); } catch {}
+
+/* What each part has in styles.css today. */
+const CURRENT = { bubble: 18, card: 12, changes: 14, code: 18, inner: 8, changesInner: 6, pop: 16, popInner: 10, sheet: 22, sheetInner: 8, composer: 22, dialog: 20, field: 10, search: 10, row: 9, chip: 999 };
+
+function radii() {
+  if (state.mode === 'current') {
+    const c = CURRENT;
+    return { bubble: c.bubble, card: c.card, changes: c.changes, code: c.code, inner: c.inner, changesInner: c.changesInner, pop: c.pop, popInner: c.popInner,
+      sheet: c.sheet, sheetInner: c.sheetInner, composer: c.composer, dialog: c.dialog, field: c.field, search: c.search, row: c.row, chip: 999 };
+  }
+  const card = +state.card;
+  const sheet = state.sheet === 'same' ? card : +state.sheet;
+  // A box inside a card sits 6px of padding and 1px of border in: its corner shares the card's centre.
+  const inside = (outer, gap) => state.concentric === 'on' ? Math.max(4, outer - gap) : outer;
+  const inner = inside(card, 7);
+  const pop = state.popover === 'card' ? card : sheet;
+  return { bubble: card + 2, card, changes: card, code: card, inner, changesInner: inner, pop, popInner: inside(pop, 7),
+    sheet, sheetInner: inside(sheet, 11), composer: sheet, dialog: sheet, field: inner, search: inner, row: inner, chip: 999 };
+}
+
+const icon = {
+  search: '<svg class="ic" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/></svg>',
+  edit: '<svg class="ic" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg>',
+  right: '<svg class="ic" viewBox="0 0 24 24" style="width:13px;height:13px"><path d="M9 6l6 6-6 6"/></svg>',
+  down: '<svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M6 9l6 6 6-6"/></svg>',
+  copy: '<svg class="ic" viewBox="0 0 24 24" style="width:14px;height:14px"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5H4v12h4"/></svg>',
+  agents: '<svg class="ic" viewBox="0 0 24 24" style="width:14px;height:14px"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 19c.6-3 2.8-4.6 5.5-4.6s4.9 1.6 5.5 4.6"/></svg>',
+  file: '<svg class="ic" viewBox="0 0 24 24" style="width:14px;height:14px"><path d="M7 3h7l5 5v13H7zM14 3v5h5"/></svg>',
+  image: '<svg class="ic" viewBox="0 0 24 24" style="width:14px;height:14px"><path d="M4 5h16v14H4zM4 16l5-5 4 4 2-2 5 5"/></svg>',
+  more: '<svg class="ic" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg>',
+  plus: '<svg class="ic" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>',
+};
+
+function render() {
+  const r = radii();
+  const root = document.documentElement;
+  root.dataset.theme = state.theme;
+  const vars = { bubble: r.bubble, card: r.card, inner: r.inner, pop: r.pop, 'pop-inner': r.popInner, sheet: r.sheet, 'sheet-inner': r.sheetInner,
+    composer: r.composer, dialog: r.dialog, field: r.field, search: r.search, row: r.row, chip: r.chip };
+  for (const [k, v] of Object.entries(vars)) root.style.setProperty(`--r-${k}`, `${v}px`);
+  root.style.setProperty('--sheet-pad', '10px');
+  const controls = state.mode === 'current' ? OPTIONS.filter(o => ['mode', 'theme', 'dialog', 'outline'].includes(o.key)) : OPTIONS;
+  document.getElementById('controls').innerHTML = controls.map(o => `<div class="ctl"><span>${o.label}</span><div class="seg">${o.values.map(([v, l]) => `<button data-key="${o.key}" data-value="${v}" aria-pressed="${state[o.key] === v}">${l}</button>`).join('')}</div></div>`).join('')
+    + `<div class="pick">你的选择：<code id="code">${code()}</code><button id="copy">复制</button></div>`
+    + `<div class="legend">${[['气泡', r.bubble], ['代码块', r.code], ['变更卡', r.changes], ['概况卡', r.card], ['卡内行', r.inner], ['菜单', r.pop], ['菜单项', r.popInner], ['审批弹层', r.sheet], ['弹层选项', r.sheetInner], ['输入框', r.composer], ['对话框', r.dialog], ['输入栏', r.field], ['侧栏行', r.row]].map(([k, v]) => `<span><b>${k}</b> ${v}</span>`).join('')}</div>`;
+
+  const changesStyle = `style="border-radius:${r.changes}px"`;
+  const codeStyle = `style="border-radius:${r.code}px"`;
+  const changesRow = `style="border-radius:${r.changesInner}px"`;
+  document.getElementById('app').innerHTML = `<div class="app${state.outline === 'on' ? ' outline' : ''}">
+  <aside class="side">
+    <h1>Calli</h1>
+    <div class="search">${icon.search}搜索线程</div>
+    <div class="newbtn">${icon.edit}新线程</div>
+    <div class="label">置顶</div>
+    <div class="trow on">改造右上角指示面板<span class="dot"></span></div>
+    <div class="trow">接口联调<span class="tag">pi</span></div>
+    <div class="label">项目</div>
+    <div class="trow">优化错误处理<span class="tag">claude</span></div>
+    <div class="trow">修复构建问题<span class="tag">codex</span></div>
+    <div class="trow">整理项目文档<span class="tag">pi</span></div>
+  </aside>
+  <section class="main">
+    <div class="top"><span class="title">改造右上角指示面板</span><span class="ibtn">${icon.agents}</span><span class="ibtn">${icon.file}</span><span class="ibtn">${icon.more}</span></div>
+    <div class="scroll"><div class="col">
+      <div class="user">把概况卡和协作结果卡都改得好看一点。</div>
+      <div class="work">用时 2 分 14 秒 · 9 步 ${icon.right}</div>
+      <p class="answer">已按设计稿统一圆角，下面是改动。</p>
+      <div class="code" ${codeStyle}>--radius-inner: max(0px, calc(var(--radius-card) - 7px));<span class="copy">${icon.copy}</span></div>
+      <div class="card" ${changesStyle}><div class="card-head">已更改 3 个文件 <span class="add">+161</span><span class="del">−12</span></div>
+        <div class="row hl" ${changesRow}><span class="path">src/components/ThreadOverview.tsx</span><span class="add">+98</span><span class="del">−8</span></div>
+        <div class="row" ${changesRow}><span class="path">src/styles.css</span><span class="add">+47</span><span class="del">−4</span></div>
+        <div class="row" ${changesRow}><span class="path">src/i18n/locales/zh.ts</span><span class="add">+16</span><span class="del">−0</span></div></div>
+      <div class="card"><div class="row hl"><span class="mark">M</span><b>前端</b><span class="warn">需要你</span><span class="faint">21 分 · 67 步</span></div>
+        <div class="sum">概况卡截图已就绪，深色下 diff 颜色偏亮，需要你确认取值。</div>
+        <div class="row"><span class="mark">C</span><b>后端</b><span class="muted">待验收</span><span class="faint">13 分 · 42 步</span></div>
+        <div class="sum">daemon 接口、fixture 和测试已交回。</div></div>
+    </div></div>
+    <div class="bottom">
+      <div class="sheet"><div class="sheet-q">允许运行 <code style="font-family:var(--mono);font-size:12.5px">npm test</code> 吗？</div>
+        <div class="opt hl"><span class="n">1</span>允许</div><div class="opt"><span class="n">2</span>本线程都允许</div><div class="opt"><span class="n">3</span>拒绝并说明</div></div>
+      <div class="composer"><div class="ph">继续这个线程</div>
+        <div class="bar"><span class="chip">${icon.plus}</span><span class="chip">附件</span><span class="chip on" style="margin-left:auto">Opus 5.5 · 高 ${icon.down}</span><span class="send" style="margin-left:6px"></span></div></div>
+      <div class="pop"><div class="row">Sonnet 5.5</div><div class="row hl">Opus 5.5<span class="check">✓</span></div><div class="row">Haiku 5.5</div></div>
+    </div>
+    <aside class="overview">
+      <div class="ov-head">${icon.agents}<b>智能体</b><span class="warn">1 待处理</span></div>
+      <div class="ov-row hl"><span class="mark">M</span>前端<span class="faint warn" style="margin-left:auto">需要你</span></div>
+      <div class="ov-row"><span class="mark">C</span>后端<span class="faint">待验收</span></div>
+      <div class="ov-sep"></div>
+      <div class="ov-head">${icon.file}<b>变更</b><span>6 <span class="add">+161</span> <span class="del">−12</span></span></div>
+      <div class="ov-row">Login.tsx<span class="faint">+98 −8</span></div>
+      <div class="ov-sep"></div>
+      <div class="ov-head">${icon.image}<b>图片</b><span>4</span></div>
+      <div class="ov-pics"><i></i><i></i><i></i></div>
+    </aside>
+    ${state.dialog === 'on' ? `<div class="scrim"><div class="dialog"><h2>重命名线程</h2><p>名字只在这台设备和这个 hub 里用。</p><div class="field">改造右上角指示面板</div><div class="foot"><button class="btn">取消</button><button class="btn primary">重命名</button></div></div></div>` : ''}
+  </section>
+</div>`;
+  fit();
+  location.replace('#' + new URLSearchParams(state).toString());
+}
+// A phone sees the whole desktop, scaled down, rather than a corner of it.
+function fit() {
+  const app = document.querySelector('.app');
+  if (app) app.style.zoom = String(Math.min(1, (window.innerWidth - 16) / 1282));
+}
+window.addEventListener('resize', fit);
+function code() {
+  if (state.mode === 'current') return '现状';
+  return `卡片${state.card} · 浮层${state.sheet === 'same' ? '同卡片' : state.sheet} · 内层${state.concentric === 'on' ? '同心' : '同外层'} · 菜单${state.popover === 'card' ? '跟卡片' : '跟浮层'}`;
+}
+document.addEventListener('click', e => {
+  const t = e.target.closest('button');
+  if (!t) return;
+  if (t.dataset.key) { state[t.dataset.key] = t.dataset.value; render(); }
+  if (t.id === 'copy') navigator.clipboard?.writeText(code());
+});
+render();
+</script>
+</body>
+</html>

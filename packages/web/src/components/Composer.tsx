@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject } from 'react';
 import { flushSync } from 'react-dom';
 import { ApiError, MAX_QUEUED, type AgentMention, type ModelQueue, type OutgoingImage, type QueuedMessage, type SlashCommand } from '../api';
 import { commandDraft, searchCommands, slashQuery, type HubAction, type MenuRow } from '../commands';
@@ -8,15 +8,16 @@ import { sizeLabel } from '../files';
 import { mentionAt } from '../mentions';
 import { takeoverMention } from '../handover';
 import { MAX_IMAGES, prepareImage, restoreImage, type PreparedImage } from '../images';
-import { withNotes, type Note } from '../timeline';
+import { channelRows, withNotes, type Note } from '../timeline';
 import { Popover } from './Popover';
-import { ComposerMenu, type GoalAction, type GoalCapability, type WritingMode } from './ComposerMenu';
+import { ComposerMenu, goalMenuActions, type GoalAction, type GoalCapability, type WritingMode } from './ComposerMenu';
 import { GoalCard } from './GoalCard';
 import { Lightbox } from './Lightbox';
 import { VideoPreview } from './VideoPreview';
-import { isVideo, MAX_VIDEOS, prepareVideo, VIDEO_ACCEPT, type PreparedVideo } from '../videos';
+import { isPlayable, isSupportedVideo, MAX_UPLOADS, MAX_VIDEOS, prepareFile, prepareVideo, type PreparedVideo } from '../videos';
 import {
   IconArchive,
+  IconAgents,
   AgentMark,
   IconClose,
   IconCheck,
@@ -32,6 +33,7 @@ import {
   IconList,
   IconPaperclip,
   IconPen,
+  IconFile,
   IconPlay,
   IconPin,
   IconPlus,
@@ -68,6 +70,10 @@ const asMessage = (text: string, notes: Note[]) => (notes.length ? withNotes(not
 
 /** How long a send may take before the button says it is still going. */
 const SLOW_SEND_MS = 400;
+/** How far a finger can drift and still count as tapping the mobile send button. */
+const SEND_TAP_SLOP = 12;
+/** Mobile browsers may deliver the compatibility click after pointerup; keep it from sending twice. */
+const SEND_CLICK_SUPPRESS_MS = 500;
 
 /** Safari may report composition as ended on the Enter keydown that still belongs to the IME. */
 export const isImeComposing = (event: Pick<KeyboardEvent<HTMLElement>, 'nativeEvent'>): boolean =>
@@ -124,7 +130,8 @@ interface Props {
   disabled?: boolean;
   placeholder: string;
   mentionOptions?: AgentMention[];
-  collaboration?: (select: (mention: AgentMention) => void, selected: AgentMention[]) => ReactNode;
+  collaboration?: (select: (mention: AgentMention) => void, selected: AgentMention[], anchorRef: RefObject<HTMLButtonElement>, openSignal: number) => ReactNode;
+  collaborationActive?: boolean;
   mentionDirectories?: string[];
   /** Browse another machine's folders for an instance there; `choose` sets that one's folder. */
   onBrowseMentionDir?: (mention: AgentMention, choose: (cwd: string) => void) => void;
@@ -140,8 +147,11 @@ interface Props {
   planMode?: { active: boolean; disabled: boolean; onChange: (active: boolean) => void };
   /** Writing mode, offered next to plan mode. */
   writingMode?: WritingMode;
-  /** A band above the input, such as writing mode's stages. */
-  banner?: ReactNode;
+  /**
+   * A band above the input, such as writing mode's stages. As a function it is handed `take`, which
+   * empties the box and returns what was written, for a control that carries the draft elsewhere.
+   */
+  banner?: ReactNode | ((take: () => string) => ReactNode);
   /**
    * The thread's agent (`current`, shown as `from`) is out of plan: one instance brought in with @
    * takes the thread over through `go`, with what was written as its note, instead of being sent work.
@@ -176,7 +186,8 @@ interface Props {
   modelQueue?: ModelQueue | null;
   onRemoveQueued: (id: string) => void;
   /** Takes a waiting message out of the queue and returns it, to be edited in the box. */
-  onEditQueued: (id: string) => Promise<{ text: string; images: OutgoingImage[]; videos?: PreparedVideo[]; mentions?: AgentMention[] }>;
+  /** Videos and files may come later than the text: restoring them can mean downloading them again. */
+  onEditQueued: (id: string) => Promise<{ text: string; images: OutgoingImage[]; videos?: PreparedVideo[] | Promise<PreparedVideo[]>; mentions?: AgentMention[] }>;
   /** Interrupt the running turn and send this waiting message next. */
   onSendQueuedNow: (id: string) => void;
   /** Text to put back in the box, such as messages that were waiting when the user pressed stop. */
@@ -233,7 +244,7 @@ export function Composer({
   attachmentsBlocked,
   attachNote,
   onError,
-  queued,
+  queued: queuedProp,
   modelQueue = null,
   onRemoveQueued,
   onEditQueued,
@@ -245,6 +256,7 @@ export function Composer({
   lastSent = null,
   mentionOptions = [],
   collaboration,
+  collaborationActive,
   mentionDirectories = [],
   onBrowseMentionDir,
   mentionIcon,
@@ -263,12 +275,19 @@ export function Composer({
   const [slow, setSlow] = useState(false);
   const [images, setImages] = useState<PreparedImage[]>([]);
   const [videos, setVideos] = useState<PreparedVideo[]>([]);
+  // Waiting messages being taken back into the box, hidden before the thread list catches up.
+  const [taking, setTaking] = useState<string[]>([]);
+  const queued = useMemo(() => taking.length ? queuedProp.filter(q => !taking.includes(q.id)) : queuedProp, [queuedProp, taking]);
+  useEffect(() => {
+    setTaking(current => current.length && current.some(id => !queuedProp.some(q => q.id === id)) ? current.filter(id => queuedProp.some(q => q.id === id)) : current);
+  }, [queuedProp]);
   const [videoPreview, setVideoPreview] = useState<PreparedVideo | null>(null);
   const [preparing, setPreparing] = useState(0);
   const [dragOver, setDragOver] = useState(false);
   const [active, setActive] = useState(0);
   const [dismissed, setDismissed] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
+  const [collaborationSignal, setCollaborationSignal] = useState(0);
   const [addQuery, setAddQuery] = useState('');
   const [catalog, setCatalog] = useState<'all' | 'actions' | 'skills'>('all');
   /** A picture being looked at full size before it goes out. */
@@ -283,6 +302,7 @@ export function Composer({
   const isTouch = useIsTouch();
 
   useEffect(() => { setAddOpen(false); }, [draftKey, narrow]);
+  useEffect(() => { setCollaborationSignal(0); }, [draftKey]);
   useEffect(() => {
     if (!addOpen) return;
     const outside = (event: PointerEvent) => {
@@ -338,14 +358,14 @@ export function Composer({
       const entries = commands.filter(c => catalog === 'skills' ? c.kind !== 'command' : c.kind !== 'skill' && c.kind !== 'prompt');
       return searchCommands(query, catalog === 'actions' ? actions.filter(a => !['help', 'skills'].includes(a.id)) : [], entries, [...hiddenCommands, ...(goal ? ['goal'] : [])]);
     }
-    const additions: HubAction[] = [{ id: 'composer:attach', label: t('composerMenu.attach'), hint: '', keywords: ['attach', 'image', 'video', '附件'] }];
+    const additions: HubAction[] = [{ id: 'composer:attach', label: t('composerMenu.attach'), hint: '', keywords: ['attach', 'image', 'video', 'file', '附件', '文件'] }];
+    if (collaboration) additions.push({ id: 'composer:collaboration', label: t('app.collab'), hint: '', keywords: ['collaboration', 'agents', '协作'] });
     if (planMode) additions.push({ id: 'composer:plan', label: t('composerMenu.planMode'), hint: planMode.disabled ? t('composer.planAfterTurn') : planMode.active ? t('composer.planActive') : t('composerMenu.planOn'), keywords: ['plan', '计划'], disabled: planMode.disabled });
     if (writingMode) additions.push({ id: 'composer:writing', label: t('writing.mode'), hint: writingMode.active ? t('writing.off') : t('writing.modeHint'), keywords: ['writing', 'write', '写作', '文章'], disabled: writingMode.disabled });
-    // One entry for every agent, like the phone menu: starting a goal fills the box; what the
-    // card cannot show is typed by hand.
     if (goal) {
-      const blocked = running ? t('composerMenu.afterTurn') : planMode?.active ? t('composerMenu.planFirst') : '';
-      additions.push({ id: 'composer:goal:set', label: t('goal.set'), hint: blocked || t('composer.goalSetHint'), keywords: ['目标', 'target'], disabled: !!blocked });
+      for (const { action, blocked } of goalMenuActions(goal, running, !!planMode?.active)) {
+        additions.push({ id: `composer:goal:${action}`, label: t(`goal.${action}`), hint: blocked || t('composer.goalSetHint'), keywords: ['goal', '目标', 'target'], disabled: !!blocked });
+      }
     }
     const group = (label: string, entries: HubAction[]): MenuRow[] => searchCommands(query, entries, []).map(row => row.type === 'heading' ? { ...row, label } : row);
     // Both desktop entry points share one catalog, ordering and filtering behavior.
@@ -353,7 +373,7 @@ export function Composer({
       ...(!narrow ? group(t('composer.add'), additions) : []),
       ...searchCommands(query, actions, commands, hiddenCommands),
     ];
-  }, [addOpen, addQuery, catalog, text, narrow, actions, commands, hiddenCommands, planMode, writingMode, goal, running]);
+  }, [addOpen, addQuery, catalog, text, narrow, actions, commands, hiddenCommands, planMode, writingMode, goal, running, collaboration]);
   const selectable = useMemo(() => rows.filter((r): r is Selectable => r.type !== 'heading' && !(r.type === 'action' && r.action.disabled)), [rows]);
   const menuOpen = addOpen || (rows.length > 0 && !dismissed);
 
@@ -455,6 +475,16 @@ export function Composer({
     };
   }, [draftKey]);
 
+  const takeDraft = () => {
+    const message = asMessage(text, notes);
+    setText('');
+    setNotes([]);
+    // The box may be gone before it renders again; its last word on the draft must be the empty one.
+    draftRef.current = { ...draftRef.current, text: '', notes: [] };
+    if (draftKey !== undefined) keepDraft(draftKey, draftRef.current);
+    return message;
+  };
+
   // Written down shortly after typing pauses, so a reload keeps it. The timer reads the box as it
   // is when it fires, so a switch to another thread in between saves under the right one.
   const keyRef = useRef(draftKey);
@@ -466,6 +496,23 @@ export function Composer({
     }, SAVE_DELAY_MS);
     return () => clearTimeout(timer);
   }, [draftKey, text, notes, mentions]);
+  useEffect(() => {
+    if (draftKey === undefined) return;
+    const flush = () => {
+      if (keyRef.current !== undefined && !sendingRef.current) keepDraft(keyRef.current, draftRef.current);
+    };
+    const flushWhenHidden = () => {
+      if (document.visibilityState === 'hidden') flush();
+    };
+    window.addEventListener('pagehide', flush);
+    window.addEventListener('beforeunload', flush);
+    document.addEventListener('visibilitychange', flushWhenHidden);
+    return () => {
+      window.removeEventListener('pagehide', flush);
+      window.removeEventListener('beforeunload', flush);
+      document.removeEventListener('visibilitychange', flushWhenHidden);
+    };
+  }, [draftKey]);
   // Whether that message arrived is for the thread to say. Once a new turn of the user's carries
   // this very text, it is no draft: left in the box it would look unsent, and be sent a second time.
   useEffect(() => {
@@ -497,17 +544,25 @@ export function Composer({
 
   const addFiles = async (files: File[]) => {
     if (attachmentsBlocked) return onError(attachmentsBlocked);
-    const pickedVideos = files.filter(isVideo);
-    if (pickedVideos.length) {
-      const room = MAX_VIDEOS - videos.length;
-      if (pickedVideos.length > room) onError(t('composer.maxVideos', MAX_VIDEOS));
+    // Pictures go to the model as pictures, videos can be previewed here; anything else is a plain file.
+    const pictures = files.filter((f) => f.type.startsWith('image/'));
+    const uploads = files.filter((f) => !f.type.startsWith('image/'));
+    if (uploads.length) {
+      let room = MAX_UPLOADS - videos.length;
+      let videoRoom = MAX_VIDEOS - videos.filter(isPlayable).length;
       const ready: PreparedVideo[] = [];
-      for (const file of pickedVideos.slice(0, Math.max(0, room))) {
-        try { ready.push(prepareVideo(file)); } catch (error) { onError(error instanceof Error ? error.message : t('composer.videoFailed')); }
+      for (const file of uploads) {
+        const video = isSupportedVideo(file);
+        if (room <= 0) { onError(t('composer.maxUploads', MAX_UPLOADS)); break; }
+        if (video && videoRoom <= 0) { onError(t('composer.maxVideos', MAX_VIDEOS)); continue; }
+        try {
+          ready.push(video ? prepareVideo(file) : prepareFile(file));
+          room -= 1;
+          if (video) videoRoom -= 1;
+        } catch (error) { onError(error instanceof Error ? error.message : t(video ? 'composer.videoFailed' : 'composer.fileFailed')); }
       }
       setVideos(current => [...current, ...ready]);
     }
-    const pictures = files.filter((f) => f.type.startsWith('image/'));
     if (pictures.length === 0) return;
     if (attachBlocked) return onError(attachBlocked);
     const room = MAX_IMAGES - images.length - preparing;
@@ -528,24 +583,30 @@ export function Composer({
 
   // A waiting message goes back in the box, in front of anything typed, pictures included.
   const editQueued = async (id: string) => {
+    // The row goes at once; waiting for the thread list to say so left it standing beside its own text.
+    setTaking(current => [...current, id]);
     try {
       const taken = await onEditQueued(id);
       if (taken.mentions?.length) setMentions(current => [...taken.mentions!, ...current]);
       setText((current) => [taken.text, current].filter((s) => s.trim()).join('\n\n'));
       const room = MAX_IMAGES - images.length - preparing;
       if (taken.images.length > room) onError(t('composer.maxImagesNotRestored', MAX_IMAGES));
-      const videoRoom = Math.max(0, MAX_VIDEOS - videos.length);
-      const returnedVideos = taken.videos ?? [];
-      if (returnedVideos.length > videoRoom) onError(t('composer.maxVideos', MAX_VIDEOS));
-      returnedVideos.slice(videoRoom).forEach(video => URL.revokeObjectURL(video.previewUrl));
-      setVideos(current => [...returnedVideos.slice(0, videoRoom), ...current]);
       const back = taken.images.slice(0, Math.max(0, room)).map(restoreImage);
       if (back.length) setImages((prev) => [...back, ...prev]);
       ref.current?.focus();
+      const returnedVideos = await (taken.videos ?? []);
+      // What is in the box by now, not when the edit began: these may arrive a while later.
+      const videoRoom = Math.max(0, MAX_UPLOADS - (draftRef.current.videos?.length ?? 0));
+      if (returnedVideos.length > videoRoom) onError(t('composer.maxUploads', MAX_UPLOADS));
+      returnedVideos.slice(videoRoom).forEach(video => URL.revokeObjectURL(video.previewUrl));
+      setVideos(current => [...returnedVideos.slice(0, videoRoom), ...current]);
     } catch (e) {
       // The turn ahead of it may have ended in the meantime, taking the message out with it.
       if (e instanceof ApiError && e.status === 404) onError(t('composer.alreadySent'));
-      else onError(e instanceof Error ? e.message : t('composer.takeBackFailed'));
+      else {
+        setTaking(current => current.filter(other => other !== id));
+        onError(e instanceof Error ? e.message : t('composer.takeBackFailed'));
+      }
     }
   };
 
@@ -572,6 +633,7 @@ export function Composer({
       if (!addOpen) setText('');
       const id = row.action.id;
       if (id === 'composer:attach') fileRef.current?.click();
+      else if (id === 'composer:collaboration') setCollaborationSignal(value => value + 1);
       else if (id === 'composer:plan') planMode?.onChange(!planMode.active);
       else if (id === 'composer:writing') writingMode?.onChange(!writingMode.active);
       else if (id.startsWith('composer:goal:')) chooseGoal(id.slice('composer:goal:'.length) as GoalAction);
@@ -636,6 +698,12 @@ export function Composer({
   // the button, and the menu it opened, away. The box stays whole until a tap lands outside it.
   // The press ends with the click, or shortly after the finger lifts.
   const boxRef = useRef<HTMLDivElement>(null);
+  // A portaled picker still belongs to its trigger, including during touch focus changes.
+  const ownsTarget = (target: EventTarget | null) => {
+    if (target instanceof Node && boxRef.current?.contains(target)) return true;
+    const panel = target instanceof Element ? target.closest('.pop-panel[id]') : null;
+    return Boolean(panel && [...(boxRef.current?.querySelectorAll('[aria-controls]') ?? [])].some(button => button.getAttribute('aria-controls') === panel.id));
+  };
   const boxPress = useRef<number | null>(null);
   const endBoxPress = () => {
     if (boxPress.current === null) return;
@@ -646,9 +714,9 @@ export function Composer({
     const down = (e: PointerEvent) => {
       pressing.current = true;
       // With the focus left on the page (see above) there is no blur to fold on; a tap elsewhere is.
-      if (e.target instanceof Node && !boxRef.current?.contains(e.target)) {
+      if (e.target instanceof Node && !ownsTarget(e.target)) {
         endBoxPress();
-        if (!boxRef.current?.contains(document.activeElement)) leave();
+        if (!ownsTarget(document.activeElement)) leave();
       }
     };
     const up = () => {
@@ -673,6 +741,19 @@ export function Composer({
   const immediate = !!goalControl && !!goal?.controls.includes(goalControl) && !images.length && !videos.length && !notes.length && !mentions.length;
   const queueFull = running && !immediate && queued.length >= MAX_QUEUED;
   const canSend = hasContent && !busy && !menuBusy && !disabled && preparing === 0 && !queueFull;
+  const sendPress = useRef<{ pointerId: number; x: number; y: number; moved: boolean } | null>(null);
+  const suppressSendClick = useRef(false);
+  const sendClickReset = useRef<number | null>(null);
+  const composing = useRef(false);
+  const pendingImeSend = useRef(false);
+  const imeSendTask = useRef<number | null>(null);
+  useEffect(() => () => {
+    if (sendClickReset.current !== null) window.clearTimeout(sendClickReset.current);
+    if (imeSendTask.current !== null) window.clearTimeout(imeSendTask.current);
+    sendClickReset.current = imeSendTask.current = null;
+    sendPress.current = null;
+    suppressSendClick.current = composing.current = pendingImeSend.current = false;
+  }, [draftKey]);
   const modelQueueNotice = modelQueue
     ? {
         text: modelQueue.position === null ? t('composer.modelQueueWaiting') : t('composer.modelQueuePosition', modelQueue.position),
@@ -681,7 +762,13 @@ export function Composer({
     : null;
 
   const submit = async () => {
-    if (!canSend) return;
+    if (!canSend || sendingRef.current || pendingImeSend.current) return;
+    if (composing.current) {
+      // Keep this tap: blur asks the native IME to commit, and compositionend resumes the send.
+      pendingImeSend.current = true;
+      ref.current?.blur();
+      return;
+    }
     if (attachmentsBlocked && (images.length || videos.length)) return onError(attachmentsBlocked);
     if (images.length && attachBlocked) return onError(attachBlocked);
     if (taker && (images.length || videos.length)) return onError(t('composer.takeoverAttachments'));
@@ -698,15 +785,17 @@ export function Composer({
       if (taker) await takeover!.go(taker.id, [message, taker.task?.trim()].filter(Boolean).join('\n\n'));
       else await onSend(message, images, mentions, videos);
       setMentions([]);
-      // Forgotten at once, not when the box next saves itself: a reload right now must not bring it back.
+      // Forget the sent draft at once, but retain words committed while its request was pending.
+      const remainingText = draftRef.current.text === text ? '' : draftRef.current.text;
       if (sentFrom !== undefined) keepDraft(sentFrom, null);
+      if (remainingText && keyRef.current !== undefined) keepDraft(keyRef.current, { text: remainingText, notes: [], images: [] });
       inFlight.current = null;
       setNotes([]);
       images.forEach((img) => URL.revokeObjectURL(img.previewUrl));
       videos.forEach(video => URL.revokeObjectURL(video.previewUrl));
       setVideos([]);
       setImages([]);
-      setText('');
+      setText(current => current === text ? '' : current);
     } catch {
       // The caller shows the error; keep the draft and the pictures so nothing is lost. The mark
       // stays too: a send can fail on this side (the page being reloaded, the answer lost on a bad
@@ -718,6 +807,60 @@ export function Composer({
       sendingRef.current = false;
       setBusy(false);
       ref.current?.focus();
+    }
+  };
+  const submitRef = useRef(submit);
+  submitRef.current = submit;
+  const compositionEnd = () => {
+    composing.current = false;
+    if (!pendingImeSend.current) return;
+    if (imeSendTask.current !== null) window.clearTimeout(imeSendTask.current);
+    // Some IMEs emit their final input after compositionend. Read the committed DOM value and
+    // latest submit in the next task; compositionend, rather than elapsed time, permits sending.
+    imeSendTask.current = window.setTimeout(() => {
+      imeSendTask.current = null;
+      if (composing.current || !pendingImeSend.current || !ref.current) return;
+      pendingImeSend.current = false;
+      const committedText = ref.current.value;
+      flushSync(() => setText(committedText));
+      void submitRef.current();
+    }, 0);
+  };
+  const endSendPress = (button: HTMLButtonElement, pointerId: number) => {
+    if (button.hasPointerCapture(pointerId)) button.releasePointerCapture(pointerId);
+    sendPress.current = null;
+    sendClickReset.current = window.setTimeout(() => {
+      sendClickReset.current = null;
+      suppressSendClick.current = false;
+    }, SEND_CLICK_SUPPRESS_MS);
+  };
+  const sendPointerDown = (e: ReactPointerEvent<HTMLButtonElement>) => {
+    if (sendClickReset.current !== null) window.clearTimeout(sendClickReset.current);
+    sendClickReset.current = null;
+    suppressSendClick.current = false;
+    if (e.pointerType === 'mouse' || !canSend) return;
+    // On phones, letting the button take focus can make the keyboard close and swallow the click.
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    suppressSendClick.current = true;
+    sendPress.current = { pointerId: e.pointerId, x: e.clientX, y: e.clientY, moved: false };
+  };
+  const sendPointerMove = (e: ReactPointerEvent<HTMLButtonElement>) => {
+    const press = sendPress.current;
+    if (!press || press.pointerId !== e.pointerId) return;
+    if (Math.hypot(e.clientX - press.x, e.clientY - press.y) > SEND_TAP_SLOP) press.moved = true;
+  };
+  const sendPointerUp = (e: ReactPointerEvent<HTMLButtonElement>) => {
+    const press = sendPress.current;
+    if (!press || press.pointerId !== e.pointerId) return;
+    e.preventDefault();
+    const target = document.elementFromPoint(e.clientX, e.clientY);
+    endSendPress(e.currentTarget, e.pointerId);
+    if (!press.moved && target && e.currentTarget.contains(target)) void submit();
+  };
+  const sendPointerCancel = (e: ReactPointerEvent<HTMLButtonElement>) => {
+    if (sendPress.current?.pointerId === e.pointerId) {
+      endSendPress(e.currentTarget, e.pointerId);
     }
   };
 
@@ -765,7 +908,7 @@ export function Composer({
 
   const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
     const files = [...e.clipboardData.files];
-    if (files.some((f) => f.type.startsWith('image/') || isVideo(f))) {
+    if (files.length) {
       e.preventDefault();
       void addFiles(files);
     }
@@ -800,7 +943,7 @@ export function Composer({
               const plan = isAction && row.action.id === 'composer:plan';
               const writing = isAction && row.action.id === 'composer:writing';
               const checked = plan ? planMode?.active : writing ? writingMode?.active : undefined;
-              const Icon = isAction ? row.action.id === 'composer:attach' ? IconPaperclip : plan ? IconList : writing ? IconPen : row.action.id.startsWith('composer:goal:') ? IconTarget : (ACTION_ICONS[row.action.id] ?? IconSlash) : row.command.kind === 'skill' ? IconSparkle : IconSlash;
+              const Icon = isAction ? row.action.id === 'composer:attach' ? IconPaperclip : row.action.id === 'composer:collaboration' ? IconAgents : plan ? IconList : writing ? IconPen : row.action.id.startsWith('composer:goal:') ? IconTarget : (ACTION_ICONS[row.action.id] ?? IconSlash) : row.command.kind === 'skill' ? IconSparkle : IconSlash;
               return (
                 <button
                   key={isAction ? `a-${row.action.id}` : `c-${row.command.name}`}
@@ -843,7 +986,7 @@ export function Composer({
           </div>
         )}
 
-        {banner}
+        {typeof banner === 'function' ? banner(takeDraft) : banner}
         {taker && <div className="takeover-note" role="status">
           <IconHand size={14} />
           <span>{t('composer.takeover', takeover!.from, taker.label)}</span>
@@ -869,7 +1012,7 @@ export function Composer({
           onBlur={(e) => {
             // A tap on a button in the box moves the focus to it; the box stays whole so the
             // change of shape cannot pull the button out from under the finger.
-            if (!e.currentTarget.contains(e.relatedTarget) && boxPress.current === null) leave();
+            if (!ownsTarget(e.relatedTarget) && boxPress.current === null) leave();
           }}
           onDragOver={(e) => {
             if (!hasFiles(e)) return;
@@ -898,10 +1041,11 @@ export function Composer({
                 <div key={q.id} className="queue-entry">
                 <div className="queue-item">
                   <span className={`queue-badge${q.error ? ' failed' : ''}`}>{t(q.error ? 'composer.notSent' : 'composer.queue')}</span>
-                  <span className="queue-text" title={q.text}>
-                    {q.text || (q.targets?.length ? t('app.collab') : q.videos ? t('videos.video') : t('images.image'))}
+                  <span className={`queue-text${q.channel?.parts ? ' parts' : ''}`} title={q.text}>
+                    {q.channel?.parts ? channelRows(q.channel, q.text).map((row, index) => <span key={index} className={row.kind === 'note' ? 'muted' : undefined}>{index > 0 && ' · '}{row.text}</span>) : q.text || (q.targets?.length ? t('app.collab') : q.files ? t('uploads.file') : q.videos ? t('videos.video') : t('images.image'))}
                     {q.images > 0 && q.text && <span className="muted"> · {t('composer.images', q.images)}</span>}
                     {!!q.videos && <span className="muted"> · {t('composer.videos', q.videos!)}</span>}
+                    {!!q.files && <span className="muted"> · {t('composer.files', q.files!)}</span>}
                   </span>
                   {!!q.targets?.length && <span className="queue-targets" title={t('composer.queueTargets', q.targets.join(', '))} aria-label={t('composer.queueTargets', q.targets.join(', '))}><span className="queue-target-names">@{q.targets.join(', ')}</span><span className="queue-target-count">{t('composer.queueTargetCount', q.targets.length)}</span></span>}
                   <button type="button" className="queue-now" title={t(q.error ? 'common.retry' : 'composer.sendNowHint')} onClick={() => onSendQueuedNow(q.id)}>
@@ -939,9 +1083,13 @@ export function Composer({
                 </div>
               ))}
               {videos.map(video => <div key={video.id} className="attachment video-attachment">
-                <button type="button" className="video-card" aria-label={t('composer.previewVideo', video.name)} onClick={() => setVideoPreview(video)}>
-                  <IconPlay size={20} /><span><span className="video-name">{video.name}</span><span className="video-size">{t('videos.video')} · {sizeLabel(video.file.size)}</span></span>
-                </button>
+                {isPlayable(video)
+                  ? <button type="button" className="video-card" aria-label={t('composer.previewVideo', video.name)} onClick={() => setVideoPreview(video)}>
+                    <IconPlay size={20} /><span><span className="video-name">{video.name}</span><span className="video-size">{t('videos.video')} · {sizeLabel(video.file.size)}</span></span>
+                  </button>
+                  : <div className="video-card file-card" title={video.name}>
+                    <IconFile size={20} /><span><span className="video-name">{video.name}</span><span className="video-size">{sizeLabel(video.file.size)}</span></span>
+                  </div>}
                 <button type="button" className="attachment-remove" aria-label={t('composer.remove', video.name)} onClick={() => { URL.revokeObjectURL(video.previewUrl); setVideos(current => current.filter(v => v.id !== video.id)); }}><IconClose size={12} /></button>
               </div>)}
               {Array.from({ length: preparing }, (_, i) => (
@@ -996,6 +1144,8 @@ export function Composer({
             value={text}
             placeholder={dragOver ? t('composer.drop') : collapsed && running ? t('composer.appendOne') : placeholder}
             onChange={(e) => { setText(e.target.value); readSelection(e.target); }}
+            onCompositionStart={() => { composing.current = true; }}
+            onCompositionEnd={compositionEnd}
             onSelect={(e) => readSelection(e.currentTarget)}
             onKeyDown={onKeyDown}
             onPaste={onPaste}
@@ -1044,7 +1194,6 @@ export function Composer({
             <input
               ref={fileRef}
               type="file"
-              accept={`image/*,${VIDEO_ACCEPT}`}
               multiple
               hidden
               onChange={(e) => {
@@ -1053,8 +1202,9 @@ export function Composer({
               }}
             />
             {narrow ? <Popover
+              triggerRef={addRef}
               label={t('composer.addAndMode')}
-              triggerClassName="tool-btn icon-only composer-add"
+              triggerClassName={`tool-btn icon-only composer-add${collaborationActive ? ' on' : ''}`}
               triggerLabel={t('composer.addAndMode')}
               triggerTitle={t('composer.addAndModeHint')}
               panelClassName="composer-add-menu"
@@ -1062,13 +1212,15 @@ export function Composer({
               disabled={disabled || menuBusy || busy}
             >
               {close => <ComposerMenu close={close} commands={commands} planMode={planMode} writingMode={writingMode} goal={goal} running={running}
+                collaboration={collaboration ? { active: !!collaborationActive, open: () => setCollaborationSignal(value => value + 1) } : undefined}
                 attachDisabled={Boolean(attachmentsBlocked)}
                 attachTitle={attachBlocked ? t('composer.attachBlocked', attachBlocked) : attachNote ?? t('composer.attachHint')}
                 onAttach={() => fileRef.current?.click()} onGoal={chooseGoal} onBrowse={browse} />}
-            </Popover> : <button ref={addRef} type="button" className="tool-btn icon-only composer-add"
+            </Popover> : <button ref={addRef} type="button" className={`tool-btn icon-only composer-add${collaborationActive ? ' on' : ''}`}
               aria-label={t('composer.addAndMode')} aria-haspopup="listbox" aria-expanded={addOpen} title={t('composer.addActionsSkills')} disabled={disabled || menuBusy || busy}
               onClick={() => { setCatalog('all'); setAddQuery(''); setAddOpen(!addOpen); setDismissed(true); }}><IconPlus size={20} /></button>}
-            {/* Plan mode is a pill of its own: what is on shows, and × takes it off. */}
+            {!collapsed && left}
+            {/* Only active modes take space; their compact marks can turn them off. */}
             {planMode?.active && (
               <button
                 type="button"
@@ -1082,10 +1234,6 @@ export function Composer({
                 <IconClose size={13} />
               </button>
             )}
-            {!collapsed && <>
-              {collaboration?.(mention => chooseMention(mention, false), mentions)}
-              {left}
-            </>}
             <div className="spacer" />
             {!collapsed && right}
             {composerActions}
@@ -1098,7 +1246,18 @@ export function Composer({
             {(voiceControls ? hasContent : !running || hasContent) && (
               <button
                 className={`send-btn${slow ? ' sending' : ''}`}
-                onClick={() => void submit()}
+                onPointerDown={sendPointerDown}
+                onPointerMove={sendPointerMove}
+                onPointerUp={sendPointerUp}
+                onPointerCancel={sendPointerCancel}
+                onClick={(e) => {
+                  // Keyboard and assistive activation have no pointer click count.
+                  if (e.detail !== 0 && suppressSendClick.current) {
+                    e.preventDefault();
+                    return;
+                  }
+                  void submit();
+                }}
                 disabled={!canSend}
                 aria-label={slow ? t('composer.sending') : taker ? t('composer.takeoverSend', taker.label) : running && !immediate ? t('composer.queueSend') : t('common.send')}
                 title={slow ? t('composer.sendingEllipsis') : taker ? t('composer.takeoverSend', taker.label) : queueFull ? t('composer.queueMax', MAX_QUEUED) : running ? immediate ? t('composer.goalNow') : t('composer.afterTurn') : undefined}
@@ -1110,6 +1269,7 @@ export function Composer({
         </div>
       </div>
       {voiceControls}
+      {collaboration?.(mention => chooseMention(mention, false), mentions, addRef, collaborationSignal)}
       {videoPreview && <VideoPreview url={videoPreview.previewUrl} name={videoPreview.name} onClose={() => setVideoPreview(null)} />}
       {preview && <Lightbox url={preview.previewUrl} name={preview.name} onClose={() => setPreview(null)} />}
     </div>

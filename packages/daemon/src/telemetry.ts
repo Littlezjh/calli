@@ -1,6 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite';
 import type { StoredEvent } from './events.js';
 import { summarizeCosts } from './pricing.js';
+import type { TurnStatsRow, TurnTokenSums } from './turn-stats.js';
 
 /** Never infer billable tokens from context size, character counts, or a historical replay. */
 export interface UsageSample {
@@ -72,6 +73,13 @@ export class Telemetry {
       );
       CREATE INDEX IF NOT EXISTS telemetry_time ON telemetry_turns(started_at);
       CREATE INDEX IF NOT EXISTS telemetry_sample_time ON telemetry_samples(ts);
+      CREATE TABLE IF NOT EXISTS telemetry_turn_stats (
+        thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+        turn_id TEXT NOT NULL,
+        timing TEXT NOT NULL, segments INTEGER NOT NULL, steps INTEGER NOT NULL,
+        wait_ms REAL NOT NULL, gen_ms REAL NOT NULL, tool_ms REAL NOT NULL,
+        PRIMARY KEY(thread_id, turn_id)
+      );
     `);
   }
 
@@ -95,6 +103,47 @@ export class Telemetry {
         SELECT ?,?,?,?,? WHERE EXISTS(SELECT 1 FROM telemetry_turns WHERE thread_id=? AND turn_id=?)`)
         .run(threadId, turnId, sample.id, ts, JSON.stringify(sample), threadId, turnId);
     }
+  }
+
+  /** Store one turn's computed timing; the computation itself lives in turn-stats.ts / trace.ts. */
+  recordTurnStats(threadId: string, turnId: string, stats: TurnStatsRow): void {
+    this.db.prepare(`INSERT OR REPLACE INTO telemetry_turn_stats(thread_id,turn_id,timing,segments,steps,wait_ms,gen_ms,tool_ms)
+      VALUES (?,?,?,?,?,?,?,?)`)
+      .run(threadId, turnId, stats.timing, stats.segments, stats.steps, stats.waitMs, stats.genMs, stats.toolMs);
+  }
+
+  /** Timing already computed for the thread's turns, keyed by turn id. */
+  turnStatsRows(threadId: string): Map<string, TurnStatsRow> {
+    const rows = this.db.prepare('SELECT turn_id,timing,segments,steps,wait_ms,gen_ms,tool_ms FROM telemetry_turn_stats WHERE thread_id=?')
+      .all(threadId) as Array<{ turn_id: string; timing: string; segments: number; steps: number; wait_ms: number; gen_ms: number; tool_ms: number }>;
+    return new Map(rows.map((row) => [row.turn_id, {
+      timing: row.timing === 'native' ? 'native' : 'hub',
+      segments: row.segments, steps: row.steps, waitMs: row.wait_ms, genMs: row.gen_ms, toolMs: row.tool_ms,
+    }]));
+  }
+
+  /**
+   * Native usage per turn, summed field by field over the turn's samples. Reads only this
+   * thread's rows (the primary key's prefix), never a whole event log. A field no sample
+   * reported stays null; `measured` counts samples that carried any token count at all.
+   */
+  tokenSumsByTurn(threadId: string): Map<string, TurnTokenSums> {
+    const rows = this.db.prepare(`SELECT turn_id AS turnId,
+        SUM(json_extract(data,'$.input')) AS input, SUM(json_extract(data,'$.output')) AS output,
+        SUM(json_extract(data,'$.total')) AS total, SUM(json_extract(data,'$.cacheRead')) AS cacheRead,
+        SUM(json_extract(data,'$.cacheWrite')) AS cacheWrite, SUM(json_extract(data,'$.reasoning')) AS reasoning,
+        SUM(json_extract(data,'$.input') IS NOT NULL OR json_extract(data,'$.output') IS NOT NULL
+          OR json_extract(data,'$.total') IS NOT NULL) AS measured
+      FROM telemetry_samples WHERE thread_id=? GROUP BY turn_id`).all(threadId) as any[];
+    const out = new Map<string, TurnTokenSums>();
+    for (const row of rows) {
+      out.set(row.turnId, {
+        input: row.input ?? null, output: row.output ?? null, total: row.total ?? null,
+        cacheRead: row.cacheRead ?? null, cacheWrite: row.cacheWrite ?? null, reasoning: row.reasoning ?? null,
+        measured: row.measured ?? 0,
+      });
+    }
+    return out;
   }
 
   private samples(since: string, until: string, agent: string) {

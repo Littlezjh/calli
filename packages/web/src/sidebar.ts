@@ -1,23 +1,34 @@
 /** How threads are arranged in the sidebar. Pure, so it can be tested directly. */
 import type { Attention } from '@calli/extension-api';
-import type { AgentInfo, Section, Thread } from './api';
+import type { AgentInfo, ExternalSession, Section, Thread } from './api';
 import { folderName } from './paths';
+import type { AgentMarkInfo } from './thread-cache';
 import { t } from './i18n';
 
 /** Desktop sidebar bounds keep the thread list useful without squeezing the conversation away. */
 export const SIDEBAR_MIN_WIDTH = 240;
-export const SIDEBAR_DEFAULT_WIDTH = 288;
 export const SIDEBAR_MAX_WIDTH = 520;
+/** The width nobody chose: a quarter of the window, between these two. */
+export const SIDEBAR_DEFAULT_MIN = 288;
+export const SIDEBAR_DEFAULT_MAX = 360;
 
 export function clampSidebarWidth(width: number): number {
   return Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, Math.round(width)));
 }
 
-/** Invalid or missing saved values fall back to the layout's original width. */
-export function savedSidebarWidth(value: string | null): number {
-  if (value === null) return SIDEBAR_DEFAULT_WIDTH;
+/**
+ * Until the list is dragged, its width follows the window: a wide screen has room for whole thread
+ * titles, a laptop keeps the conversation its space.
+ */
+export function defaultSidebarWidth(viewport: number): number {
+  return Math.min(SIDEBAR_DEFAULT_MAX, Math.max(SIDEBAR_DEFAULT_MIN, Math.round(viewport / 4)));
+}
+
+/** A width the user dragged to, or null when there is none (or what is stored is not a width). */
+export function savedSidebarWidth(value: string | null): number | null {
+  if (value === null) return null;
   const width = Number(value);
-  return Number.isFinite(width) ? clampSidebarWidth(width) : SIDEBAR_DEFAULT_WIDTH;
+  return Number.isFinite(width) ? clampSidebarWidth(width) : null;
 }
 
 /**
@@ -73,15 +84,52 @@ export interface SidebarModel {
   count: number;
 }
 
-/**
- * A thread appears exactly once: under "pinned" if pinned, else under its section if it has one,
+/** A session that is not a thread yet, shaped as the list's rows: it mixes in by its time and
+ *  its directory, and the row it becomes carries the session for importing on click. */
+export function externalThreadRow(session: ExternalSession): Thread {
+  const at = session.updatedAt ?? '';
+  return {
+    id: `ext:${session.agent}:${session.sessionId}`,
+    agent: session.agent,
+    cwd: session.cwd,
+    cwdReal: session.cwd,
+    title: session.title || session.cwd,
+    agentSessionId: null,
+    status: 'idle',
+    pinned: false,
+    permissionMode: 'auto_edit',
+    model: null,
+    effort: null,
+    archivedAt: null,
+    sectionId: null,
+    forkedFrom: null,
+    unread: false,
+    preview: null,
+    terminalActivity: false,
+    waiting: false,
+    queued: [],
+    resumeCommand: null,
+    createdAt: at,
+    updatedAt: at,
+    external: session,
+  };
+}
+
+/** The list the sidebar shows: threads and this machine's not-yet-thread sessions, by time. The
+ *  stable sort keeps threads in the order the API gave them (already newest first). */
+export function withExternalSessions(threads: Thread[], external: ExternalSession[]): Thread[] {
+  if (!external.length) return threads;
+  return [...threads, ...external.map(externalThreadRow)]
+    .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0));
+}
+
+/** A thread appears exactly once: under "pinned" if pinned, else under its section if it has one,
  * else under its project (working directory). Threads keep the order they arrive in.
  *
  * Projects are told apart by the directory with symlinks resolved: the same folder reached by two
  * spellings is one project. The group shows the spelling of its most recent thread.
  */
-export function buildSidebar(threads: Thread[], sections: Section[], search: string): SidebarModel {
-  const query = search.trim().toLowerCase();
+export function buildSidebar(threads: Thread[], sections: Section[], search: string): SidebarModel {  const query = search.trim().toLowerCase();
   const visible = matching(threads, search);
 
   const sectionIds = new Set(sections.map((s) => s.id));
@@ -142,6 +190,17 @@ export function threadAttention(t: Pick<Thread, 'id' | 'waiting' | 'waitingReaso
   return null;
 }
 
+export type BoardStage = 'backlog' | 'doing' | 'blocked' | 'review' | 'done';
+
+/** The board column a thread sits in, judged in the board's order: done, waiting, running, then what was reported. */
+export function boardStage(t: Pick<Thread, 'id' | 'waiting' | 'waitingReason' | 'unread' | 'status' | 'doneAt' | 'report'>): BoardStage {
+  if (t.doneAt) return 'done';
+  const attention = threadAttention(t, null);
+  if (attention && attention.kind !== 'unread') return 'blocked';
+  if (t.status === 'running') return 'doing';
+  return t.report?.stage ?? 'review';
+}
+
 /** Whether an attention is a person being waited on, as against a result to look at. */
 export const isWait = (a: Attention | null): boolean => a !== null && a.kind !== 'unread' && a.kind !== 'error';
 
@@ -161,11 +220,20 @@ function urgency(t: Thread, selectedId: string | null): number | null {
  */
 export function buildActivity(threads: Thread[], search: string, now: Date, selectedId: string | null): ActivityModel {
   const visible = matching(threads, search);
-  const newestFirst = (a: Thread, b: Thread) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0);
+  // A handover chain is one entry, kept whole: it stands under its most pressing member, and under
+  // the day any of them last moved. Split by urgency, the original and its successor would sit in
+  // different groups, far apart.
+  const chains = handoverGroups(visible).map(({ members }) => ({
+    members,
+    urgent: Math.min(...members.map((t) => urgency(t, selectedId) ?? Infinity)),
+    moved: members.reduce((time, t) => (t.updatedAt > time ? t.updatedAt : time), ''),
+  }));
+  const newestFirst = (a: { moved: string }, b: { moved: string }) => (a.moved < b.moved ? 1 : a.moved > b.moved ? -1 : 0);
 
-  const priority = visible
-    .filter((t) => urgency(t, selectedId) !== null)
-    .sort((a, b) => urgency(a, selectedId)! - urgency(b, selectedId)! || newestFirst(a, b));
+  const priority = chains
+    .filter((c) => c.urgent !== Infinity)
+    .sort((a, b) => a.urgent - b.urgent || newestFirst(a, b))
+    .flatMap((c) => c.members);
 
   const today = startOfDay(now);
   const ages: Array<{ key: string; label: string; within: number }> = [
@@ -176,11 +244,11 @@ export function buildActivity(threads: Thread[], search: string, now: Date, sele
     { key: 'older', label: t('sidebar.group.older'), within: Infinity },
   ];
   const byAge = new Map<string, Thread[]>();
-  for (const t of visible.filter((t) => urgency(t, selectedId) === null).sort(newestFirst)) {
+  for (const chain of chains.filter((c) => c.urgent === Infinity).sort(newestFirst)) {
     // Rounded: a day that a clock change made 23 or 25 hours long is still one day.
-    const days = Math.round((today - startOfDay(new Date(t.updatedAt))) / DAY_MS);
+    const days = Math.round((today - startOfDay(new Date(chain.moved))) / DAY_MS);
     const { key } = ages.find((a) => days <= a.within)!;
-    byAge.set(key, [...(byAge.get(key) ?? []), t]);
+    byAge.set(key, [...(byAge.get(key) ?? []), ...chain.members]);
   }
 
   return {
@@ -191,8 +259,11 @@ export function buildActivity(threads: Thread[], search: string, now: Date, sele
   };
 }
 
-/** Group explicit handovers only, within the caller's existing section or project. */
-export function handoverGroups(threads: Thread[]): Array<{ key: string; latest: Thread; members: Thread[] }> {
+/**
+ * Group explicit handovers only, within the caller's existing section or project. The groups are
+ * the most recently moved first, or with `keepOrder` in the order their first thread has in `threads`.
+ */
+export function handoverGroups(threads: Thread[], keepOrder = false): Array<{ key: string; latest: Thread; members: Thread[] }> {
   const byId = new Map(threads.map((t) => [t.id, t]));
   const root = (t: Thread): string => {
     const seen = new Set<string>();
@@ -214,6 +285,7 @@ export function handoverGroups(threads: Thread[]): Array<{ key: string; latest: 
     const parents = new Set(members.map((t) => t.handover?.sourceId));
     return { key, latest: members.find((t) => !parents.has(t.id)) ?? members[0], members };
   }).sort((a, b) => {
+    if (keepOrder) return Math.min(...a.members.map((t) => threads.indexOf(t))) - Math.min(...b.members.map((t) => threads.indexOf(t)));
     const newest = (members: Thread[]) => members.reduce((time, t) => t.updatedAt > time ? t.updatedAt : time, '');
     return newest(b.members).localeCompare(newest(a.members));
   });
@@ -262,6 +334,8 @@ export interface HostSource {
   /** When `threads` was read; null when nothing was. */
   at: string | null;
   threads: Thread[];
+  /** That machine's agents, for the rows' marks; null while not known on this device. */
+  agents?: AgentMarkInfo[] | null;
 }
 
 export interface MergedModel {

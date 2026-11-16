@@ -1,7 +1,7 @@
 import type { ExtensionManifest, ExtensionState, Permission } from '@calli/extension-api';
-import { Api, ApiError, type FolderListing, type SearchHit, type TextFile, type Thread, type VideoRef } from '../api';
+import { Api, ApiError, type FolderListing, type MachineUsageReport, type SearchHit, type TextFile, type Thread, type ThreadOutputs, type UsagePoint, type UsageTokens, type VideoRef } from '../api';
 import { BUILTIN_MANIFESTS } from '../extensions/catalog';
-import type { DemoData } from './data';
+import { demoPicture, type DemoData } from './data';
 import { t } from '../i18n';
 
 /**
@@ -38,7 +38,7 @@ export class DemoApi extends Api {
     return (this.data ??= this.load());
   }
 
-  protected override async send<T>(method: string, url: string, body?: unknown): Promise<T> {
+  protected override async send<T>(method: string, url: string, body?: unknown, _opts: { keepalive?: boolean } = {}): Promise<T> {
     const extensions = this.extensionAnswer(method, url, body);
     if (extensions !== undefined) return structuredClone(extensions) as T;
     const data = await this.workspace();
@@ -99,14 +99,29 @@ export class DemoApi extends Api {
     return Promise.reject(new DemoError(true));
   }
 
-  override threadFile(_threadId: string, _path: string): Promise<Blob> {
-    return Promise.reject(new DemoError(false));
+  override threadFile(_threadId: string, path: string): Promise<Blob> {
+    const picture = demoPicture(path);
+    return picture ? Promise.resolve(new Blob([picture], { type: 'image/svg+xml' })) : Promise.reject(new DemoError(false));
+  }
+
+  /** A page the demo wrote: a small stand-in with its name, served the way a signed link would be. */
+  override previewLink(_threadId: string, path: string): Promise<{ url: string }> {
+    const picture = demoPicture(path);
+    const name = path.split('/').pop() ?? path;
+    // The demo's stand-in page is written by an agent, not by the interface, so it stays in the
+    // demo's own words: a real hub serves the page the agent left in the thread's folder.
+    const page = picture ?? `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${name}</title></head><body style="font:16px/1.6 system-ui,sans-serif;margin:0;padding:40px;color:#1f1e1c;background:#f8f6f1"><h1 style="margin:0 0 8px;font-size:22px">${name}</h1><p style="margin:0;color:#6d6a63">Example page: in a real hub this is the page the agent wrote into the thread's folder.</p></body></html>`;
+    const type = picture ? 'image/svg+xml' : 'text/html';
+    return Promise.resolve({ url: `data:${type};charset=utf-8,${encodeURIComponent(page)}` });
   }
 
   override attachment(_threadId: string, _attachmentId: string): Promise<Blob> {
     return Promise.reject(new DemoError(false));
   }
 }
+
+/** What a thread with nothing to show is answered with: an overview that exists but is empty. */
+const NO_OUTPUTS: ThreadOutputs = { changes: { files: [], added: 0, removed: 0, total: 0 }, images: [], files: [], seq: 0 };
 
 /** The demo's answer to one request, or undefined when it has none. Exported for the tests. */
 export function route(data: DemoData, method: string, url: string, body?: unknown): unknown {
@@ -149,6 +164,8 @@ export function route(data: DemoData, method: string, url: string, body?: unknow
       return search(data, q.get('q') ?? '');
     case 'activity':
       return { days: data.activity };
+    case 'machine-usage':
+      return demoMachineUsage(q);
   }
 
   if (parts[0] === 'agents' && parts.length === 3) {
@@ -170,13 +187,26 @@ export function route(data: DemoData, method: string, url: string, body?: unknow
         return data.systemPrompts[t.id] ?? undefined;
       case 'trace':
         return data.traces[t.id] ?? undefined;
+      case 'stats':
+        return data.stats[t.id] ?? undefined;
       case 'events': {
         const after = Number(q.get('after') ?? 0);
         const before = Number(q.get('before') ?? Infinity);
         return events.filter((ev) => ev.seq > after && ev.seq < before);
       }
       case 'coordination':
-        return null;
+        return data.coordinations[t.id] ?? null;
+      case 'outputs':
+        return data.outputs[t.id] ?? NO_OUTPUTS;
+      case 'history': {
+        // The one change row opens each of its turns' diffs; the demo reads them from the very
+        // tool events the made-up thread ran.
+        if (parts[3] !== 'detail') return undefined;
+        const turn = q.get('turn') ?? '';
+        const id = Number(q.get('id'));
+        const start = events.find((ev) => ev.turnId === turn && ev.type === 'tool.start' && ev.data.id === id);
+        return start ? { version: Number(q.get('version') ?? 1), content: start.data.content ?? null, nextCursor: null } : undefined;
+      }
       case 'fork-options':
         return { worktree: { available: false } };
       case 'tree': {
@@ -200,6 +230,69 @@ export function route(data: DemoData, method: string, url: string, body?: unknow
     }
   }
   return undefined;
+}
+
+/** The demo machine's made-up usage: a day-shaped curve with an offline night and idle steps, so
+ *  the machines tab has something to read. Every step's value is seeded by the step itself, so a
+ *  poll keeps the past where it was. Shares stay unfiltered whatever the query filters. */
+function demoMachineUsage(q: URLSearchParams): MachineUsageReport {
+  const asked = Number(q.get('hours'));
+  const hours: 1 | 24 | 168 = asked === 1 || asked === 168 ? asked : 24;
+  const step = hours === 1 ? 60 : hours === 24 ? 600 : 3600;
+  const modelFilter = q.get('model');
+  // An empty launcher (a session the hub did not start) travels as `-`, the daemon's convention.
+  const launcherFilter = q.get('launcher');
+  const wanted = (model: string, launcher: string) =>
+    (!modelFilter || model === modelFilter) && (launcherFilter === null || (launcherFilter === '-' ? '' : launcherFilter) === launcher);
+  const models = [{ name: 'opus', share: 0.4 }, { name: 'sonnet', share: 0.6 }];
+  const launchers = [{ name: 'claude', share: 0.5 }, { name: 'codex', share: 0.3 }, { name: '', share: 0.2 }];
+  const noise = (n: number) => { const x = Math.sin(n * 12.9898) * 43758.5453; return x - Math.floor(x); };
+  const zero = (): UsageTokens => ({ input: 0, cacheWrite: 0, cacheRead: 0, output: 0, replies: 0 });
+  const total = zero();
+  const byModel = new Map(models.map(m => [m.name, { name: m.name, ...zero() }]));
+  const byLauncher = new Map(launchers.map(l => [l.name, { name: l.name, ...zero() }]));
+  // The four kinds' share of a row's tokens: cache-heavy, the way a long agent day looks.
+  const split: Array<[keyof UsageTokens, number]> = [['input', 0.26], ['output', 0.07], ['cacheWrite', 0.11], ['cacheRead', 0.56]];
+
+  const stepMs = step * 1000;
+  const now = Math.floor(Date.now() / stepMs) * stepMs;
+  const start = now - (hours * 3_600_000 - stepMs);
+  const points: UsagePoint[] = [];
+  for (let at = start; at <= now; at += stepMs) {
+    const index = at / stepMs;
+    const point: UsagePoint = { t: at / 1000, ...zero(), gap: true };
+    const hour = new Date(at).getHours();
+    // The machine was off overnight — ten minutes ago, within the hour view.
+    const offline = hours === 1 ? now - at >= 40 * 60_000 && now - at < 50 * 60_000 : hour >= 1 && hour < 7;
+    if (!offline) {
+      point.gap = false;
+      const day = hour >= 10 && hour < 20 ? 1 : 0.35;
+      const volume = 5_000 * (step / 60) * day * (0.3 + 1.4 * noise(index));
+      for (const model of models) for (const launcher of launchers) {
+        const row = volume * model.share * launcher.share * (noise(index * 3 + model.share * 10 + launcher.share * 7) < 0.25 ? 0 : 1);
+        if (!row) continue;
+        const count = Math.max(1, Math.round(row / 9_000));
+        for (const into of [byModel.get(model.name)!, byLauncher.get(launcher.name)!, ...wanted(model.name, launcher.name) ? [point, total] : []]) {
+          for (const [kind, share] of split) into[kind] += row * share;
+          into.replies += count;
+        }
+      }
+    }
+    points.push(point);
+  }
+  const round = (u: UsageTokens): UsageTokens => ({
+    input: Math.round(u.input), cacheWrite: Math.round(u.cacheWrite), cacheRead: Math.round(u.cacheRead),
+    output: Math.round(u.output), replies: Math.round(u.replies),
+  });
+  const shares = (map: Map<string, UsageTokens & { name: string }>) => [...map.values()]
+    .map(share => ({ name: share.name, ...round(share) }))
+    .filter(share => share.input + share.cacheWrite + share.cacheRead + share.output > 0)
+    .sort((a, b) => (b.input + b.cacheWrite + b.cacheRead + b.output) - (a.input + a.cacheWrite + a.cacheRead + a.output));
+  return {
+    hours, step, total: round(total),
+    points: points.map(point => ({ t: point.t, gap: point.gap, ...round(point) })),
+    models: shares(byModel), launchers: shares(byLauncher),
+  };
 }
 
 /** Turns in which the words were said: what the user asked and what came back. */

@@ -60,7 +60,7 @@ test('delegation destinations, searchable mobile models, compact empty notes and
       await json(daemon, `/api/todos/${linked.id}`, 'DELETE');
       // Opening the same model picker works in a bottom drawer and a desktop dialog.
       await page.locator('.personal-summary').click();
-      const settings = page.getByRole('dialog', { name: '私人设置', exact: true });
+      const settings = page.getByRole('region', { name: '私人设置', exact: true });
       await settings.locator('.personal-setting-line').nth(2).getByRole('button').click();
       const models = page.getByRole('menu', { name: '模型', exact: true });
       await models.getByLabel('筛选模型').waitFor();
@@ -96,17 +96,18 @@ test('delegation destinations, searchable mobile models, compact empty notes and
       else await route.continue();
     });
     await page.locator('.personal-summary').click();
-    let settings = page.getByRole('dialog', { name: '私人设置' });
+    let settings = page.getByRole('region', { name: '私人设置' });
     await settings.locator('.personal-setting-line').nth(2).getByRole('button').click();
-    await page.getByRole('status').waitFor();
+    await page.getByRole('menu', { name: '模型', exact: true }).getByRole('status').waitFor();
     await page.getByRole('menu', { name: '模型', exact: true }).getByRole('button', { name: '重试', exact: true }).click();
     await page.getByLabel('筛选模型').waitFor();
     await page.keyboard.press('Escape');
-    await settings.getByRole('button', { name: '取消', exact: true }).click();
+    await page.locator('.settings-topbar').getByRole('button', { name: '返回', exact: true }).click();
+    await page.locator('.settings-topbar').getByRole('button', { name: '返回', exact: true }).click();
     await page.route('**/api/push/settings', route => route.fulfill({ status: 404, json: { error: 'not found' } }));
     await page.getByRole('button', { name: '打开线程列表', exact: true }).click();
     await page.getByRole('button', { name: '配置', exact: true }).click();
-    await page.getByRole('menuitem', { name: '推送', exact: true }).click();
+    await page.locator('.settings-nav').getByRole('button', { name: '推送', exact: true }).click();
     await page.getByRole('alert').filter({ hasText: '后台还没更新到这个版本，重启 hub 后再试' }).waitFor();
   } finally { await browser.close(); await daemon.stop(); }
 });

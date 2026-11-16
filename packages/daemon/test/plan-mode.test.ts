@@ -68,15 +68,39 @@ for (const adapter of adapters().filter(a => ['claude', 'zcode'].includes(a.id))
   test(`${adapter.id}: native plan approval updates the UI mode without another prompt`, { timeout: 10000 }, async () => {
     const changes: string[] = [];
     const s = await adapter.start({ cwd: here, workMode: 'plan', permissionMode: 'full_access', onWorkMode: m => changes.push(m) });
+    let carried: object | undefined;
     try {
       const result = await s.prompt(input('plan-approval'), { ...hooks([]), requestInput: async r => {
         assert.equal(r.kind, 'plan'); assert.match(r.plan!, /实施计划/);
-        return { answers: { [r.questions[0].id]: [r.questions[0].options[0].value] } };
+        // Full access answers Claude's plan gate itself, so the request arrives with the decision
+        // attached; zcode has no permission levels of its own and keeps asking for a person.
+        carried = r.auto;
+        return r.auto ?? { answers: { [r.questions[0].id]: [r.questions[0].options[0].value] } };
       } });
       assert.equal(result.stopReason, 'end_turn'); assert.ok(changes.includes('execute'));
+      if (adapter.id === 'claude') assert.deepEqual(carried, { answers: { approval: ['exit-plan-bypass'] } });
+      else assert.equal(carried, undefined);
     } finally { await s.close(); }
   });
 }
+
+test('claude: a full-access plan gate is recorded and resolved in one event, never asked', { timeout: 10000 }, async () => {
+  const events: EmittedEvent[] = [];
+  const pending = new UserInputs((_thread, _turn, type, data) => events.push({ type, data }));
+  const s = await new ClaudeAcpAdapter(fixture('acp')).start({ cwd: here, workMode: 'plan', permissionMode: 'full_access' });
+  try {
+    const result = await s.prompt(input('plan-approval'), { ...hooks(events), requestInput: r => pending.request('thread', 'turn', r), cancelInput: id => pending.cancel('thread', id) });
+    assert.equal(result.stopReason, 'end_turn');
+    // The request says both what was planned and that the decision is already made; nothing waits.
+    const request = events.find(e => e.type === 'input.request');
+    assert.ok(request);
+    assert.equal(request!.data.kind, 'plan'); assert.match(String(request!.data.plan), /实施计划/);
+    assert.deepEqual(request!.data.auto, { answers: { approval: ['exit-plan-bypass'] } });
+    assert.equal(events.filter(e => e.type === 'input.resolved').length, 0);
+    assert.equal(pending.waiting('thread'), false);
+    assert.match(events.filter(e => e.type === 'message.delta').map(e => e.data.text).join(''), /mode:bypassPermissions/);
+  } finally { await s.close(); }
+});
 
 test('older Codex rejects plan mode visibly and keeps ordinary turns usable', async () => {
   const a = new CodexAppServerAdapter(fixture('codex'), { FAKE_CODEX_NO_PLAN: '1' });

@@ -1,8 +1,9 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { isFastSpeed, type AgentInfo, type Api, type ModelOption } from '../api';
-import { usageSummary, type Usage } from '../timeline';
+import { usageSummary, type Usage, type UsageSample } from '../timeline';
+import { compactTokens, ContextTotals, percentLabel } from './SessionStats';
 import { EFFORT_LABELS, PERMISSION_LABELS, PERMISSION_ORDER, permissionHint } from '../permissions';
-import { AgentMark, IconBolt, IconEffortGauge, IconCompress, IconRefresh, IconCheck, IconChevron, IconFolder, IconHand, IconPlus, IconShield, IconShieldAlert, IconSparkle, IconWorktree } from './icons';
+import { AgentMark, ContextRing, IconBolt, IconEffortGauge, IconCompress, IconList, IconChevronRight, IconRefresh, IconCheck, IconChevron, IconFolder, IconHand, IconPlus, IconShield, IconShieldAlert, IconSparkle, IconWorktree } from './icons';
 import { Popover } from './Popover';
 import { EffortSlider } from './EffortSlider';
 import { AgentQuota } from './AgentQuota';
@@ -37,13 +38,13 @@ export function PermissionPicker({ modes, value, onChange, canAsk, openSignal, q
       label={t('statusPanel.permission')}
       openSignal={openSignal}
       align={quietFor === undefined ? undefined : 'end'}
-      triggerClassName={quietFor === undefined ? `tool-btn keep${value === 'full_access' ? ' warn' : ''}` : 'member-model set'}
-      triggerLabel={quietFor === undefined ? undefined : t('pickers.permissionFor', quietFor)}
+      triggerClassName={quietFor === undefined ? `tool-btn icon-only composer-permission${value === 'full_access' ? ' warn' : ''}` : 'member-model set'}
+      triggerLabel={quietFor === undefined ? t('pickers.permissionIs', PERMISSION_LABELS[value]?.label ?? value) : t('pickers.permissionFor', quietFor)}
       triggerTitle={permissionHint(value, canAsk)}
       trigger={
         <>
           <Icon size={16} />
-          <span>{PERMISSION_LABELS[value]?.short ?? value}</span>
+          {quietFor !== undefined && <span>{PERMISSION_LABELS[value]?.short ?? value}</span>}
         </>
       }
     >
@@ -87,6 +88,8 @@ export function PermissionPicker({ modes, value, onChange, canAsk, openSignal, q
 
 interface ModelProps {
   onDiagnose?: () => void;
+  /** False when the CLI does not expose a model catalog at all, rather than one that failed to load. */
+  catalog?: boolean;
   models: ModelOption[];
   model: string | null;
   efforts: string[];
@@ -141,6 +144,33 @@ export function modelLoadLabel(percent: number): string {
   return t('pickers.modelLoad', percent);
 }
 
+/** Metadata, not the agent's name, decides whether a model has a queue status row. */
+function hasModelQueue(option: ModelOption | undefined): boolean {
+  return option?.queuePosition !== undefined || option?.queueSize !== undefined;
+}
+
+/** A request position is a recent observation, never a model-wide queue count. */
+export function modelQueueLabel(option: ModelOption | undefined, now = Date.now()): string {
+  if (!option) return '';
+  if (option.queuePosition === undefined) return option.queueSize !== undefined ? t('pickers.modelQueue', option.queueSize) : '';
+  const at = option.queueObservedAt;
+  if (at === undefined || !Number.isFinite(at) || at <= 0 || at > now) return t('pickers.modelQueueUnknown');
+  if (now - at > 30 * 60_000) return t('pickers.modelQueueStale');
+  if (option.queuePosition === null || !Number.isSafeInteger(option.queuePosition) || option.queuePosition < 0) return t('pickers.modelQueueUnknown');
+  const minutes = Math.floor((now - at) / 60_000);
+  const age = minutes < 1 ? t('time.justNow') : t('time.minutesAgo', minutes);
+  return t('pickers.modelQueueObserved', option.queuePosition, age);
+}
+
+/** A missing queue is not an empty queue; older catalogs keep their existing load-only display. */
+export function modelStatusLabel(option: ModelOption | undefined, now = Date.now()): string {
+  if (!option) return '';
+  return [
+    option.loadPercent !== undefined ? modelLoadLabel(option.loadPercent) : option.loadError ? t('pickers.modelLoadFailed') : hasModelQueue(option) ? t('pickers.modelLoadUnknown') : '',
+    modelQueueLabel(option, now),
+  ].filter(Boolean).join(' · ');
+}
+
 /** Why pictures cannot be sent with this model, or null when they can. */
 export function imagesBlocked(models: ModelOption[], id: string | null): string | null {
   const option = resolveModel(models, id);
@@ -165,11 +195,13 @@ export function effortsForModel(models: ModelOption[], model: string | null, fal
  * Rows for the model list. If the agent lists its own default, that row stands for "no override"
  * (stored as null), so there is never a second, duplicate default row.
  */
-export function modelRows(models: ModelOption[]): Array<{ value: string | null; label: string; hint?: string }> {
-  const rest = models.filter((m) => m.id !== AGENT_DEFAULT).map((m) => ({ value: m.id, label: m.label, hint: [m.description, m.speeds?.some(isFastSpeed) ? t('pickers.canAccelerate') : ''].filter(Boolean).join(' · ') || undefined }));
+export function modelRows(models: ModelOption[], now = Date.now()): Array<{ value: string | null; label: string; hint?: string }> {
+  const rest = models.filter((m) => m.id !== AGENT_DEFAULT).map((m) => ({ value: m.id, label: m.label, hint: [hasModelQueue(m) ? modelStatusLabel(m, now) : '', m.description, m.speeds?.some(isFastSpeed) ? t('pickers.canAccelerate') : ''].filter(Boolean).join(' · ') || undefined }));
   const target = defaultTarget(models);
+  const defaultModel = resolveModel(models, null);
+  const status = hasModelQueue(defaultModel) ? modelStatusLabel(defaultModel, now) : '';
   const first = target
-    ? { value: null, label: t('pickers.default'), hint: t('pickers.currently', target) }
+    ? { value: null, label: status ? `${t('pickers.default')} · ${target}` : t('pickers.default'), hint: status || t('pickers.currently', target) }
     : { value: null, label: t('pickers.defaultModel'), hint: t('pickers.agentModel') };
   return [first, ...rest];
 }
@@ -182,6 +214,7 @@ export function speedsForModel(models: ModelOption[], model: string | null): Non
 export function ModelPicker(props: ModelProps) {
   const { models, model, efforts, effort, openSignal, quietFor } = props;
   const narrow = useIsNarrow();
+  if (props.catalog === false) return null;
   if (models.length === 0 && efforts.length === 0 && quietFor === undefined) {
     return (
       <Popover
@@ -202,6 +235,8 @@ export function ModelPicker(props: ModelProps) {
   const shownEffort = effort && levels.includes(effort) ? effort : null;
   if (quietFor !== undefined) {
     const chosen = [model ? modelName(models, model) : '', shownEffort ? (EFFORT_LABELS[shownEffort] ?? shownEffort) : ''].filter(Boolean).join(' · ');
+    // Named even when nothing was chosen: the default model's name, quieter than a choice.
+    const shown = chosen || modelName(models, null);
     return (
       <Popover
         label={t('pickers.modelAndEffort')}
@@ -211,7 +246,8 @@ export function ModelPicker(props: ModelProps) {
         triggerClassName={`member-model${chosen ? ' set' : ''}`}
         triggerLabel={t('pickers.modelAndEffortFor', quietFor)}
         triggerTitle={chosen || t('pickers.modelAndEffortDefault')}
-        trigger={<><IconBolt size={14} />{chosen && <span>{chosen}</span>}</>}
+        // The main model button's dial, filled to the effort: the lightning bolt means fast mode.
+        trigger={<><IconEffortGauge size={14} level={shownEffort ? (levels.indexOf(shownEffort) + 1) / levels.length : null} /><span>{shown}</span></>}
       >
         {() => (models.length === 0 && efforts.length === 0 ? <p className="member-model-empty">{t('pickers.nothingToChoose')}</p> : <ModelControl {...props} />)}
       </Popover>
@@ -242,7 +278,19 @@ export function ModelPicker(props: ModelProps) {
 
 function ModelControl({ models, model, efforts, effort, onModel, onEffort, speed, onSpeed }: ModelProps) {
   const levels = effortsForModel(models, model, efforts);
-  const loadPercent = modelLoadPercent(models, model);
+  const selectedModel = resolveModel(models, model);
+  const loadPercent = selectedModel?.loadPercent;
+  const queueStatus = hasModelQueue(selectedModel);
+  const [clock, setClock] = useState(Date.now);
+  const hasObservations = models.some(m => m.queueObservedAt !== undefined);
+  useEffect(() => {
+    if (!hasObservations) return;
+    // Only advance observation age while this card is open; no provider polling or inference.
+    const timer = setInterval(() => setClock(Date.now()), 60_000);
+    return () => clearInterval(timer);
+  }, [hasObservations]);
+  const now = Math.max(clock, Date.now());
+  const queueLabel = modelQueueLabel(selectedModel, now);
   const speeds = onSpeed ? speedsForModel(models, model) : [];
   const fastSpeed = speeds.find(isFastSpeed);
   const standardSpeed = speeds.find(s => s.id === 'default');
@@ -259,7 +307,7 @@ function ModelControl({ models, model, efforts, effort, onModel, onEffort, speed
         <span>{t('pickers.chooseModel')}</span>
       </div>
       <div className="pop-scroll">
-        {modelRows(models).map((row) => (
+        {modelRows(models, now).map((row) => (
           <button key={row.value ?? 'default'} type="button" role="menuitemradio" aria-checked={row.value === (model === AGENT_DEFAULT ? null : model)} className="pop-item compact"
             onClick={() => { onModel(row.value); setPreview(undefined); setShowModels(false); }}>
             <span className="pop-item-text"><span className="pop-item-label">{row.label}</span><span className="pop-item-hint">{row.hint}</span></span>
@@ -281,9 +329,16 @@ function ModelControl({ models, model, efforts, effort, onModel, onEffort, speed
         ><IconBolt size={19} /></button> : <span aria-hidden="true" />}
         <div className="effort-card-heading">
           <div className="effort-value" aria-live="polite">{levels.length ? (shown ? (EFFORT_LABELS[shown] ?? shown) : t('pickers.default')) : t('pickers.noEffort')}</div>
-          <button type="button" className="effort-model" disabled={models.length === 0} onClick={() => setShowModels(true)} aria-label={t('pickers.switchModel', [modelName(models, model), loadPercent === undefined ? '' : modelLoadLabel(loadPercent)].filter(Boolean).join(' · '))}>
-            <span className="effort-model-name">{modelName(models, model)}</span>{loadPercent !== undefined && <ModelLoad percent={loadPercent} />}<IconChevron size={13} />
+          <button type="button" className="effort-model" disabled={models.length === 0} onClick={() => setShowModels(true)} aria-label={t('pickers.switchModel', [modelName(models, model), modelStatusLabel(selectedModel, now)].filter(Boolean).join(' · '))}>
+            <span className="effort-model-name">{modelName(models, model)}</span>
+            {!queueStatus && loadPercent !== undefined && <ModelLoad percent={loadPercent} />}
+            <IconChevron size={13} />
           </button>
+          {/* Keep the model's identity readable; queue metadata lives in one short secondary row. */}
+          {queueStatus && <div className="model-status-line" aria-hidden="true">
+            {loadPercent !== undefined ? <ModelLoad percent={loadPercent} /> : <span className="model-inline-load">{selectedModel?.loadError ? t('pickers.modelLoadFailed') : t('pickers.modelLoadUnknown')}</span>}
+            <span className="model-inline-load model-inline-queue" title={queueLabel}>{queueLabel}</span>
+          </div>}
         </div>
         <button type="button" className="icon-btn effort-reset" aria-label={t('pickers.resetEffort')} title={t('pickers.resetEffort')} disabled={selected === null} onClick={() => onEffort(null)}><IconRefresh size={18} /></button>
       </div>
@@ -492,64 +547,128 @@ export function AgentPicker({ api, agents, value, onChange, accounts = [], onAdd
   );
 }
 
-/** How full the agent's context window is: a small ring that opens to the numbers. */
-export function UsageMeter({ usage, onCompact, running, compactDisabled, compactQueued }: {
+/**
+ * The composition of the latest model request, as the agent itself reported it — no category is
+ * estimated. Only fields the sample actually carries become cells; a reported zero is a real
+ * zero, so zero-value parts stay off the row.
+ */
+function ContextSample({ sample }: { sample: UsageSample }) {
+  const parts: Array<{ key: string; label: string; value: number; seg: string }> = [];
+  if (sample.cacheRead) parts.push({ key: 'read', label: t('stats.cacheRead'), value: sample.cacheRead, seg: 's-read' });
+  if (sample.cacheWrite) parts.push({ key: 'write', label: t('stats.cacheWrite'), value: sample.cacheWrite, seg: 's-write' });
+  const uncached = sample.input != null && sample.cacheRead != null && sample.cacheWrite != null
+    ? sample.input - sample.cacheRead - sample.cacheWrite : undefined;
+  if (uncached != null && uncached > 0) parts.push({ key: 'uncached', label: t('stats.uncached'), value: uncached, seg: 's-uncached' });
+  if (sample.output) parts.push({ key: 'output', label: t('stats.output'), value: sample.output, seg: 's-output' });
+  if (parts.length === 0) return null;
+  const total = parts.reduce((sum, part) => sum + part.value, 0);
+  // Three parts read as one row of tiles; four would squeeze the labels at that width, so they
+  // pair into two rows instead.
+  const columns = parts.length >= 4 ? 2 : parts.length;
+  return <>
+    <div className="usage-request-label">{sample.model ? t('pickers.contextLastRequest', sample.model) : t('pickers.contextLastRequestShort')}</div>
+    <div className="usage-cells" style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}>
+      {parts.map((part) => (
+        <div key={part.key} className="usage-cell" title={part.label}>
+          <div className="usage-cell-value">
+            <span className={`usage-swatch ${part.seg}`} />
+            <span>{compactTokens(part.value)}</span>
+            <span className="usage-cell-share">{percentLabel(part.value / total)}</span>
+          </div>
+          <div className="usage-cell-label">{part.label}</div>
+        </div>
+      ))}
+    </div>
+  </>;
+}
+
+/** How full the agent's context window is: a small ring that opens to the numbers. The panel keeps
+ *  the summary first — percentage, window bar, the latest request's composition — and holds the
+ *  session totals and the agent's own breakdown behind "Details", one deliberate step away. */
+export function UsageMeter({ usage, sample, api, threadId, onCompact, onContext, running, compactDisabled, compactQueued }: {
   usage: Usage | null;
+  /** The latest per-request token sample, when the agent reports any. */
+  sample: UsageSample | null;
+  /** Reads the session totals when the panel opens; null in the built-in demo. */
+  api: Api | null;
+  threadId: string;
   onCompact?: () => Promise<void>;
+  /** Sends the agent's own context breakdown command, when its command list has one. */
+  onContext?: () => Promise<void>;
   running?: boolean;
   compactDisabled?: boolean;
   compactQueued?: boolean;
 }) {
   const [compacting, setCompacting] = useState(false);
-  const { percent, high, detail } = usage ? usageSummary(usage)
-    : { percent: 0, high: false, detail: t('pickers.contextUnknown') };
-  // A ring of radius 6 has a circumference of about 37.7; the dash shows the used share of it.
-  const circumference = 2 * Math.PI * 6;
+  const [expanded, setExpanded] = useState(false);
+  const { percent, high } = usage ? usageSummary(usage) : { percent: null, high: false };
+  const label = percent === null ? t('pickers.contextUsageUnknown') : t('pickers.contextUsagePercent', percent);
+  const cost = usage?.cost && usage.cost.amount > 0
+    ? ` · ${usage.cost.currency === 'USD' ? '$' : `${usage.cost.currency} `}${usage.cost.amount.toFixed(2)}` : '';
+  const compactLabel = compactQueued ? t('pickers.compactQueued')
+    : compactDisabled ? t('pickers.queueFull')
+      : compacting ? t('pickers.submitting')
+        : running ? t('pickers.compactNext') : t('pickers.compact');
+  const details = (close: () => void) => <>
+    {usage ? (
+      <>
+        <div className="usage-head">
+          <span className="context-percent">{percent}%</span>
+          <span className="usage-used">{compactTokens(usage.used)} / {compactTokens(usage.size)}{cost}</span>
+        </div>
+        <div className="usage-panel-bar">
+          <div className="usage-bar" role="presentation"><div className="usage-bar-fill" style={{ width: `${percent}%` }} /></div>
+        </div>
+        {high && <div className="usage-high-note">{t('pickers.contextHighShort')}</div>}
+      </>
+    ) : (
+      <div className="usage-head unknown">
+        <span className="context-percent">?</span>
+        <span className="usage-used">{t('pickers.contextUnknown')}</span>
+      </div>
+    )}
+    {sample && <ContextSample sample={sample} />}
+    {expanded && (
+      <div className="usage-more">
+        <ContextTotals api={api} threadId={threadId} active={running} label={t('pickers.contextTotals')} />
+        {onContext && (
+          <button type="button" className="usage-cmd" onClick={() => { void onContext(); close(); }}>
+            <IconList size={15} />
+            <span>{t('pickers.contextDetail')}</span>
+            <IconChevronRight size={14} />
+          </button>
+        )}
+      </div>
+    )}
+    {(onCompact || onContext) && (
+      <div className="usage-foot">
+        {onCompact && <button type="button" className="usage-act context-compact" disabled={compacting || compactDisabled || compactQueued}
+          onClick={async () => {
+            setCompacting(true);
+            try { await onCompact(); close(); } catch { /* The caller displays the error. */ }
+            finally { setCompacting(false); }
+          }}>
+          <IconCompress size={15} />{compactLabel}
+        </button>}
+        <span className="usage-rule" />
+        <button type="button" className="usage-act" aria-expanded={expanded}
+          onClick={() => setExpanded((v) => !v)}>
+          {t('pickers.contextDetails')}<IconChevron size={13} open={expanded} />
+        </button>
+      </div>
+    )}
+  </>;
   return (
     <Popover
       label={t('pickers.contextUsage')}
       align="end"
-      triggerClassName={`usage${high ? ' high' : ''}`}
-      trigger={
-        <>
-          <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
-            <circle className="usage-track" cx="8" cy="8" r="6" fill="none" strokeWidth="2.2" />
-            <circle
-              className="usage-fill"
-              cx="8"
-              cy="8"
-              r="6"
-              fill="none"
-              strokeWidth="2.2"
-              strokeLinecap="round"
-              strokeDasharray={`${(percent / 100) * circumference} ${circumference}`}
-              transform="rotate(-90 8 8)"
-            />
-          </svg>
-          <span>{usage ? `${percent}%` : t('statusPanel.context')}</span>
-        </>
-      }
+      panelClassName={`context-usage-panel${high ? ' high' : ''}`}
+      triggerClassName={`usage${high ? ' high' : ''}${percent === null ? ' unknown' : ''}`}
+      triggerLabel={label}
+      triggerTitle={label + (high ? t('pickers.contextHigh') : '')}
+      trigger={<ContextRing percent={percent} size={20} />}
     >
-      {(close) => (
-        <>
-          <div className="pop-title">{t('statusPanel.context')}</div>
-          <div className="pop-note">
-            {detail}
-            {high && t('pickers.contextHigh')}
-          </div>
-          {onCompact && <button type="button" className="pop-item compact context-compact" disabled={compacting || compactDisabled || compactQueued}
-            onClick={async () => {
-              setCompacting(true);
-              try { await onCompact(); close(); } catch { /* The caller displays the error. */ }
-              finally { setCompacting(false); }
-            }}>
-            <span className="pop-item-icon"><IconCompress size={17} /></span>
-            <span className="pop-item-text"><span className="pop-item-label">{compacting ? t('pickers.submitting') : compactQueued ? t('pickers.compactQueued') : t('pickers.compact')}</span>
-              <span className="pop-item-hint">{compactDisabled ? t('pickers.queueFull') : running ? t('pickers.compactAfter') : t('pickers.compactHint')}</span>
-            </span>
-          </button>}
-        </>
-      )}
+      {details}
     </Popover>
   );
 }

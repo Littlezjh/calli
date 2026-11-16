@@ -14,7 +14,8 @@ import { BrowserComputer } from '../browser-computer.js';
 import { spawn } from 'node:child_process';
 import { CodexMemoryReader } from './codex-memory.js';
 import { homedir, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import type { EmittedEvent } from '../events.js';
 import { commandExists } from '../util.js';
 import { titlePlan } from './plans.js';
@@ -53,12 +54,14 @@ import type {
  * `turn/completed` when everything is over. Approvals arrive as JSON-RPC requests from the server.
  */
 
-/** One hub permission level, as the pair of knobs Codex itself exposes: sandbox + approval policy. */
-const CODEX_MODES: Record<PermissionMode, { sandbox: string; approvalPolicy: string }> = {
+type ApprovalsReviewer = 'user' | 'auto_review';
+
+/** One hub permission level, as the sandbox, approval policy and native reviewer Codex exposes. */
+const CODEX_MODES: Record<PermissionMode, { sandbox: string; approvalPolicy: string; approvalsReviewer: ApprovalsReviewer }> = {
   // Codex's own three modes: Read Only, Auto, Full Access.
-  ask: { sandbox: 'read-only', approvalPolicy: 'on-request' },
-  auto_edit: { sandbox: 'workspace-write', approvalPolicy: 'on-request' },
-  full_access: { sandbox: 'danger-full-access', approvalPolicy: 'never' },
+  ask: { sandbox: 'read-only', approvalPolicy: 'on-request', approvalsReviewer: 'user' },
+  auto_edit: { sandbox: 'workspace-write', approvalPolicy: 'on-request', approvalsReviewer: 'auto_review' },
+  full_access: { sandbox: 'danger-full-access', approvalPolicy: 'never', approvalsReviewer: 'user' },
 };
 
 /** Metadata shared by the index and a single-thread read; never hydrate turns for a title. */
@@ -514,7 +517,7 @@ class CodexSession implements AgentSession {
   private collaboration: any = undefined;
   private defaultModel = '';
   private defaultEffort: string | null = null;
-  private overrides: { serviceTier?: string | null; model?: string; effort?: EffortLevel; approvalPolicy?: string; sandboxPolicy?: { type: string } } = {};
+  private overrides: { serviceTier?: string | null; model?: string; effort?: EffortLevel; approvalPolicy?: string; approvalsReviewer?: ApprovalsReviewer; sandboxPolicy?: { type: string } } = {};
 
   constructor(
     readonly agentSessionId: string,
@@ -525,6 +528,8 @@ class CodexSession implements AgentSession {
     /** Whose app-server this is; TRAE CLI runs the same protocol under its own name. */
     private readonly name = 'codex',
     private readonly computer?: BrowserComputer,
+    /** Send image bytes when this server's CDN upload references are unusable. */
+    private readonly inlineImages = false,
   ) { this.defaultModel = initialModel ?? ''; this.defaultEffort = initialEffort ?? null; }
 
   /** Called by the peer for every notification. Ignores anything about another thread. */
@@ -782,6 +787,7 @@ class CodexSession implements AgentSession {
     if (this.overrides.serviceTier !== undefined) out.serviceTier = this.overrides.serviceTier;
     if (this.overrides.effort) out.effort = this.overrides.effort;
     if (this.overrides.approvalPolicy) out.approvalPolicy = this.overrides.approvalPolicy;
+    if (this.overrides.approvalsReviewer) out.approvalsReviewer = this.overrides.approvalsReviewer;
     if (this.overrides.sandboxPolicy) out.sandboxPolicy = this.overrides.sandboxPolicy;
     if (this.collaboration) out.collaborationMode = { mode: this.workMode === 'plan' ? 'plan' : 'default', settings: {
       model: this.overrides.model ?? this.defaultModel, reasoning_effort: this.overrides.effort ?? this.defaultEffort, developer_instructions: null,
@@ -889,7 +895,9 @@ class CodexSession implements AgentSession {
         input: [
           ...(input.text ? [{ type: 'text', text: skill ? `$${skill.name}${args ? ` ${args}` : ''}` : input.text }] : []),
           ...(skill ? [{ type: 'skill', name: skill.name, path: skill.path }] : []),
-          ...input.images.filter((img) => typeof img.path === 'string').map((img) => ({ type: 'localImage', path: img.path })),
+          ...(this.inlineImages
+            ? input.images.map((img) => ({ type: 'image', url: `data:${img.mimeType};base64,${img.data}` }))
+            : input.images.filter((img) => typeof img.path === 'string').map((img) => ({ type: 'localImage', path: img.path }))),
         ],
         ...this.turnOverrides(),
       });
@@ -939,8 +947,14 @@ class CodexSession implements AgentSession {
   async setPermissionMode(mode: PermissionMode): Promise<void> {
     const codex = CODEX_MODES[mode];
     this.overrides.approvalPolicy = codex.approvalPolicy;
+    this.overrides.approvalsReviewer = codex.approvalsReviewer;
     this.overrides.sandboxPolicy = SANDBOX_POLICY[codex.sandbox];
-    if (this.turn?.goal) await this.peer.request('thread/settings/update', { threadId: this.agentSessionId, approvalPolicy: codex.approvalPolicy, sandboxPolicy: this.overrides.sandboxPolicy });
+    // Native app-server only permits changing the reviewer on an active turn. The sandbox and
+    // approval policy intentionally remain unchanged until the next turn starts.
+    if (this.turn?.id) await this.peer.request('turn/settings/update', { threadId: this.agentSessionId,
+      turnId: this.turn.id, approvalsReviewer: codex.approvalsReviewer });
+    if (this.turn?.goal) await this.peer.request('thread/settings/update', { threadId: this.agentSessionId, approvalPolicy: codex.approvalPolicy,
+      approvalsReviewer: codex.approvalsReviewer, sandboxPolicy: this.overrides.sandboxPolicy });
   }
 
   async cancel(): Promise<void> {
@@ -1103,6 +1117,7 @@ export class CodexAppServerAdapter implements AgentAdapter {
     private readonly env: Record<string, string> = {},
     /** Name in errors; TRAE CLI reuses this adapter with its own binary. */
     private readonly name = 'codex',
+    private readonly inlineImages = false,
   ) {}
 
   /** Device auth prints a code, so it also works when the terminal is not on the browser's machine. */
@@ -1319,6 +1334,26 @@ export class CodexAppServerAdapter implements AgentAdapter {
     });
   }
 
+  /**
+   * Another account's rollout, forked into this account through the app-server's fork-by-path. The
+   * cleaned rollout is staged under this account's own `sessions/` first — the fork's lineage names
+   * it as its source, so it stays; without it the fork cannot be resumed. Encrypted reasoning only
+   * the account that wrote it can read is left out of the copy; a conversation compacted natively
+   * cannot go over at all, its summary being sealed the same way.
+   */
+  async importSession(sourcePath: string): Promise<string> {
+    const dir = join(configDirectory(this.env, 'CODEX_HOME', ['.codex'], process.cwd()), 'sessions', 'imported');
+    const path = join(dir, basename(sourcePath));
+    await mkdir(dir, { recursive: true });
+    await writeFile(path, portableRollout(await readFile(sourcePath, 'utf8')), { mode: 0o600 });
+    return await this.withServer(async (peer) => {
+      const res = await peer.request('thread/fork', { threadId: '', path, ephemeral: false, excludeTurns: true });
+      const id = res?.thread?.id;
+      if (!id) throw new Error(`${this.name} did not return a thread id for the copy`);
+      return String(id);
+    });
+  }
+
   /** A copy that stops before one turn, excluding it and everything after it. */
   async forkBeforeSession(agentSessionId: string, _cwd: string, forkBeforeRef: string): Promise<string> {
     return this.withServer(async (peer) => {
@@ -1367,7 +1402,7 @@ export class CodexAppServerAdapter implements AgentAdapter {
           cwd: opts.cwd,
           excludeTurns: true,
           ...toolConfig,
-          ...(mode ? { sandbox: mode.sandbox, approvalPolicy: mode.approvalPolicy } : {}),
+          ...(mode ? { sandbox: mode.sandbox, approvalPolicy: mode.approvalPolicy, approvalsReviewer: mode.approvalsReviewer } : {}),
         });
         nativeModel = res?.model;
         nativeEffort = res?.reasoningEffort;
@@ -1376,7 +1411,7 @@ export class CodexAppServerAdapter implements AgentAdapter {
         const res = await peer.request('thread/start', {
           cwd: opts.cwd,
           ...toolConfig,
-          ...(mode ? { sandbox: mode.sandbox, approvalPolicy: mode.approvalPolicy } : {}),
+          ...(mode ? { sandbox: mode.sandbox, approvalPolicy: mode.approvalPolicy, approvalsReviewer: mode.approvalsReviewer } : {}),
           ...(opts.model ? { model: opts.model } : {}),
         });
         nativeModel = res?.model;
@@ -1385,7 +1420,7 @@ export class CodexAppServerAdapter implements AgentAdapter {
         if (!threadId) throw new Error('Codex did not return a thread id');
       }
 
-      const session = new CodexSession(threadId, peer, opts.cwd, nativeModel, nativeEffort, this.name, computer);
+      const session = new CodexSession(threadId, peer, opts.cwd, nativeModel, nativeEffort, this.name, computer, this.inlineImages);
       holder.session = session;
       session.onGoal = opts.onGoal;
       // An ordinary prompt can also continue a persisted native goal. Older servers omit it.
@@ -1433,4 +1468,26 @@ export class CodexAppServerAdapter implements AgentAdapter {
       peer.close();
     }
   }
+}
+
+/**
+ * A rollout another account can go on with: reasoning items whose content is sealed for the account
+ * that wrote them are dropped. Throws for a native compaction, whose sealed summary stands in for
+ * the earlier conversation and could not be dropped without losing it.
+ */
+export function portableRollout(text: string): string {
+  const out: string[] = [];
+  for (const line of text.split('\n')) {
+    if (!line.trim()) continue;
+    let record: any;
+    try { record = JSON.parse(line); } catch { out.push(line); continue; }
+    const payload = record?.payload;
+    if (record?.type === 'compacted' && line.includes('"encrypted_content"')
+      || record?.type === 'response_item' && payload?.type !== 'reasoning' && payload?.encrypted_content) {
+      throw new Error('this conversation was compacted natively; only its own account can read the summary');
+    }
+    if (record?.type === 'response_item' && payload?.type === 'reasoning' && payload.encrypted_content) continue;
+    out.push(line);
+  }
+  return out.join('\n') + '\n';
 }

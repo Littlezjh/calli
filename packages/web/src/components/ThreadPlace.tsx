@@ -16,9 +16,9 @@ interface Props {
 }
 
 /**
- * Where a thread runs, at a glance and on demand: a quiet tag with the project (and the branch of a
- * worktree, and the machine when it is another one) beside the title; the full path, agent and the
- * command to continue in a terminal behind it, each one copyable.
+ * Where a thread runs, on demand, as in Codex: a quiet folder icon before the title, naming the
+ * project (and the branch of a worktree, and the machine when it is another one) on hover, and
+ * opening the full path, agent and the command to continue in a terminal, each one copyable.
  */
 export function ThreadPlace({ thread, agent, host, title }: Props) {
   const project = thread.scratch ? t('projects.none') : folderName(thread.worktree?.of ?? thread.cwd);
@@ -34,17 +34,11 @@ export function ThreadPlace({ thread, agent, host, title }: Props) {
       label={t('place.details')}
       placement="below"
       align="start"
-      triggerClassName={title ? 'topbar-title topbar-title-btn' : 'place-tag'}
-      triggerTitle={title ? undefined : thread.cwdReal || thread.cwd}
+      triggerClassName={title ? 'topbar-title topbar-title-btn' : 'icon-btn place-icon'}
+      triggerTitle={title ? undefined : [project, thread.worktree?.branch, host].filter(Boolean).join(' · ')}
+      triggerLabel={title ? undefined : t('place.details')}
       panelClassName="place-panel"
-      trigger={title ?? (
-        <>
-          <IconFolder size={13} />
-          <span className="place-tag-name">{project}</span>
-          {thread.worktree && <span className="place-tag-extra">{thread.worktree.branch}</span>}
-          {host && <span className="place-tag-extra">{host}</span>}
-        </>
-      )}
+      trigger={title ?? <IconFolder size={16} />}
     >
       {() => rows.map(row => <PlaceRow key={row.id} {...row} />)}
     </Popover>

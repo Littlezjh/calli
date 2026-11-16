@@ -1,5 +1,20 @@
 import type { ExtensionState, Permission, ExtensionPackagePreview, ExtensionConfiguration, ExtensionDetection, WorkProjection, ProgressReport } from '@calli/extension-api';
 export type WorkMode = 'execute' | 'plan';
+export type AutoArchiveDays = 1 | 3 | 7 | 15 | 30 | null;
+export interface GeneralSettings {
+  /** Shared startup preference stored by the daemon. */
+  startupPage: 'new-thread' | 'recent-thread';
+  /** Shared automatic archive window. Null means conversations stay in the sidebar. */
+  autoArchiveDays: AutoArchiveDays;
+}
+export interface DraftModelPreference {
+  /** Null leaves the agent's own default model in charge. */
+  model: string | null;
+  /** Null leaves the agent's own/default thinking effort in charge. */
+  effort: string | null;
+  /** Null leaves the agent's own/default speed in charge. */
+  speed: string | null;
+}
 export interface UserQuestion { id: string; question: string; header?: string; options: Array<{ value: string; label: string; description?: string }>; multiple?: boolean; freeText?: boolean; required?: boolean }
 export type UserInputAnswer = { answers: Record<string, string[]> } | { cancelled: true };
 import type { UsageReport, AgentDiagnostic, CostReport, DailyUsage } from './observability';
@@ -8,7 +23,9 @@ import type { DetailRef } from './timeline';
 import type { HistoryPage, HistoryDetail, HistoryWork } from './history';
 import { cachedQuota, clearQuotaCache, rememberQuota } from './quota-cache';
 import { clearThreadCache } from './thread-cache';
+import { clearHostCache } from './host-cache';
 import { localeTag, t } from './i18n';
+import { isSupportedVideo } from './videos';
 
 /** Where threads may work: the project roots, and whether one can start outside any project. */
 export interface FolderEntry {
@@ -129,8 +146,53 @@ export interface TurnTrace {
   startedAt: string;
   endedAt: string | null;
   steps: TraceStep[];
+  /** The turn's model segments, in order; the timeline draws one bar per segment and per tool. Missing from older daemons. */
+  segments?: TraceSegment[];
   totals: { tools: number; mcp: number; requests: number; input: number; output: number };
   turns: Array<{ turnId: string; ts: string }>;
+}
+
+/** One model request's time: native bounds when the agent reported them, else the hub's reading. */
+export interface TraceSegment {
+  start: string;
+  firstOutput: string | null;
+  end: string | null;
+  source: 'native' | 'hub';
+  outputTokens?: number;
+  /** The trace steps (1-based) whose events fall inside this segment. */
+  steps: number[];
+}
+
+/** A thread's session statistics: what the top-bar readings and the token popover show. */
+export interface ThreadStats {
+  threadId: string;
+  checkedAt: string;
+  running: boolean;
+  turns: number;
+  steps: number;
+  timing: null | {
+    source: 'native' | 'hub';
+    turns: number;
+    segments: number;
+    waitMs: number;
+    avgWaitMs: number | null;
+    genMs: number;
+    modelMs: number;
+    toolMs: number;
+  };
+  tokens: null | {
+    turnsWithout: number;
+    input: number | null;
+    cacheRead: number | null;
+    cacheWrite: number | null;
+    output: number | null;
+    reasoning: number | null;
+    total: number | null;
+  };
+  tokPerSec: number | null;
+  tokPerSecApprox: boolean;
+  /** Compactions the agent itself completed; absent when an older daemon does not report it. */
+  compactions?: { count: number; last: { ts: string; automatic: boolean } | null };
 }
 
 /** The model and thinking effort members of one instance start with; null leaves the agent's own. */
@@ -159,14 +221,38 @@ export interface CoordinationMessage {
   id: string; from: string; to: string; text: string; kind: string; state: string; result: string; createdAt: string; turnId: string | null;
   /** For a result: the message it answers. Absent from older daemons. */
   replyTo?: string | null;
+  /** For a result from another machine: the file the member left there, kept by the hub. Absent from older daemons. */
+  resultFile?: { name: string; size: number; truncated?: boolean };
 }
 export interface HandoverTarget { agent: string; model?: string }
-export interface HandoverSettings { enabled: boolean; threshold: number; orders: Record<string, HandoverTarget[]> }
+/** How another account of the same agent takes over: a copy of the conversation, or a brief. Absent on older daemons. */
+export type HandoverMethod = 'resume' | 'summary';
+export interface HandoverSettings { enabled: boolean; threshold: number; orders: Record<string, HandoverTarget[]>; resume?: boolean; method?: HandoverMethod }
+/** Quota-aware context compression ahead of the handover: another agent (a third-party bridge,
+ *  say) reads the hub's transcript and writes the brief, so official-account quota buys no summarizing.
+ *  `agents` are asked in order, the next when one is unavailable or fails; none means a native
+ *  /compact in place. Absent on older daemons. */
+export interface AutoCompactSettings { enabled: boolean; threshold: number; agents: HandoverTarget[]; minChars: number; chunkChars: number; maxChars: number }
+export interface AutoCompactStatus { last?: { threadId: string; successorId?: string; native: boolean; chars: number; chunks: number; at: string }; error?: { threadId: string; message: string; at: string }; skipped?: { threadId: string; reason: string; chars: number; at: string } }
+/** A watch waiting for the thread's agent quota to reset; the daemon then resends the failed turn. */
+export interface ResumeView { origin: 'user' | 'global'; resetsAt: string | null; nextCheckAt: string; lastError?: string }
 export interface AutoHandoverView {
   enabled: boolean; source: 'thread' | 'collaboration' | 'global'; override: boolean | null;
   state?: 'checking' | 'preparing' | 'countdown' | 'stopped' | 'failed';
   target?: HandoverTarget; deadline?: string; reason?: 'near' | 'exhausted'; error?: string;
+  /** Present when this thread waits for its quota to come back; absent on older daemons. */
+  resume?: ResumeView | null;
 }
+/** The facts behind a thread that wants the person (`GET /api/threads/:id/brief`); sentences are the client's to write. */
+export interface ThreadBrief {
+  /** The thread's `updatedAt` when this was read. */
+  updatedAt: string;
+  kind: 'approval' | 'failure' | 'result' | null;
+  approval?: { action: 'run' | 'edit' | 'delete' | 'other'; command: string | null; paths: string[]; moreFiles: number; title: string | null; pending: number };
+  failure?: { code: string | null; edits: number; files: number; repeats: number; resume: boolean };
+  result?: { first: string | null; edits: number; files: number };
+}
+
 export interface Thread {
   autoHandover?: AutoHandoverView;
   /** `doing`, on a member: its latest task while it works, the opening of its answer once it has returned. */
@@ -189,7 +275,7 @@ export interface Thread {
   sectionId: string | null;
   /** The thread this one was forked from, if it is a fork. */
   forkedFrom: string | null;
-  handover?: { sourceId: string; title: string; agent: string; mode?: 'continue' | 'branch'; automatic?: boolean; detached?: boolean } | null;
+  handover?: { sourceId: string; title: string; agent: string; mode?: 'continue' | 'branch'; automatic?: boolean; detached?: boolean; method?: 'resume' | 'summary' } | null;
   /**
    * The git worktree the thread runs in, when a fork was given one. `of` is the directory it would
    * be in otherwise, which is the project it is listed under; `ofReal` is that with symlinks
@@ -198,6 +284,8 @@ export interface Thread {
   worktree?: { root: string; branch: string; of: string; ofReal: string } | null;
   /** In no project: working in the hub's scratch area. Missing from daemons that predate it. */
   scratch?: boolean;
+  /** The project directory no longer exists. Missing from daemons that predate it. */
+  projectGone?: boolean;
   /** A turn finished and nobody has looked at the result yet. */
   unread: boolean;
   /** The newest thing the user asked, shown under the title. Null until the first ask. */
@@ -220,12 +308,19 @@ export interface Thread {
   modelQueue?: ModelQueue | null;
   /** When the running turn started. Missing from older daemons, null while nothing runs. */
   runningSince?: string | null;
+  /** Why the thread stopped, while its status is `error`. Missing from older daemons. */
+  failure?: { code: string | null; message: string; at: string } | null;
   /** Shell command that continues this conversation in a terminal. Null before the first message. */
   resumeCommand: string | null;
   /** `cwd` with symlinks resolved, which is how agents report file paths. */
   cwdReal: string;
   createdAt: string;
   updatedAt: string;
+  /**
+   * Set only on rows this page builds for sessions that are not threads yet (never sent by the
+   * daemon): the row mixes into the list by time, and clicking it imports the session.
+   */
+  external?: ExternalSession;
 }
 
 /** A thread's native goal, as the goal card shows it. Served by the daemon, then updated by events. */
@@ -284,6 +379,40 @@ export interface Schedule {
 }
 
 /** A request the daemon refused. `details` is whatever it sent besides the message, for errors the page handles itself. */
+/** A file the thread's agents changed, summed over every turn that touched it. */
+export interface ChangedFile {
+  path: string;
+  added: number;
+  removed: number;
+  created: boolean;
+  turns: number;
+  turnId: string;
+  at: string;
+  /**
+   * The diff references that touched it, in the order the log reported them, for the dialog to read
+   * on demand. The daemon always sends it; a change it could not reference is an empty list.
+   */
+  details: Array<{ turnId: string; id: number; version: number }>;
+  /** How many references there are, when `details` holds only the newest 20. */
+  detailsTotal?: number;
+  /** The last disk check found no ordinary file at this path. */
+  missing?: true;
+}
+/** A picture or file an answer named, or the thread created; the last turn that did. */
+export interface OutputFile {
+  path: string;
+  turnId: string;
+  at: string;
+  /** The last disk check found no ordinary file at this path. */
+  missing?: true;
+}
+export interface ThreadOutputs {
+  changes: { files: ChangedFile[]; added: number; removed: number; total: number };
+  images: OutputFile[];
+  files: OutputFile[];
+  seq: number;
+}
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -299,7 +428,13 @@ export class ApiError extends Error {
 /** How many messages may wait behind a running turn. Matches the daemon's limit. */
 export const MAX_QUEUED = 5;
 
+/** One arrival in a batch the Router took in a single turn. */
+export type TurnPart = { kind: 'person'; text: string } | { kind: 'lark' | 'worker'; count: number };
+/** A turn a channel started on the person's behalf (a batch of Lark signals), not words they wrote. */
+export interface TurnChannel { kind: string; count: number; parts?: TurnPart[] }
+
 export interface QueuedMessage {
+  channel?: TurnChannel;
   targets?: string[];
   error?: string;
   id: string;
@@ -307,6 +442,8 @@ export interface QueuedMessage {
   /** How many pictures go with it. */
   images: number;
   videos?: number;
+  /** Attached files that are not videos. */
+  files?: number;
 }
 
 export interface ModelQueue {
@@ -327,22 +464,172 @@ export interface Section {
 }
 
 /** One entry on the plan page. `parentId` is a top-level todo or null: one level of nesting. */
-export interface PersonalSettings { directoryIsDefault?: boolean; defaultDirectory?: string; defaultDirectoryDisplay?: string; directoryDisplay?: string | null; directory: string | null; agent: string | null; model: string | null }
+export interface ExploreRecommendation {
+  agent: { agent: string; model: string | null; options: Array<{ agent: string; model: string | null; label: string; why: string; recommended?: boolean }> };
+  profile: { draft: string; why: string; replace: boolean };
+  people: Array<{ id: string; name: string; role: 'boss' | 'pm' | 'other'; selected: boolean; why: string; evidence: string[] }>;
+  chats: Array<{ id: string; name: string; selected: boolean; why: string; evidence: string[] }>;
+  meetings: { on: boolean; why: string; examples: string[] };
+  intervalMin: { value: 15 | 30 | 60 | 120; why: string };
+  brief: { enabled: boolean; morning: string; evening: string; why: string };
+  push: { enabled: boolean; available: boolean; why: string };
+  proactive: { mode: 'off' | 'observe' | 'auto'; why: string };
+}
+
+export interface ExploreStep {
+  source: string;
+  state: 'pending' | 'running' | 'done' | 'skipped' | 'failed';
+  /** One human conclusion, shown as-is by the interface. */
+  line?: string;
+  /** How much this source read, shown as-is by the interface. */
+  read?: string;
+  reason?: string;
+}
+
+export interface ExploreStatus {
+  id: string;
+  state: 'collecting' | 'judging' | 'ready' | 'failed' | 'cancelled';
+  steps: ExploreStep[];
+  recommendation?: ExploreRecommendation;
+  model?: 'ok' | 'fallback';
+  error?: string;
+  startedAt: string;
+  finishedAt?: string;
+}
+
+export type ExploreSourceId = 'lark-profile' | 'lark-chats' | 'lark-messages' | 'lark-calendar' | 'calli-threads';
+export interface ExploreSource { id: ExploreSourceId; available: boolean; reason?: string }
+
+export interface PersonalSettings { routerThreadId?: string | null; directoryIsDefault?: boolean; defaultDirectory?: string; defaultDirectoryDisplay?: string; directoryDisplay?: string | null; directory: string | null; agent: string | null; model: string | null }
+export interface PersonalBrief { title: string; lines: string[]; text: string }
+export interface LastPersonalBrief { text: string; sentAt: string }
+export interface BriefSettings { enabled: boolean; morning: string; evening: string }
+export interface LarkChannelSettings {
+  enabled: boolean; people: Array<{ id: string; name: string; role?: string }>; chats: Array<{ id: string; name: string }>;
+  intervalMin: number; workHours?: { start: number; end: number; timeZone: string };
+  /** Missing on older hubs: the configured event list is unknown. */
+  events?: string[];
+}
+export interface LarkChannelStatus { cli: boolean; realtime?: LarkRealtime; topicErrors?: Array<{ ref: string; error: string }>; loggedIn: boolean; lastRunAt: string | null; nextRunAt: string | null; lastError: string | null; lastSignals: number }
+export type LarkRealtime = 'off' | 'connecting' | 'live' | 'busy-elsewhere' | 'console-off' | 'unavailable' | 'error';
+export interface SignalSource {
+  type: string;
+  ref: string;
+  url?: string;
+  from?: string;
+  at?: string;
+  thread?: { kind: string; ref: string };
+}
+export interface SignalMeeting {
+  event: 'ended' | 'note-generated' | 'minutes-generated';
+  meetingId?: string;
+  calendarEventId?: string;
+  noteId?: string;
+  noteDocToken?: string;
+  minuteToken?: string;
+  title?: string;
+  startedAt?: string;
+  endedAt?: string;
+}
+/** Metadata only; material bodies are read through a separate endpoint. */
+export interface SignalMaterial {
+  state: 'unread' | 'not-ready' | 'ready' | 'empty' | 'failed';
+  kind?: 'note' | 'minutes';
+  checkedAt?: string;
+  error?: string;
+  partial?: boolean;
+}
+export interface SignalMaterialRead {
+  key: string;
+  material: SignalMaterial;
+  content: string | null;
+}
+/** A signal the channel kept on a matter, and where it went. */
+export interface MatterSignal {
+  key: string;
+  at: string;
+  summary: string | null;
+  disposition: { outcome: 'filtered' | 'delivered' | 'router'; reason?: string; pending?: boolean };
+  source?: SignalSource | null;
+  meeting?: SignalMeeting | null;
+  material?: SignalMaterial | null;
+}
+export interface LarkSearchResult { id: string; name: string; hint?: string }
 export interface TodoNote { text: string; updatedAt: string | null; threadId: string | null; rev: number }
+export interface PetStatus { id: string; commit: string; installed: boolean; installing: boolean; error: string | null; clips: Record<string, number>; frameMs: number }
 export interface TodoSummaryStatus { threadId: string | null; running: boolean; days: number | null; startedAt: string | null }
 export interface Wish { id: string; threadId: string; text: string; createdAt: string }
 export interface PushSettings { enabled: boolean; recipient: string; baseUrl: string; waiting: boolean; failure: boolean; notice: boolean; scheduled: boolean }
 export interface PushRecord { key: string; at: string; kind: string; title: string; result: 'queued' | 'sent' | 'failed' | 'dropped'; reason: string | null }
 export interface PushStatus { cli: boolean; botReady: boolean; recipient: string; reason: string | null; records: PushRecord[]; dropped: number }
+export interface TodoSource { type: 'lark-task' | 'lark-message' | 'lark-flag' | 'lark-calendar' | 'manual'; ref: string; url?: string; from?: string; at?: string }
+export interface TodoUrgency { urgent: boolean; reason: 'overdue' | 'due-soon' | 'pinned' | 'meeting-today' | null }
+/** Whether the assistant may act on its own, and in which repositories she may work in a sandbox. */
+export type ProactiveMode = 'off' | 'observe' | 'auto';
+export interface ProactiveSettings {
+  /** off: nothing; observe: only note what she would have done; auto: really do it. */
+  mode: ProactiveMode;
+  repos: string[];
+  /** Read-only, for older clients: `mode !== 'off'`. */
+  enabled: boolean;
+}
+
+export interface ProactiveFile {
+  path: string;
+  additions: number;
+  deletions: number;
+}
+
+export type ProactiveStatus = 'running' | 'observed' | 'approved' | 'ready' | 'merged' | 'discarded' | 'reverted' | 'failed';
+
+/** One thing she did unasked: materials prepared for a matter, or code changed in a sandbox. */
+export interface ProactiveRun {
+  id: string;
+  matterId: string;
+  kind: 'prepare' | 'sandbox';
+  repo?: string;
+  branch?: string;
+  threadId: string;
+  startedAt: string;
+  endedAt?: string;
+  status: ProactiveStatus;
+  /** What was done, or why it failed. */
+  summary?: string;
+  /** The worker's own account of the tests. */
+  testReport?: string;
+  files?: ProactiveFile[];
+  /** Why she dropped the work herself, for an audit list. */
+  discardReason?: string;
+}
+
+export type ProactiveAction = 'merge' | 'discard' | 'revert' | 'approve';
+
+/** Where a matter stands, derived by the daemon. Null when nothing is going on with it. */
+export type TodoStage = 'answer' | 'review' | 'blocked' | 'working' | 'idle';
+export interface TodoSubscription { kind: 'lark-thread' | 'lark-task' | 'lark-calendar'; ref: string; at: string }
+
 export interface Todo {
   owner?: 'me' | 'agent';
   state?: 'open' | 'waiting' | 'done';
+  lane?: 'you' | 'doing' | 'wait' | 'later' | null;
+  importance?: 'high' | 'normal' | 'low' | null;
+  urgentUntil?: string | null;
+  source?: TodoSource | null;
+  /** Daemon-derived, never stored; only present on list responses. */
+  urgency?: TodoUrgency;
   waitingOn?: string | null;
   dueAt?: string | null;
   followUpAt?: string | null;
   followUpPaused?: boolean;
   hasNote?: boolean;
   noteUpdatedAt?: string | null;
+  /** First line of the continuation note's next steps; the desk cover falls back to thread titles. */
+  notePreview?: string | null;
+  /** How many things the assistant did on its own on this matter; the runs themselves load when asked for. */
+  proactiveRunCount?: number;
+  stage?: TodoStage | null;
+  /** The outside threads this matter follows. */
+  subscriptions?: TodoSubscription[];
   proposed?: boolean;
   rev?: number;
   proposals?: Array<{ id: string; kind: 'add' | 'done'; evidence: string; threadId: string }>;
@@ -352,6 +639,8 @@ export interface Todo {
   parentId: string | null;
   position: number;
   createdAt: string;
+  /** Last time anyone did anything to this plan; the desk's last-activity signal. */
+  updatedAt?: string;
   doneAt: string | null;
   /** Threads linked to this plan, as full views so chips can show agent, title and state. */
   threads: Thread[];
@@ -378,6 +667,8 @@ export interface DirectoryInfo {
 
 export interface ProjectDirectoryInfo {
   path: string;
+  /** Where the breadcrumb trail starts; absent on older daemons. */
+  home?: string;
   parent: string | null;
   directories: Array<{ name: string; path: string }>;
   allowed: boolean;
@@ -407,6 +698,14 @@ export interface ModelOption {
   description?: string;
   /** How busy this model is right now; above 100 means overloaded. */
   loadPercent?: number;
+  /** Total queued requests. Null means unavailable, not zero; absent means no queue metadata. */
+  queueSize?: number | null;
+  /** Observed request position, not total queue size. Zero means observed nonqueued; null means unknown/stale. */
+  queuePosition?: number | null;
+  /** Queue observation time in epoch milliseconds; absent when no valid observation exists. */
+  queueObservedAt?: number;
+  /** True when reading the upstream load failed, rather than the upstream omitting it. */
+  loadError?: boolean;
   /** Effort levels this model accepts. Empty: none. Missing: use the agent-wide list. */
   efforts?: string[];
   speeds?: Array<{ id: string; label: string; description?: string; isFast?: boolean }>;
@@ -431,6 +730,13 @@ export interface AgentReferences {
   handoverOrders: number;
 }
 
+/** A version-limited opt-in bridge that changes only a private runtime copy. */
+export interface StreamBridgeCapability {
+  version: string;
+  platform: string;
+  temporaryMegabytes: number;
+}
+
 export interface AgentInfo {
   id: string;
   label: string;
@@ -444,6 +750,7 @@ export interface AgentInfo {
   available: boolean;
   /** How it can be signed in from the hub, when its adapter can start the CLI's login. */
   login?: 'terminal' | 'wizard';
+  streamBridgeEnabled?: boolean;
   capabilities: {
     workModes?: WorkMode[];
     speed?: boolean;
@@ -454,6 +761,9 @@ export interface AgentInfo {
     permissionModes: string[];
     /** The level a new thread starts at. Missing: `auto_edit`. */
     defaultPermissionMode?: string;
+    /** False when native model discovery is unavailable; no model picker is offered. */
+    modelCatalog?: boolean;
+    streamBridge?: StreamBridgeCapability;
     effortLevels: string[];
     images: boolean;
     deleteSession: boolean;
@@ -490,7 +800,7 @@ export interface SupportedAgent {
   label: string;
   icon?: string;
   installGuide?: string;
-  capabilities?: { createAccount: boolean };
+  capabilities?: { createAccount: boolean; streamBridge?: StreamBridgeCapability };
 }
 
 /** One window of a plan's usage, as the agent itself reports it. */
@@ -525,6 +835,59 @@ export interface AgentSession {
   updatedAt: string | null;
   /** Set when this session is already a thread here (possibly an archived one). */
   threadId: string | null;
+}
+
+/** A conversation an agent on this machine already has, that is not a thread here yet. It mixes
+ *  into the thread list by its time; opening it imports it and continues it as a thread. */
+export interface ExternalSession {
+  /** The agent instance id, as threads store it. */
+  agent: string;
+  sessionId: string;
+  cwd: string;
+  title: string;
+  updatedAt: string | null;
+}
+
+/** One page of `GET /api/local-sessions`. */
+export interface LocalSessionPage {
+  sessions: ExternalSession[];
+  nextCursor: string | null;
+  scannedAt: string | null;
+}
+
+/** The four kinds of tokens and the replies, summed over some time. */
+export interface UsageTokens {
+  input: number;
+  cacheWrite: number;
+  cacheRead: number;
+  output: number;
+  replies: number;
+}
+
+/** One step of the machine usage series. A step with no usage while the daemon was not running
+ *  is a gap, drawn as a break rather than a zero. */
+export interface UsagePoint extends UsageTokens {
+  /** The step's start, epoch seconds. */
+  t: number;
+  gap: boolean;
+}
+
+/** `GET /api/machine-usage`. */
+export interface MachineUsageReport {
+  hours: 1 | 24 | 168;
+  /** Seconds per point: 60 within the hour, 600 over the day, 3600 over the week. */
+  step: 60 | 600 | 3600;
+  total: UsageTokens;
+  points: UsagePoint[];
+  /** Totals per model and per launcher, busiest first, from the unfiltered window. */
+  models: MachineUsageShare[];
+  /** The empty name is the "other" launcher: a session the hub did not start. */
+  launchers: MachineUsageShare[];
+}
+
+/** Totals for one model or launcher over the window. */
+export interface MachineUsageShare extends UsageTokens {
+  name: string;
 }
 
 /** A web terminal, as the daemon lists it. Exited ones are not listed. */
@@ -667,7 +1030,7 @@ export function loadToken(): string {
 }
 
 export function saveToken(token: string): void {
-  if (!token || token !== loadToken()) { clearQuotaCache(); clearThreadCache(); }
+  if (!token || token !== loadToken()) { clearQuotaCache(); clearThreadCache(); clearHostCache(); }
   try {
     if (token) localStorage.setItem(TOKEN_KEY, token);
     else localStorage.removeItem(TOKEN_KEY);
@@ -746,15 +1109,17 @@ export class Api {
     return this.base + (this.host ? hostPath(this.host, path) : path);
   }
 
-  private request<T>(method: string, path: string, body?: unknown): Promise<T> {
-    return this.send(method, this.url(path), body);
+  private request<T>(method: string, path: string, body?: unknown, opts: { keepalive?: boolean; signal?: AbortSignal } = {}): Promise<T> {
+    return this.send(method, this.url(path), body, opts);
   }
 
-  protected async send<T>(method: string, url: string, body?: unknown): Promise<T> {
+  protected async send<T>(method: string, url: string, body?: unknown, opts: { keepalive?: boolean; signal?: AbortSignal } = {}): Promise<T> {
     const res = await fetch(url, {
       method,
       headers: this.headers(body === undefined ? {} : { 'Content-Type': 'application/json' }),
       body: body === undefined ? undefined : JSON.stringify(body),
+      keepalive: opts.keepalive,
+      signal: opts.signal,
     });
     if (res.status === 401) throw new AuthError('unauthorized');
     if (res.status === 204) return undefined as T;
@@ -835,9 +1200,46 @@ export class Api {
     return this.request('DELETE', `/api/sections/${id}`);
   }
 
+  generalSettings(): Promise<GeneralSettings> { return this.request('GET', '/api/general-settings'); }
+  saveGeneralSettings(value: GeneralSettings): Promise<GeneralSettings> { return this.request('PUT', '/api/general-settings', value); }
+  exploreSources(): Promise<ExploreSource[]> { return this.request('GET', '/api/personal/explore/sources'); }
+  startExplore(sources: ExploreSourceId[]): Promise<{ id: string }> { return this.request('POST', '/api/personal/explore', { sources }); }
+  exploreStatus(): Promise<ExploreStatus | null> { return this.request('GET', '/api/personal/explore'); }
+  cancelExplore(): Promise<{ cancelled: boolean }> { return this.request('DELETE', '/api/personal/explore'); }
+  draftModelPreferences(): Promise<Record<string, DraftModelPreference>> { return this.request('GET', '/api/draft-model-preferences'); }
+  saveDraftModelPreferences(value: Record<string, DraftModelPreference>, opts: { keepalive?: boolean } = {}): Promise<Record<string, DraftModelPreference>> { return this.request('PUT', '/api/draft-model-preferences', value, opts); }
   personalSettings(): Promise<PersonalSettings> { return this.request('GET', '/api/personal/settings'); }
   savePersonalSettings(value: PersonalSettings): Promise<PersonalSettings> { return this.request('PUT', '/api/personal/settings', value); }
+  personalBrief(kind: 'morning' | 'evening'): Promise<PersonalBrief | null> { return this.request('GET', `/api/personal/brief?kind=${kind}`); }
+  lastPersonalBrief(kind: 'morning' | 'evening'): Promise<LastPersonalBrief | null> { return this.request('GET', `/api/personal/brief/last?kind=${kind}`); }
+  briefSettings(): Promise<BriefSettings> { return this.request('GET', '/api/personal/brief/settings'); }
+  saveBriefSettings(value: BriefSettings): Promise<BriefSettings> { return this.request('PUT', '/api/personal/brief/settings', value); }
+  proactive(matterId?: string): Promise<{ settings: ProactiveSettings; runs: ProactiveRun[] }> { return this.request('GET', `/api/personal/proactive${matterId ? `?matterId=${encodeURIComponent(matterId)}` : ''}`); }
+  proactiveSettings(): Promise<{ settings: ProactiveSettings }> { return this.request('GET', '/api/personal/proactive?summary=true'); }
+  saveProactiveSettings(value: Partial<Omit<ProactiveSettings, 'enabled'>>): Promise<ProactiveSettings> { return this.request('PUT', '/api/personal/proactive/settings', value); }
+  proactiveDiff(id: string): Promise<{ files: ProactiveFile[] }> { return this.request('GET', `/api/personal/proactive/runs/${encodeURIComponent(id)}/diff`); }
+  proactiveAct(id: string, action: ProactiveAction): Promise<ProactiveRun> { return this.request('POST', `/api/personal/proactive/runs/${encodeURIComponent(id)}/${action}`); }
+  larkChannel(): Promise<LarkChannelSettings> { return this.request('GET', '/api/personal/channels/lark'); }
+  saveLarkChannel(value: LarkChannelSettings): Promise<LarkChannelSettings> { return this.request('PUT', '/api/personal/channels/lark', value); }
+  larkStatus(): Promise<LarkChannelStatus> { return this.request('GET', '/api/personal/channels/lark/status'); }
+  runLark(): Promise<LarkChannelStatus> { return this.request('POST', '/api/personal/channels/lark/run'); }
+  searchLark(kind: 'people' | 'chats', q: string): Promise<LarkSearchResult[]> { return this.request('GET', `/api/personal/channels/lark/search?kind=${kind}&q=${encodeURIComponent(q)}`); }
+  matterSignals(matterId: string): Promise<{ signals: MatterSignal[] }> { return this.request('GET', `/api/personal/signals?matterId=${encodeURIComponent(matterId)}`); }
+  readSignalMaterial(key: string): Promise<SignalMaterialRead> { return this.request('GET', `/api/personal/signals/${encodeURIComponent(key)}/material`); }
   todoNote(id: string): Promise<TodoNote> { return this.request('GET', `/api/todos/${id}/note`); }
+  /** The desk's companion: whether its frames are here yet. Always this hub's own, never another machine's. */
+  pet(): Promise<PetStatus> { return this.send('GET', `${this.base}/api/pets`); }
+  installPet(): Promise<PetStatus> { return this.send('POST', `${this.base}/api/pets/install`); }
+  petSay(text: string): Promise<{ threadId: string }> { return this.request('POST', '/api/personal/say', { text }); }
+  petRouter(): Promise<{ threadId: string | null; status: 'idle' | 'running' | 'error' | null; lastReply: string | null; lastReplyAt: string | null }> {
+    return this.request('GET', '/api/personal/router');
+  }
+  personalProfile(): Promise<{ text: string; updatedAt: string | null; path: string; isTemplate: boolean; rev: number }> { return this.request('GET', '/api/personal/profile'); }
+  savePersonalProfile(text: string, rev?: number): Promise<{ text: string; updatedAt: string; path: string; isTemplate: boolean; rev: number }> {
+    return this.request('PUT', '/api/personal/profile', rev === undefined ? { text } : { text, rev });
+  }
+  /** Frames are public artwork, loaded by `<img>` without a token. */
+  petFrame(id: string, clip: string, index: number): string { return `${this.base}/pets/${id}/${clip}/${clip}_${String(index * 2 + 1).padStart(3, '0')}.webp`; }
   resolveTodoProposal(id: string, pid: string, action: 'accept' | 'dismiss', rev?: number): Promise<Todo | null> { return this.request('POST', `/api/todos/${id}/proposals/${pid}/${action}`, { rev }); }
   delegateTodo(id: string, cwd?: string): Promise<Thread> { return this.request('POST', `/api/todos/${id}/delegate`, { cwd }); }
   /** The latest "summarize recent days" run on the plan page. */
@@ -859,7 +1261,7 @@ export class Api {
     return this.request('POST', '/api/todos', { text, parentId });
   }
 
-  updateTodo(id: string, patch: { text?: string; done?: boolean; followUpAt?: string | null }): Promise<Todo> {
+  updateTodo(id: string, patch: { text?: string; done?: boolean; lane?: 'you' | 'doing' | 'wait' | 'later' | null; importance?: 'high' | 'normal' | 'low' | null; urgentUntil?: string | null; source?: TodoSource | null; touch?: boolean; followUpAt?: string | null; unsubscribe?: Array<Pick<TodoSubscription, 'kind' | 'ref'>> }): Promise<Todo> {
     return this.request('PATCH', `/api/todos/${id}`, patch);
   }
 
@@ -930,15 +1332,17 @@ export class Api {
     return this.request('GET', `/api/threads/${id}/events?after=${after}`);
   }
 
-  historyPage(id: string, before?: number, after?: number, chain = false): Promise<HistoryPage> {
+  /** `forward` reads the eight turns after `after`, from the conversation's beginning on; otherwise the newest eight before `before`. */
+  historyPage(id: string, before?: number, after?: number, chain = false, signal?: AbortSignal, forward = false): Promise<HistoryPage> {
     const params = new URLSearchParams();
     if (before) params.set('before', String(before));
     if (after) params.set('after', String(after));
     if (chain) params.set('chain', '1');
-    return this.request('GET', `/api/threads/${id}/history${params.size ? `?${params}` : ''}`);
+    if (forward) params.set('forward', '1');
+    return this.request('GET', `/api/threads/${id}/history${params.size ? `?${params}` : ''}`, undefined, { signal });
   }
 
-  historyHandover(id: string, full = false): Promise<{ source: { sourceId: string; agent: string; title: string }; turnId: string | null; reason: string | null; text?: string }> {
+  historyHandover(id: string, full = false): Promise<{ source: { sourceId: string; agent: string; title: string }; method: 'resume' | 'summary' | null; turnId: string | null; reason: string | null; size: number; preview: string; text?: string }> {
     return this.request('GET', `/api/threads/${id}/history/handover${full ? '?text=1' : ''}`);
   }
 
@@ -1028,6 +1432,16 @@ export class Api {
     return this.request('GET', `/api/threads/${threadId}/trace${turnId ? `?turn=${encodeURIComponent(turnId)}` : ''}`);
   }
 
+  /** What the thread produced over all its turns: changed files, pictures and files. Names and counts only. */
+  outputs(threadId: string): Promise<ThreadOutputs> {
+    return this.request('GET', `/api/threads/${threadId}/outputs`);
+  }
+
+  /** The thread's session statistics: summary numbers only, timing from per-turn storage. */
+  stats(threadId: string): Promise<ThreadStats> {
+    return this.request('GET', `/api/threads/${threadId}/stats`);
+ }
+
   /** The whole prompt a thread's conversation runs with, as the agent itself persisted it. */
   systemPrompt(threadId: string): Promise<SystemPrompt> {
     return this.request('GET', `/api/threads/${threadId}/system-prompt`);
@@ -1072,17 +1486,21 @@ export class Api {
     return this.request('DELETE', `/api/threads/${threadId}/queue/${queuedId}`);
   }
 
-  /** Binary upload, shared across retries of the same file in the same thread. */
+  /**
+   * Binary upload of a video or any other file, shared across retries of the same file in the same
+   * thread. Either way the message lists it under `videos`.
+   */
   uploadVideo(threadId: string, file: File): Promise<VideoRef> {
     const uploads = this.videoUploads.get(file) ?? new Map<string, Promise<VideoRef>>();
     this.videoUploads.set(file, uploads);
     const existing = uploads.get(threadId);
     if (existing) return existing;
     const pending = (async () => {
-      const res = await fetch(this.url(`/api/threads/${threadId}/videos`), { method: 'POST', headers: this.headers({ 'Content-Type': file.type || 'application/octet-stream', 'X-File-Name': encodeURIComponent(file.name) }), body: file });
+      const video = isSupportedVideo(file);
+      const res = await fetch(this.url(`/api/threads/${threadId}/${video ? 'videos' : 'files'}`), { method: 'POST', headers: this.headers({ 'Content-Type': file.type || 'application/octet-stream', 'X-File-Name': encodeURIComponent(file.name) }), body: file });
       if (res.status === 401) throw new AuthError('unauthorized');
       const json = await res.json().catch(() => ({}));
-      if (!res.ok) throw new ApiError(res.status === 404 ? t('api.noVideos') : json.error ?? `HTTP ${res.status}`, json, res.status);
+      if (!res.ok) throw new ApiError(res.status === 404 ? t(video ? 'api.noVideos' : 'api.noFiles') : json.error ?? `HTTP ${res.status}`, json, res.status);
       return json as VideoRef;
     })();
     uploads.set(threadId, pending);
@@ -1114,6 +1532,11 @@ export class Api {
     return this.request('GET', `/api/threads/${threadId}/tree${path ? `?path=${encodeURIComponent(path)}` : ''}`);
   }
 
+  /** The folders the file browser can stand on: the thread's own, the agent's session folders, the project directories, the home directory. */
+  threadRoots(threadId: string): Promise<{ roots: Array<{ path: string; kind: 'thread' | 'session' | 'project' | 'home' }> }> {
+    return this.request('GET', `/api/threads/${threadId}/roots`);
+  }
+
   /** A text file in the thread's directory. A binary one comes back with `text: null`. */
   threadText(threadId: string, path: string): Promise<TextFile> {
     return this.request('GET', `/api/threads/${threadId}/text?path=${encodeURIComponent(path)}`);
@@ -1137,9 +1560,9 @@ export class Api {
     return this.request('PUT', `/api/threads/${threadId}/writing/text?path=${encodeURIComponent(path)}`, { text, baseHash });
   }
 
-  /** Files in the thread's directory whose path has every word of the query, relative to `root`. */
-  findFiles(threadId: string, query: string): Promise<{ root: string; paths: string[]; truncated: boolean }> {
-    return this.request('GET', `/api/threads/${threadId}/find?q=${encodeURIComponent(query)}`);
+  /** Files under a browse root whose path has every word of the query, relative to that root. */
+  findFiles(threadId: string, query: string, path?: string): Promise<{ root: string; paths: string[]; truncated: boolean }> {
+    return this.request('GET', `/api/threads/${threadId}/find?q=${encodeURIComponent(query)}${path ? `&path=${encodeURIComponent(path)}` : ''}`);
   }
 
   /**
@@ -1162,13 +1585,40 @@ export class Api {
     return res.blob();
   }
 
+  /** A remote member's result file, kept by the hub; fetched with the token and then saved by the page. */
+  async coordinationResult(threadId: string, deliveryId: string): Promise<Blob> {
+    const res = await fetch(this.url(`/api/threads/${threadId}/coordination/result/${encodeURIComponent(deliveryId)}`), { headers: this.headers() });
+    if (res.status === 401) throw new AuthError('unauthorized');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.blob();
+  }
+
+  /** What a thread that wants the person comes down to, read from its log without a model. */
+  threadBrief(threadId: string): Promise<ThreadBrief> {
+    return this.request('GET', `/api/threads/${threadId}/brief`);
+  }
+
+  /** Sends the ask the thread stopped on again: the person's "continue" on a thread whose last turn failed. */
+  retryThread(threadId: string): Promise<Thread> {
+    return this.request('POST', `/api/threads/${threadId}/retry`);
+  }
+
   /** Stops the running turn. Messages that were waiting are not sent; their text comes back. */
   cancel(threadId: string): Promise<{ dropped: string[]; mentions?: AgentMention[] }> {
     return this.request('POST', `/api/threads/${threadId}/cancel`);
   }
 
-  decide(approvalId: string, decision: { optionId: string } | { cancel: true }): Promise<void> {
-    return this.request('POST', `/api/approvals/${approvalId}`, decision);
+  async decide(approvalId: string, decision: { optionId: string } | { cancel: true }): Promise<void> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15_000);
+    try {
+      await this.request('POST', `/api/approvals/${approvalId}`, decision, { signal: controller.signal });
+    } catch (e) {
+      if (controller.signal.aborted) throw new Error(t('sheet.approval.timeout'));
+      throw e;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   answerInput(id: string, answer: UserInputAnswer): Promise<void> {
@@ -1191,6 +1641,8 @@ export class Api {
       sectionId?: string | null;
       unread?: boolean;
       done?: boolean;
+      /** Places the thread on the board by hand; clears done. */
+      stage?: ProgressReport['stage'];
     },
   ): Promise<Thread> {
     return this.request('PATCH', `/api/threads/${threadId}`, updates);
@@ -1214,6 +1666,22 @@ export class Api {
   /** Makes a thread out of an existing agent session, history included. */
   importSession(agent: string, sessionId: string): Promise<Thread> {
     return this.request('POST', '/api/threads/import', { agent, sessionId });
+  }
+
+  /** This machine's agent sessions that are not threads here, newest first, one page at a time. */
+  localSessions(cursor?: string | null, limit = 60): Promise<LocalSessionPage> {
+    const query = new URLSearchParams({ limit: String(limit) });
+    if (cursor) query.set('cursor', cursor);
+    return this.request('GET', `/api/local-sessions?${query}`);
+  }
+
+  /** This machine's tokens by minute, model and launcher, read off the agents' transcripts. */
+  machineUsage(hours: 1 | 24 | 168, model?: string | null, launcher?: string | null): Promise<MachineUsageReport> {
+    const query = new URLSearchParams({ hours: String(hours) });
+    if (model) query.set('model', model);
+    // An empty launcher is a session the hub did not start; the daemon reads `-` as that too.
+    if (launcher != null) query.set('launcher', launcher === '' ? '-' : launcher);
+    return this.request('GET', `/api/machine-usage?${query}`);
   }
 
   /**
@@ -1244,19 +1712,24 @@ export class Api {
   /** Creates an empty successor in the same directory and worktree, without starting an agent turn. */
   handoverSettings(): Promise<HandoverSettings> { return this.request('GET', '/api/handover-settings'); }
   saveHandoverSettings(value: HandoverSettings): Promise<HandoverSettings> { return this.request('PUT', '/api/handover-settings', value); }
+  autoCompactSettings(): Promise<{ settings: AutoCompactSettings; status: AutoCompactStatus }> { return this.request('GET', '/api/autocompact-settings'); }
+  saveAutoCompactSettings(value: AutoCompactSettings): Promise<AutoCompactSettings> { return this.request('PUT', '/api/autocompact-settings', value); }
   autoHandover(id: string): Promise<AutoHandoverView & { targets: HandoverTarget[] }> { return this.request('GET', `/api/threads/${id}/auto-handover`); }
   /** The thread's native goal, for the goal card above the input. */
   threadGoal(id: string): Promise<{ goal: GoalView | null }> { return this.request('GET', `/api/threads/${id}/goal`); }
   setAutoHandover(id: string, enabled: boolean | null): Promise<AutoHandoverView> { return this.request('PATCH', `/api/threads/${id}/auto-handover`, { enabled }); }
+  setResume(id: string, armed: boolean): Promise<AutoHandoverView> { return this.request('PATCH', `/api/threads/${id}/auto-handover`, { resume: armed }); }
   cancelAutoHandover(id: string): Promise<AutoHandoverView> { return this.request('DELETE', `/api/threads/${id}/auto-handover`); }
   setCollaborationHandover(id: string, enabled: boolean): Promise<Coordination> { return this.request('PATCH', `/api/threads/${id}/collaboration-handover`, { enabled }); }
 
   createHandoverThread(threadId: string, agent: string, model?: string, mode?: 'continue' | 'branch'): Promise<Thread> {
     return this.request('POST', `/api/threads/${threadId}/handover-thread`, { agent, model, mode });
   }
-  /** Hands the thread to `agent` now: its conversation, queue and any collaboration lead. */
-  takeOver(threadId: string, agent: string, note?: string): Promise<Thread> {
-    return this.request('POST', `/api/threads/${threadId}/takeover`, { agent, note });
+  /** Hands the thread to `target` now: its conversation, queue and any collaboration lead. */
+  takeOver(threadId: string, target: string | HandoverTarget, note?: string): Promise<Thread> {
+    const body: HandoverTarget & { note?: string } = typeof target === 'string' ? { agent: target } : { ...target };
+    if (note !== undefined) body.note = note;
+    return this.request('POST', `/api/threads/${threadId}/takeover`, body);
   }
   detachAutomaticHandover(threadId: string): Promise<{ detached: string[]; thread: Thread }> {
     return this.request('DELETE', `/api/threads/${threadId}/handover-link`);
@@ -1293,12 +1766,12 @@ export class Api {
   }
 
   /** Adds an agent instance (another CLI, another account). */
-  addAgent(input: { id?: string; adapter: string; label?: string; command?: string[]; env?: Record<string, string>; account?: string }): Promise<{ id: string }> {
+  addAgent(input: { id?: string; adapter: string; label?: string; command?: string[]; env?: Record<string, string>; account?: string; streamBridge?: boolean }): Promise<{ id: string }> {
     return this.request('POST', '/api/agents', input);
   }
 
-  /** Updates an instance's presentation; its id, which threads store, does not change. */
-  updateAgent(id: string, patch: { label?: string; hidden?: boolean }): Promise<{ id: string; label?: string; hidden?: boolean }> {
+  /** Updates hub-owned settings; its id, which threads store, does not change. */
+  updateAgent(id: string, patch: { label?: string; hidden?: boolean; streamBridge?: boolean }): Promise<{ id: string; label?: string; hidden?: boolean }> {
     return this.request('PATCH', `/api/agents/${encodeURIComponent(id)}`, patch);
   }
 
@@ -1363,6 +1836,12 @@ export class Api {
   cachedAgentQuota(agent: string): PlanQuota | null {
     return this.quotas.get(agent) ?? (loadToken() === this.token
       ? cachedQuota(this.url(`/api/agents/${encodeURIComponent(agent)}/quota`)) : null);
+  }
+
+  /** A reading the hub pushed on its stream: kept as if it had just been asked for. */
+  rememberAgentQuota(agent: string, quota: PlanQuota): void {
+    this.quotas.set(agent, quota);
+    if (loadToken() === this.token) rememberQuota(this.url(`/api/agents/${encodeURIComponent(agent)}/quota`), quota);
   }
 
   agentQuota(agent: string, refresh = false): Promise<PlanQuota> {
@@ -1458,14 +1937,30 @@ export class Api {
   }
 
   /** Calli extensions this daemon ships, and which are installed on its machine. */
+  autotitleSettings(): Promise<{ settings: import('@calli/extension-api/web').AutoTitleSettings; status: import('@calli/extension-api/web').AutoTitleStatus; pass: import('@calli/extension-api/web').AutoTitlePass | null; defaultRules: string }> {
+    return this.request('GET', '/api/extensions/autotitle/settings');
+  }
+  saveAutotitleSettings(patch: Partial<import('@calli/extension-api/web').AutoTitleSettings>): Promise<import('@calli/extension-api/web').AutoTitleSettings> {
+    return this.request('PUT', '/api/extensions/autotitle/settings', patch);
+  }
+  previewAutotitle(threadId: string): Promise<{ title: string }> {
+    return this.request('POST', '/api/extensions/autotitle/preview', { threadId });
+  }
+  organizeAutotitle(): Promise<{ queued: number }> {
+    return this.request('POST', '/api/extensions/autotitle/organize');
+  }
+  /** The person's "name it again": the auto-titles extension names the thread now. */
+  autotitle(threadId: string): Promise<{ title: string }> {
+    return this.request('POST', `/api/threads/${encodeURIComponent(threadId)}/autotitle`);
+  }
   memorySources(extensionId: string): Promise<import('@calli/extension-api').MemorySource[]> {
-    return this.send('GET', `/api/extensions/${encodeURIComponent(extensionId)}/memory/sources`);
+    return this.request('GET', `/api/extensions/${encodeURIComponent(extensionId)}/memory/sources`);
   }
   memoryList(extensionId: string, sourceId: string): Promise<import('@calli/extension-api').MemoryIndex> {
-    return this.send('GET', `/api/extensions/${encodeURIComponent(extensionId)}/memory/${encodeURIComponent(sourceId)}/files`);
+    return this.request('GET', `/api/extensions/${encodeURIComponent(extensionId)}/memory/${encodeURIComponent(sourceId)}/files`);
   }
   memoryRead(extensionId: string, sourceId: string, fileId: string): Promise<import('@calli/extension-api').MemoryDocument> {
-    return this.send('GET', `/api/extensions/${encodeURIComponent(extensionId)}/memory/${encodeURIComponent(sourceId)}/document?id=${encodeURIComponent(fileId)}`);
+    return this.request('GET', `/api/extensions/${encodeURIComponent(extensionId)}/memory/${encodeURIComponent(sourceId)}/document?id=${encodeURIComponent(fileId)}`);
   }
 
   extensions(): Promise<ExtensionState[]> {
@@ -1539,8 +2034,8 @@ export class Api {
     return this.request('DELETE', `/api/terminals/${id}`);
   }
 
-  models(agent: string): Promise<ModelOption[]> {
-    return this.request('GET', `/api/agents/${agent}/models`);
+  models(agent: string, refresh = false): Promise<ModelOption[]> {
+    return this.request('GET', `/api/agents/${encodeURIComponent(agent)}/models${refresh ? '?refresh=1' : ''}`);
   }
 
   listDirectory(path: string): Promise<DirectoryInfo> {

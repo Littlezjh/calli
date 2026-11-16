@@ -9,7 +9,8 @@ let root, hub, remote, browser, page;
 const envFor = (home) => ({ HOME: home, CLAUDE_CONFIG_DIR: join(home, '.claude'), CODEX_HOME: join(home, '.codex'), PI_CODING_AGENT_DIR: join(home, '.pi/agent'), CALLI_AGY_HOME: join(home, '.agy') });
 
 function seedLocal(home) {
-  writeFileSync(join(home, '.claude.json'), JSON.stringify({ numStartups: 42, mcpServers: { botmux: { command: 'botmux', args: ['--stdio'], env: { TOKEN: 't' } } } }, null, 2));
+  mkdirSync(join(home, '.claude'), { recursive: true });
+  writeFileSync(join(home, '.claude/.claude.json'), JSON.stringify({ numStartups: 42, mcpServers: { botmux: { command: 'botmux', args: ['--stdio'], env: { TOKEN: 't' } } } }, null, 2));
   mkdirSync(join(home, '.codex'), { recursive: true });
   writeFileSync(join(home, '.codex', 'config.toml'), `model = "gpt-5.2-codex"\n\n[mcp_servers.github]\nurl = "https://api.githubcopilot.com/mcp/"\nbearer_token_env_var = "GITHUB_PAT"\n`);
 }
@@ -51,9 +52,9 @@ after(async () => {
 async function openMcp(p, phone = false, shot) {
   if (phone) await p.locator('.menu-btn').click();
   await p.getByRole('button', { name: '配置', exact: true }).click();
-  await p.getByRole('menuitem', { name: 'MCP', exact: true }).waitFor();
+  await p.locator('.settings-nav').getByRole('button', { name: 'MCP', exact: true }).waitFor();
   if (shot) { await p.waitForTimeout(300); await p.screenshot({ path: shot }); }
-  await p.getByRole('menuitem', { name: 'MCP', exact: true }).click();
+  await p.locator('.settings-nav').getByRole('button', { name: 'MCP', exact: true }).click();
   await p.locator('.skills-row').first().waitFor();
 }
 
@@ -65,7 +66,7 @@ test('the scan spans machines and agents, and the page has an address of its own
   assert.ok(await botmux.locator('.skill-mark').count(), 'botmux shows the agents that have it');
   await page.getByRole('button', { name: 'github 的操作' }).waitFor();
   await page.getByRole('button', { name: 'playwright 的操作' }).waitFor();
-  assert.equal(page.url().endsWith('#/mcp'), true, 'the page has its own address');
+  assert.equal(page.url().endsWith('#/settings/mcp'), true, 'the page has its own address');
   await page.reload();
   await page.getByRole('button', { name: 'botmux 的操作' }).waitFor();
 });
@@ -97,7 +98,7 @@ test('install crosses machines through the proxy and asks before overwriting a d
   await dialog.locator('.skill-target-row', { hasText: '本机' }).getByRole('button', { name: 'Claude Code', exact: true }).click();
   await dialog.getByRole('button', { name: '安装到 1 个 agent' }).click();
   await dialog.getByRole('button', { name: '完成', exact: true }).waitFor();
-  const doc = JSON.parse(readFileSync(join(root, 'local/.claude.json'), 'utf8'));
+  const doc = JSON.parse(readFileSync(join(root, 'local/.claude/.claude.json'), 'utf8'));
   // The config travels verbatim: pi's own `exposure` field comes along, the way a copy does.
   assert.deepEqual(doc.mcpServers.playwright, { command: 'npx', args: ['-y', '@playwright/mcp@latest', '--headless'], exposure: 'direct' });
   assert.equal(doc.numStartups, 42, "Claude's own state survives the write");
@@ -149,7 +150,7 @@ test('desktop and phone, light and dark fit the viewport with readable dialogs',
     assert.equal(await p.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
     assert.ok((await p.locator('.skills-cell-name').last().boundingBox()).width > (phone ? 150 : 200));
     assert.equal(await p.locator('.composer').count(), 0, 'a config page has no composer under it');
-    assert.equal((await p.locator('.topbar-title').innerText()).trim(), 'MCP', 'the top bar names the page');
+    assert.equal((await p.locator('.settings-topbar h1').innerText()).trim(), phone ? 'MCP' : '配置', 'the top bar names the current navigation level');
     // On a phone the machines go on one short line under each row, not a stretched empty block.
     assert.ok((await p.locator('.skills-row').first().boundingBox()).height < 160);
     if (shots) await p.screenshot({ path: join(shots, `${phone ? 'phone' : 'desktop'}-${theme}.png`) });

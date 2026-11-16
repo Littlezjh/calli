@@ -28,9 +28,16 @@ const openGoal = async page => {
   await add(page).click();
   if (!mobileMenu(page)) await page.getByRole('textbox', { name: '搜索操作与技能' }).fill('目标');
 };
+const activate = async (page, target) => {
+  if (!mobileMenu(page)) return target.click();
+  await target.scrollIntoViewIfNeeded();
+  const bounds = await target.boundingBox();
+  // The phone's quick-switch pad forwards actual taps to controls beneath it.
+  await page.touchscreen.tap(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+};
 const goalAction = async (page, name) => {
   if (name === '设置目标') { await openGoal(page); await item(page, name).click(); }
-  else await page.locator('.goal-card').getByRole('button', { name, exact: true }).click();
+  else await activate(page, page.locator('.goal-card').getByRole('button', { name, exact: true }));
 };
 const startGoal = async (page, objective) => {
   await goalAction(page, '设置目标');
@@ -42,6 +49,7 @@ const create = async (page, agent, title, mobile) => {
   assert.equal(res.status, 201);
   const thread = await res.json();
   await openUi(page, daemon);
+  await page.addStyleTag({ content: '*,*::before,*::after{transition:none!important;animation:none!important}' });
   if (mobile) await page.locator('.menu-btn').click();
   await page.locator('.thread-title', { hasText: title }).first().click();
   return thread;
@@ -167,6 +175,7 @@ test('desktop plus and slash share a full-width catalog with search, keyboard se
       await query.waitFor();
       assert.deepEqual(await page.getByRole('option').allTextContents(), slashEntries);
       assert.equal(await query.evaluate(el => el === document.activeElement), true);
+      await waitForPaletteWidth(page);
       const bounds = await page.locator('.command-menu').boundingBox();
       const composer = await page.locator('.composer-box').boundingBox();
       assert.equal(Math.round(bounds.width), Math.round(composer.width));
@@ -268,7 +277,7 @@ test('add menu offers searchable actions and skills and controls goals without l
       // Control commands must not consume or send pending attachments.
       await add(page).click();
       const chooser = page.waitForEvent('filechooser');
-      await item(page, '添加图片或视频').click();
+      await item(page, '添加附件').click();
       await (await chooser).setFiles({ name: 'pixel.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j6r0AAAAASUVORK5CYII=', 'base64') });
       await page.locator('.attachment img').waitFor();
       if (mobile) {
@@ -287,7 +296,7 @@ test('add menu offers searchable actions and skills and controls goals without l
       await screenshot(page, `goal-running-${key}`);
       assert.equal(await item(page, '查看目标').count(), 0);
       await page.keyboard.press('Escape');
-      await page.locator('.goal-card').getByRole('button', { name: '目标详情', exact: true }).click();
+      await activate(page, page.locator('.goal-card').getByRole('button', { name: '目标详情', exact: true }));
       await page.locator('.goal-full', { hasText: 'slow' }).waitFor();
       assert.equal(await input(page).inputValue(), '保留我的草稿');
       assert.equal(await page.locator('.attachment img').count(), 1);
@@ -321,12 +330,9 @@ test('goal actions follow capabilities, Plan blocks starting a goal, and Pi skil
     await startGoal(page, 'slow');
     await page.getByRole('button', { name: '停止', exact: true }).waitFor();
     await openGoal(page);
-    assert.equal(await item(page, /^查看目标/).count(), 0);
+    assert.equal(await item(page, /^查看目标/).isDisabled(), true);
     assert.equal(await item(page, /^设置目标/).isDisabled(), true);
-    await page.keyboard.press('Escape');
-    // Claude has no live card; native control commands remain available in the composer.
-    await input(page).fill('/goal clear');
-    await page.getByRole('button', { name: '发送', exact: true }).click();
+    await item(page, '清除目标').click();
     await page.getByRole('button', { name: '停止', exact: true }).waitFor({ state: 'hidden' });
 
     await create(page, 'codex', '计划内的目标菜单', false);
@@ -335,13 +341,13 @@ test('goal actions follow capabilities, Plan blocks starting a goal, and Pi skil
     await page.locator('.composer textarea[placeholder="先分析和讨论方案"]').waitFor();
     await openGoal(page);
     assert.equal(await item(page, /^设置目标/).isDisabled(), true);
-    assert.equal(await item(page, /^继续目标/).count(), 0);
+    assert.equal(await item(page, /^继续目标/).isDisabled(), true);
     const query = page.getByRole('textbox', { name: '搜索操作与技能' });
     await query.fill('设置目标');
     await query.press('ArrowDown');
     await query.press('Enter');
     assert.equal(await page.getByRole('dialog', { name: '设置目标', exact: true }).count(), 0);
-    await query.fill('目标');
+    await query.fill('继续目标');
     await query.press('ArrowUp');
     assert.equal(await page.getByRole('option', { selected: true }).count(), 0, 'disabled goal action cannot be selected');
 
@@ -353,4 +359,39 @@ test('goal actions follow capabilities, Plan blocks starting a goal, and Pi skil
     await item(page, /^(?:\/)?skill:pdf/).click();
     assert.equal(await input(page).inputValue(), '/skill:pdf 整理文档');
   } finally { await context.close(); }
+});
+
+
+test('goals without a live card retain visible controls and drafts in all four layouts', { timeout: 120000 }, async () => {
+  for (const mobile of [false, true]) for (const colorScheme of ['light', 'dark']) {
+    const context = await browser.newContext({ viewport: mobile ? { width: 390, height: 844 } : { width: 1400, height: 900 }, isMobile: mobile, hasTouch: mobile, colorScheme });
+    try {
+      const page = await context.newPage();
+      const thread = await create(page, 'claude', `目标操作 ${mobile} ${colorScheme}`, mobile);
+      await startGoal(page, 'slow');
+      await page.getByRole('button', { name: '停止', exact: true }).waitFor();
+      await input(page).fill('保留我的草稿');
+      await openGoal(page);
+      assert.equal(await item(page, '查看目标').isDisabled(), true);
+      assert.equal(await item(page, '清除目标').isEnabled(), true);
+      assert.equal(await item(page, '暂停目标').count(), 0);
+      await screenshot(page, `goal-fallback-running-${mobile ? 'phone' : 'desktop'}-${colorScheme}`);
+      await item(page, '清除目标').click();
+      await page.getByRole('button', { name: '停止', exact: true }).waitFor({ state: 'hidden' });
+      assert.equal(await input(page).inputValue(), '保留我的草稿');
+      assert.equal(await page.locator('.queue-item').count(), 0);
+      await page.reload();
+      if (mobile) await page.locator('.menu-btn').click();
+      await page.locator('.thread-title', { hasText: thread.title }).first().click();
+      await openGoal(page);
+      assert.equal(await item(page, '查看目标').isEnabled(), true);
+      await screenshot(page, `goal-fallback-idle-${mobile ? 'phone' : 'desktop'}-${colorScheme}`);
+      await item(page, '查看目标').click();
+      await page.getByText('当前没有目标。', { exact: true }).last().waitFor();
+      const events = await (await api(daemon, `/api/threads/${thread.id}/events`)).json();
+      assert.ok(events.some(e => e.type === 'turn.started' && e.data.text === '/goal clear' && e.data.control));
+      assert.ok(events.some(e => e.type === 'turn.started' && e.data.text === '/goal'));
+      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1));
+    } finally { await context.close(); }
+  }
 });

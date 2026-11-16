@@ -148,6 +148,12 @@ export const IconFile = (p: { size?: number }) => (
     <path d="M7 3h7l5 5v13H7zM14 3v5h5" />
   </Svg>
 );
+export const IconImage = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M4 5h16v14H4zM4 16l5-5 4 4 2-2 5 5" />
+    <circle cx="15.5" cy="9" r="1.5" />
+  </Svg>
+);
 export const IconRead = (p: { size?: number }) => (
   <Svg {...p}>
     <path d="M12 6.5C9.5 4.6 6.5 4 3.5 4.5v14c3-.5 6 .1 8.5 2 2.5-1.9 5.5-2.5 8.5-2v-14c-3-.5-6 .1-8.5 2ZM12 6.5v14M7 4.5v11" />
@@ -186,6 +192,20 @@ export const IconPen = (p: { size?: number }) => (
 export const IconFolder = (p: { size?: number }) => (
   <Svg {...p}>
     <path d="M3 6h6l2 2h10v11H3z" />
+  </Svg>
+);
+
+export const IconHome = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M4 11l8-7 8 7v9h-5.5v-6h-5v6H4z" />
+  </Svg>
+);
+
+/** Two folders, for the file browser's choice of where its tree stands. */
+export const IconFolders = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M3 8h6l2 2h10v11H3z" />
+    <path d="M5.5 5.5H12l2 2h5" />
   </Svg>
 );
 export const IconShield = (p: { size?: number }) => (
@@ -233,6 +253,20 @@ export const IconCompress = (p: { size?: number }) => (
 export const IconExternal = (p: { size?: number }) => (
   <Svg {...p}>
     <path d="M14 5h5v5M19 5l-7 7M17 14v5H5V7h5" />
+  </Svg>
+);
+/** The thread at a glance: what is in it, as a short list. */
+export const IconOverview = (p: { size?: number }) => (
+  <Svg {...p}>
+    <circle cx="6" cy="7" r="2" />
+    <circle cx="6" cy="17" r="2" />
+    <path d="M11 7h9M11 17h9" />
+  </Svg>
+);
+/** Open a page or drawing in the preview, apart from the row that opens the file itself. */
+export const IconPreview = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M14 4h6v6M20 4l-8 8M18 14v5H5V6h5" />
   </Svg>
 );
 export const IconGauge = (p: { size?: number }) => (
@@ -537,6 +571,17 @@ export const IconEffortGauge = ({ level, size = 18 }: { level: number | null; si
   );
 };
 
+/** Current context occupancy, not remaining quota. Unknown is a question mark, never an empty meter. */
+export const ContextRing = ({ percent, size = 20 }: { percent: number | null; size?: number }) => (
+  <svg className="context-ring" width={size} height={size} viewBox="0 0 20 20" aria-hidden="true">
+    <circle className="usage-track" cx="10" cy="10" r="7.5" fill="none" strokeWidth={2} />
+    {percent === null
+      ? <path d="M8.5 8a1.5 1.5 0 0 1 3 0c0 1-1.5 1-1.5 2M10 12.5v.1" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" />
+      : percent > 0 && <circle className="usage-fill" cx="10" cy="10" r="7.5" fill="none" strokeWidth={2}
+        pathLength={100} strokeDasharray={`${Math.min(100, percent)} 100`} transform="rotate(-90 10 10)" />}
+  </svg>
+);
+
 /**
  * How much of a quota window is left, as a ring that empties clockwise from the top.
  * The track and fill take their colours from CSS (`.quota-ring-track`, `.quota-ring-fill`).
@@ -559,5 +604,28 @@ export const IconAgent = (p: { size?: number }) => (
     <rect x="5" y="7" width="14" height="13" rx="3" />
     <path d="M12 3v4M2 12v4m20-4v4M9 16h6" />
     <circle cx="9" cy="12" r=".6" /><circle cx="15" cy="12" r=".6" />
+  </Svg>
+);
+
+/** The thread's trace: a vertical axis with three runs of different length. */
+export const IconTrace = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M4 4v16" />
+    <path d="M8 8h6M11 12h9M9 16h5" />
+  </Svg>
+);
+
+/** Stored tokens: a stack of discs. */
+export const IconDatabase = (p: { size?: number }) => (
+  <Svg {...p}>
+    <ellipse cx="12" cy="6" rx="7" ry="2.6" />
+    <path d="M5 6v12c0 1.4 3.1 2.6 7 2.6s7-1.2 7-2.6V6" />
+    <path d="M5 12c0 1.4 3.1 2.6 7 2.6s7-1.2 7-2.6" />
+  </Svg>
+);
+
+export const IconChevronRight = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M9.5 6l6 6-6 6" />
   </Svg>
 );

@@ -39,7 +39,7 @@ async function select(page, thread, mobile = false) {
   await page.locator('.thread-title', { hasText: thread.title }).first().click();
   // On a phone an empty box is one line until it is touched; the controls are on its second.
   if (mobile) await page.locator('.composer textarea').tap();
-  await page.locator('.usage:visible').waitFor();
+  await page.locator('.model-control-trigger:visible').waitFor();
 }
 async function shot(page, name) {
   await page.waitForTimeout(350);
@@ -63,6 +63,10 @@ test('effort slider, model subview, reset and compression work in both themes an
       await page.locator('.model-control-trigger').click();
       const slider = page.getByRole('slider', { name: '思考强度' });
       await slider.waitFor();
+      const modelPanel = page.locator('.model-control-panel');
+      assert.equal(await modelPanel.locator('.model-context, .context-percent').count(), 0);
+      assert.equal(await modelPanel.getByText('上下文', { exact: true }).count(), 0);
+      assert.equal(await modelPanel.getByRole('button', { name: /压缩/ }).count(), 0);
       await slider.press('Home');
       await waitFor(async () => (await read(thread)).effort === null);
       await page.waitForTimeout(350);
@@ -78,6 +82,7 @@ test('effort slider, model subview, reset and compression work in both themes an
         assert.equal(patches, 0, 'dragging only previews the selection');
         await page.mouse.up();
         await waitFor(async () => (await read(thread)).effort === 'max');
+        await waitFor(async () => patches === 1);
         assert.equal(patches, 1, 'releasing writes once');
       }
       await waitFor(async () => (await read(thread)).effort === 'max');
@@ -89,15 +94,20 @@ test('effort slider, model subview, reset and compression work in both themes an
       await slider.press('End');
       await waitFor(async () => (await read(thread)).effort === 'max');
       // The button shows the level as a dial; its name says it in words. A phone shows the dial alone.
+      await waitFor(async () => (await page.locator('.model-control-trigger').getAttribute('aria-label')) === '模型与思考强度：GPT Big · 最大');
       assert.equal(await page.locator('.model-control-trigger').getAttribute('aria-label'), '模型与思考强度：GPT Big · 最大');
       assert.equal(await page.locator('.model-control-trigger .model-trigger-name').count(), mobile ? 0 : 1);
       if (mobile) {
+        assert.equal(await page.locator('.model-control-trigger.dial-only .model-trigger-gauge svg').count(), 1);
+        assert.equal(await page.locator('.model-control-trigger.usage, .model-control-trigger .usage-track').count(), 0, 'the effort dial is not the context ring');
         const dial = await page.locator('.model-control-trigger').boundingBox();
         assert.equal(Math.round(dial.width), Math.round(dial.height), `the dial button is a circle (${dial.width}×${dial.height})`);
       }
       await page.getByRole('button', { name: '恢复默认强度' }).click();
       await waitFor(async () => (await read(thread)).effort === null);
       await page.getByRole('button', { name: /切换模型/ }).click();
+      assert.equal(await modelPanel.getByRole('button', { name: /压缩/ }).count(), 0);
+      assert.equal(await modelPanel.getByText('上下文', { exact: true }).count(), 0);
       await page.getByRole('menuitemradio', { name: 'GPT Small', exact: true }).click();
       await waitFor(async () => (await read(thread)).model === 'gpt-small');
       await waitFor(async () => (await slider.getAttribute('aria-valuemax')) === '2');
@@ -115,21 +125,27 @@ test('effort slider, model subview, reset and compression work in both themes an
       await page.keyboard.press('Escape');
       const input = page.locator('.composer textarea');
       await input.fill('这段草稿需要保留');
-      await page.locator('.usage:visible').click();
+      const usage = page.locator('.composer .usage');
+      await usage.click();
+      const usagePanel = page.locator('.context-usage-panel');
+      await usagePanel.waitFor();
+      assert.equal(await modelPanel.count(), 0);
+      assert.equal(await usagePanel.getByRole('slider', { name: '思考强度' }).count(), 0);
       await shot(page, `compact-${tag}`);
-      await fits(page, page.getByRole('menu', { name: '上下文用量' }));
-      await page.getByRole('button', { name: '压缩 精简较早的对话，释放上下文' }).click();
+      await fits(page, usagePanel);
+      await usagePanel.getByRole('button', { name: '压缩 精简较早的对话，释放上下文' }).click();
+      await usagePanel.waitFor({ state: 'hidden' });
+      assert.equal(await usage.getAttribute('aria-expanded'), 'false');
       await page.getByText('上下文压缩完成。', { exact: true }).waitFor();
       assert.equal(await input.inputValue(), '这段草稿需要保留');
       await input.fill('/usage');
       await input.press('Enter');
-      const quota = page.getByRole('dialog', { name: /Codex 的额度|额度看板/ });
+      const list = page.getByRole('region', { name: '额度', exact: true });
+      await list.getByRole('button', { name: '查看 Codex 的额度详情', exact: true }).click();
+      const quota = page.getByRole('region', { name: 'Codex', exact: true });
       await quota.getByText('本次仅返回每周额度，服务端未提供 5 小时窗口。').waitFor();
-      const boardRow = quota.locator('.quota-board-row').filter({ hasText: 'Codex' });
-      const quotaData = await boardRow.count() ? boardRow : quota;
-      // Only the weekly window came back: one cell, in the weekly column.
-      assert.equal(await quotaData.locator('.quota-cell:not(.quota-none)').count(), 1);
-      assert.match(await quotaData.locator('.quota-cell:not(.quota-none)').getAttribute('aria-label'), /^每周/);
+      assert.equal(await quota.getByRole('meter').count(), 1);
+      assert.match(await quota.getByRole('meter').getAttribute('aria-label'), /^每周/);
       await shot(page, `quota-weekly-${tag}`);
     } finally { await context.close(); }
   }
@@ -202,18 +218,28 @@ test('compression queues once during a turn and preserves a draft; pi uses its o
     await select(page, thread);
     await page.locator('.composer textarea').fill('下一轮草稿');
     await page.getByRole('button', { name: '停止', exact: true }).waitFor();
-    await page.locator('.usage:visible').click();
-    await page.getByRole('button', { name: /压缩 本轮结束后/ }).click();
+    const usage = page.locator('.composer .usage');
+    const usagePanel = page.locator('.context-usage-panel');
+    await usage.click();
+    await usagePanel.getByRole('button', { name: /压缩 本轮结束后/ }).click();
+    await usagePanel.waitFor({ state: 'hidden' });
+    assert.equal(await usage.getAttribute('aria-expanded'), 'false');
     await waitFor(async () => (await read(thread)).queued.length === 1);
-    await page.locator('.usage:visible').click();
-    assert.ok(await page.getByRole('button', { name: /已排队压缩/ }).isDisabled());
+    // A successful submission closes the menu; reopen it to inspect the queued action.
+    await usage.click();
+    const queuedCompact = usagePanel.getByRole('button', { name: /已排队压缩/ });
+    await queuedCompact.waitFor();
+    assert.ok(await queuedCompact.isDisabled());
+    assert.equal((await read(thread)).queued.length, 1);
     await page.keyboard.press('Escape');
     await page.getByText('上下文压缩完成。', { exact: true }).waitFor();
     assert.equal(await page.locator('.composer textarea').inputValue(), '下一轮草稿');
     const pi = await makeThread('pi 压缩操作', 'pi');
     await select(page, pi);
-    await page.locator('.usage:visible').click();
-    await page.getByRole('button', { name: '压缩 精简较早的对话，释放上下文' }).click();
+    await usage.click();
+    await usagePanel.getByRole('button', { name: '压缩 精简较早的对话，释放上下文' }).click();
+    await usagePanel.waitFor({ state: 'hidden' });
+    assert.equal(await usage.getAttribute('aria-expanded'), 'false');
     await page.getByText('已压缩上下文：150.0k → 约 32.0k tokens。', { exact: true }).waitFor();
   } finally { await context.close(); }
 });

@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 
 // Deliberately use the same CLI a real agent would execute, with its injected environment.
 export function coordinationFixture(text) {
-  const body = text.split(/<calli-(?:coordination|team)>/)[0].trim();
+  const body = text.split(/<calli-(?:coordination(?:-note)?|team)>/)[0].trim();
   if (text.includes('<calli-team>')) {
     if (body.endsWith('TEAM_ENV')) return `calli-ready:${Boolean(process.env.CALLI_TEAM_SOCKET && process.env.CALLI_TEAM_KEY)}`;
     if (body.endsWith('TEAM_FINISH')) return 'Task finished after continuation.';
@@ -59,5 +59,11 @@ export function coordinationFixture(text) {
   }
   if (body.startsWith('[协作消息') && body.includes('状态：')) return '已收到成员结果，将继续检查并汇总。';
   if (body.startsWith('请审查接口文档')) return '已收到协作要求。';
+  // A remote member that leaves the report the handoff asked for, in the file it named.
+  if (body.includes('CALLI_RESULT_FILE')) {
+    const target = /把完整结果写到[：:\s]+(\S+?)(?:；|\s|$)/.exec(body)?.[1];
+    if (target) writeFileSync(target, '# REPORT\n\nfrom the fixture\n');
+    return '结果已写入文件。';
+  }
   return null;
 }

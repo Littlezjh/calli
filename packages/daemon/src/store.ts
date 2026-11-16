@@ -14,13 +14,35 @@ import { referencesFile } from './artifacts.js';
 import type { ProgressReport } from './progress-report.js';
 import type { WritingState } from './writing.js';
 import { HistoryStore } from './history.js';
+import type { Answer, DiffEvent } from './outputs.js';
 import { ToolJobs } from './tool-jobs.js';
 import { MessageEdits } from './message-edits.js';
+import type { MeetingReference, SignalMaterial, SignalMaterialRead } from './channels/lark-material.js';
 
 /** Storage cap for one tool snapshot's output; see docs/tool-output-storage-design.md. */
 const MAX_OUTPUT_CHARS = 128 * 1024;
 const OUTPUT_HEAD_CHARS = 96 * 1024;
 const OUTPUT_TAIL_CHARS = 32 * 1024;
+
+export type TitleBy = 'default' | 'user' | 'auto';
+
+export interface SignalDisposition {
+  outcome: 'filtered' | 'delivered' | 'router';
+  reason?: string;
+  threadId?: string;
+  threadIds?: string[];
+  matterIds?: string[];
+  deliveries?: Array<{ matterId: string; threadId: string }>;
+  /** Delivery is durable before the informational Router notice is accepted. */
+  pending?: boolean;
+}
+export interface SignalRecord {
+  key: string; at: string; payload: unknown; disposition: SignalDisposition; updatedAt: string;
+  material?: SignalMaterial;
+}
+type SignalRow = { key: string; at: string; payload: string; disposition: string; updated_at: string; material?: string | null };
+const toSignal = (row: SignalRow): SignalRecord => ({ key: row.key, at: row.at, payload: JSON.parse(row.payload), disposition: JSON.parse(row.disposition), updatedAt: row.updated_at,
+  ...(row.material ? { material: JSON.parse(row.material) as SignalMaterial } : {}) });
 
 export interface ThreadRecord {
   id: string;
@@ -118,13 +140,80 @@ export interface ScheduleRunRecord {
   message: string | null;
 }
 
+export type TodoLane = 'you' | 'doing' | 'wait' | 'later';
+export const TODO_LANES: TodoLane[] = ['you', 'doing', 'wait', 'later'];
+export type TodoImportance = 'high' | 'normal' | 'low';
+export const TODO_IMPORTANCES: TodoImportance[] = ['high', 'normal', 'low'];
+export type TodoSourceType = 'lark-task' | 'lark-message' | 'lark-flag' | 'lark-calendar' | 'manual';
+export const TODO_SOURCE_TYPES: TodoSourceType[] = ['lark-task', 'lark-message', 'lark-flag', 'lark-calendar', 'manual'];
+export const TODO_SUBSCRIPTION_KINDS = ['lark-thread', 'lark-task', 'lark-calendar'] as const;
+export interface TodoThread { kind: typeof TODO_SUBSCRIPTION_KINDS[number]; ref: string }
+export interface TodoSubscription extends TodoThread { at: string }
+export function todoThread(value: unknown): TodoThread {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new HttpError(400, 'subscription must be a kind/ref object');
+  const { kind, ref } = value as TodoThread;
+  if (!TODO_SUBSCRIPTION_KINDS.includes(kind) || typeof ref !== 'string' || !ref || ref.length > 200 || /\s/.test(ref)) {
+    throw new HttpError(400, 'subscription requires lark-thread, lark-task or lark-calendar and a nonempty ref (at most 200 characters, no whitespace)');
+  }
+  return { kind, ref };
+}
+function todoSubscriptions(value: TodoSubscription[]): TodoSubscription[] {
+  if (!Array.isArray(value)) throw new HttpError(400, 'subscriptions must be an array');
+  const unique = new Map<string, TodoSubscription>();
+  for (const item of value) {
+    const thread = todoThread(item);
+    if (typeof item.at !== 'string' || !Number.isFinite(Date.parse(item.at))) throw new HttpError(400, 'subscription.at must be a timestamp');
+    const key = JSON.stringify(thread);
+    if (!unique.has(key)) unique.set(key, { ...thread, at: new Date(item.at).toISOString() });
+  }
+  if (unique.size > 20) throw new HttpError(400, 'at most 20 subscriptions are allowed');
+  return [...unique.values()];
+}
+/** Where a todo came from, when it arrived through a channel; null for hand-made ones. */
+export interface TodoSource {
+  type: TodoSourceType;
+  ref: string;
+  url?: string;
+  from?: string;
+  at?: string;
+  thread?: TodoThread;
+}
+
+export interface TodoUrgency { urgent: boolean; reason: 'overdue' | 'due-soon' | 'pinned' | 'meeting-today' | null }
+/**
+ * Derived, never stored: an overdue or soon-due item is urgent, a pin keeps the item urgent
+ * until it expires, and a done item is never urgent no matter what. Reasons are checked in the
+ * listed order, so an overdue pin still reads as overdue.
+ */
+export function urgencyOf(todo: Pick<TodoRecord, 'done' | 'state' | 'dueAt' | 'urgentUntil'>, now = new Date()): TodoUrgency {
+  if (todo.done || todo.state === 'done') return { urgent: false, reason: null };
+  const at = now.getTime();
+  const due = todo.dueAt ? Date.parse(todo.dueAt) : Number.NaN;
+  if (Number.isFinite(due)) {
+    if (due <= at) return { urgent: true, reason: 'overdue' };
+    if (due - at <= 48 * 60 * 60 * 1000) return { urgent: true, reason: 'due-soon' };
+  }
+  const pinned = todo.urgentUntil ? Date.parse(todo.urgentUntil) : Number.NaN;
+  if (Number.isFinite(pinned) && pinned > at) return { urgent: true, reason: 'pinned' };
+  return { urgent: false, reason: null };
+}
+
 /** One entry on the plan page. `parentId` is only ever a top-level todo: one level of nesting. */
 export interface TodoNote { text: string; updatedAt: string | null; threadId: string | null }
 export interface TodoProposal { id: string; todoId: string; kind: 'add' | 'done'; evidence: string; threadId: string; createdAt: string; state: 'open' | 'accepted' | 'dismissed' }
-export type TodoPatch = Partial<Pick<TodoRecord, 'text' | 'done' | 'owner' | 'state' | 'waitingOn' | 'dueAt' | 'followUpAt' | 'followUpNoProgress' | 'followUpPaused' | 'proposed'>>;
+export type TodoPatch = Partial<Pick<TodoRecord, 'text' | 'done' | 'owner' | 'state' | 'lane' | 'importance' | 'urgentUntil' | 'source' | 'subscriptions' | 'waitingOn' | 'dueAt' | 'followUpAt' | 'followUpNoProgress' | 'followUpPaused' | 'proposed'>>;
 export interface TodoRecord {
   owner: 'me' | 'agent';
   state: 'open' | 'waiting' | 'done';
+  /** Explicit group; null lets the page infer it from the due date and waiting state. */
+  lane: TodoLane | null;
+  /** The person's own weight for the item; null is unspecified. */
+  importance: TodoImportance | null;
+  /** A human-set pin that keeps the item urgent until it expires. */
+  urgentUntil: string | null;
+  /** Where the todo came from, when it arrived through a channel. */
+  source: TodoSource | null;
+  subscriptions: TodoSubscription[];
   waitingOn: string | null;
   dueAt: string | null;
   followUpAt: string | null;
@@ -141,11 +230,14 @@ export interface TodoRecord {
   parentId: string | null;
   position: number;
   createdAt: string;
+  /** When the person or an agent last did anything to this item; the desk's last-activity signal. */
+  updatedAt: string;
   doneAt: string | null;
 }
 
 interface TodoRow {
-  owner: 'me' | 'agent'; state: 'open' | 'waiting' | 'done'; waiting_on: string | null;
+  subscriptions: string;
+  owner: 'me' | 'agent'; state: 'open' | 'waiting' | 'done'; lane: string | null; importance: string | null; urgent_until: string | null; source: string | null; waiting_on: string | null;
   due_at: string | null; follow_up_at: string | null; rev: number; proposed: number;
   follow_up_no_progress: number; follow_up_paused: number;
   has_note: number; note_preview: string | null; note_updated_at: string | null;
@@ -155,6 +247,7 @@ interface TodoRow {
   parent_id: string | null;
   position: number;
   created_at: string;
+  updated_at: string | null;
   done_at: string | null;
 }
 
@@ -232,8 +325,22 @@ function todoNotePreview(text: string): string {
   return (end < 0 ? body : body.slice(0, end)).find(line => line && !/^#{1,6}(?:\s|$)/.test(line)) ?? '';
 }
 
+const toTodoSource = (raw: string | null): TodoSource | null => {
+  if (!raw) return null;
+  try {
+    const value = JSON.parse(raw) as TodoSource;
+    return value && typeof value === 'object' && TODO_SOURCE_TYPES.includes(value.type) && typeof value.ref === 'string' ? value : null;
+  } catch { return null; }
+};
+
 const toTodo = (r: TodoRow): TodoRecord => ({
-  owner: r.owner, state: r.state, waitingOn: r.waiting_on, dueAt: r.due_at, followUpAt: r.follow_up_at,
+  owner: r.owner, state: r.state,
+  lane: (TODO_LANES as string[]).includes(r.lane ?? '') ? r.lane as TodoLane : null,
+  importance: (TODO_IMPORTANCES as string[]).includes(r.importance ?? '') ? r.importance as TodoImportance : null,
+  urgentUntil: r.urgent_until,
+  source: toTodoSource(r.source),
+  subscriptions: todoSubscriptions(JSON.parse(r.subscriptions)),
+  waitingOn: r.waiting_on, dueAt: r.due_at, followUpAt: r.follow_up_at,
   followUpNoProgress: r.follow_up_no_progress, followUpPaused: r.follow_up_paused === 1,
   rev: r.rev, proposed: r.proposed === 1, hasNote: r.has_note === 1, notePreview: r.note_preview, noteUpdatedAt: r.note_updated_at,
   id: r.id,
@@ -242,6 +349,7 @@ const toTodo = (r: TodoRow): TodoRecord => ({
   parentId: r.parent_id,
   position: r.position,
   createdAt: r.created_at,
+  updatedAt: r.updated_at ?? r.created_at,
   doneAt: r.done_at,
 });
 
@@ -348,7 +456,8 @@ function snippetAround(text: string, terms: string[]): string {
 }
 
 export class Store {
-  private readonly db: DatabaseSync;
+  /** Shared with the services the store hosts (telemetry) and the machine's own metering. */
+  readonly db: DatabaseSync;
   readonly telemetry: Telemetry;
   readonly activity: Activity;
   readonly history: HistoryStore;
@@ -363,6 +472,16 @@ export class Store {
     this.db.exec('PRAGMA foreign_keys = ON;');
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS hub_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS signals (
+        key TEXT PRIMARY KEY, at TEXT NOT NULL, payload TEXT NOT NULL,
+        disposition TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS signals_at ON signals(at);
+      CREATE INDEX IF NOT EXISTS signals_meeting ON signals(json_extract(payload, '$.meeting.meetingId'));
+      CREATE TABLE IF NOT EXISTS signal_materials (
+        signal_key TEXT PRIMARY KEY REFERENCES signals(key) ON DELETE CASCADE,
+        scope TEXT NOT NULL, reference TEXT NOT NULL, material TEXT NOT NULL, content TEXT
+      );
       CREATE TABLE IF NOT EXISTS threads (
         id TEXT PRIMARY KEY,
         agent TEXT NOT NULL,
@@ -410,6 +529,8 @@ export class Store {
     // Migration: terminal-activity tracking (turns the terminal added, hub turns).
     if (!cols.some((c) => c.name === 'hub_turn_at')) this.db.exec('ALTER TABLE threads ADD COLUMN hub_turn_at TEXT');
     if (!cols.some((c) => c.name === 'external_at')) this.db.exec('ALTER TABLE threads ADD COLUMN external_at TEXT');
+    // Migration: who set the title (see titleBy). NULL for threads from before, which no one renames.
+    if (!cols.some((c) => c.name === 'title_by')) this.db.exec('ALTER TABLE threads ADD COLUMN title_by TEXT');
     // Migration: the sidebar's preview line, the newest thing the user asked.
     if (!cols.some((c) => c.name === 'preview')) this.db.exec('ALTER TABLE threads ADD COLUMN preview TEXT');
     // Migration: the board's done mark and the agent's progress line, as JSON.
@@ -505,9 +626,11 @@ export class Store {
     `));
     if (!runColumns.some(c => c.name === 'note_before_hash')) this.db.exec('ALTER TABLE schedule_runs ADD COLUMN note_before_hash TEXT');
     const todoColumns = new Set((this.db.prepare('PRAGMA table_info(todos)').all() as Array<{ name: string }>).map(c => c.name));
-    for (const [column, definition] of Object.entries({ owner: "TEXT NOT NULL DEFAULT 'me'", state: "TEXT NOT NULL DEFAULT 'open'", waiting_on: 'TEXT', due_at: 'TEXT', follow_up_at: 'TEXT', follow_up_no_progress: 'INTEGER NOT NULL DEFAULT 0', follow_up_paused: 'INTEGER NOT NULL DEFAULT 0', rev: 'INTEGER NOT NULL DEFAULT 1', proposed: 'INTEGER NOT NULL DEFAULT 0', has_note: 'INTEGER NOT NULL DEFAULT 0', note_preview: 'TEXT', note_updated_at: 'TEXT' })) {
+    for (const [column, definition] of Object.entries({ owner: "TEXT NOT NULL DEFAULT 'me'", state: "TEXT NOT NULL DEFAULT 'open'", lane: 'TEXT', importance: 'TEXT', urgent_until: 'TEXT', source: 'TEXT', subscriptions: "TEXT NOT NULL DEFAULT '[]'", waiting_on: 'TEXT', due_at: 'TEXT', follow_up_at: 'TEXT', follow_up_no_progress: 'INTEGER NOT NULL DEFAULT 0', follow_up_paused: 'INTEGER NOT NULL DEFAULT 0', rev: 'INTEGER NOT NULL DEFAULT 1', proposed: 'INTEGER NOT NULL DEFAULT 0', has_note: 'INTEGER NOT NULL DEFAULT 0', note_preview: 'TEXT', note_updated_at: 'TEXT', updated_at: 'TEXT' })) {
       if (!todoColumns.has(column)) this.db.exec(`ALTER TABLE todos ADD COLUMN ${column} ${definition}`);
     }
+    // Old items were last touched when they were created; every writer stamps from now on.
+    this.db.exec('UPDATE todos SET updated_at = created_at WHERE updated_at IS NULL');
     if (!todoColumns.has('state')) this.db.exec("UPDATE todos SET state = CASE WHEN done = 1 THEN 'done' ELSE 'open' END");
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS todo_notes (todo_id TEXT PRIMARY KEY REFERENCES todos(id) ON DELETE CASCADE, text TEXT NOT NULL, updated_at TEXT NOT NULL, thread_id TEXT);
@@ -580,6 +703,34 @@ export class Store {
       .run(threadId, turnId, role, ts, text);
   }
 
+  /** Reuse small tool projections. Cold/forked logs build only tools, yielding between batches. */
+  async outputSources(threadId: string): Promise<{ diffs: DiffEvent[]; answers: Answer[]; seq: number }> {
+    await this.history.ensure(threadId, 1, this.history.latest(threadId) + 1, true);
+    const diffs = (this.db.prepare("SELECT turn_id, seq, ts, data FROM history_rows WHERE thread_id = ? AND type IN ('history.tool.start', 'history.tool.update', 'history.tool.end') ORDER BY seq").all(threadId) as Array<{ turn_id: string; seq: number; ts: string; data: string }>)
+      .map(r => {
+        const data = JSON.parse(r.data) as DiffEvent['data'];
+        if (data.files?.some(f => f.created === undefined)) {
+          // Projections from older hubs already have counts. Read only creation flags in SQLite,
+          // never transfer old/new text (or the tool output) back into JS, then keep the upgrade.
+          const flags = this.db.prepare(`SELECT json_type(p.value, '$.oldText') IS NOT 'text' AS created
+            FROM events e, json_each(e.data, '$.content') p WHERE e.thread_id=? AND e.seq=?
+            AND json_extract(p.value, '$.type')='diff'`).all(threadId, r.seq) as Array<{ created: number }>;
+          data.files.forEach((f, i) => { f.created = Boolean(flags[i]?.created); });
+          this.db.prepare('UPDATE history_rows SET data=? WHERE thread_id=? AND seq=?').run(JSON.stringify(data), threadId, r.seq);
+        }
+        return { turnId: r.turn_id, seq: r.seq, ts: r.ts, data };
+      });
+    // turn_text.ts is the first chunk's timestamp. Use the final message's log position instead,
+    // so an answer that spans an edit, an import or a copied turn cannot be sorted before it.
+    const answers = (this.db.prepare(`SELECT tt.turn_id, e.seq, e.ts, tt.text FROM turn_text tt
+      JOIN events e ON e.thread_id=tt.thread_id AND e.seq=(SELECT MAX(seq) FROM events
+        WHERE thread_id=tt.thread_id AND turn_id=tt.turn_id AND type IN ('message.delta', 'message.replace'))
+      WHERE tt.thread_id=? AND tt.role='assistant' ORDER BY e.seq`).all(threadId) as Array<{ turn_id: string; seq: number; ts: string; text: string }>)
+      .map(r => ({ turnId: r.turn_id, seq: r.seq, ts: r.ts, text: r.text }));
+    const seq = this.history.latest(threadId);
+    return { diffs, answers, seq };
+  }
+
   /** Completed answers are already assembled for search, including imported and older turns. */
   referencesFile(threadId: string, path: string): boolean {
     const rows = this.db.prepare("SELECT text FROM turn_text WHERE thread_id = ? AND role = 'assistant'").iterate(threadId);
@@ -615,6 +766,18 @@ export class Store {
       said.set(row.turn_id, answer);
     }
     flush();
+  }
+
+  /** Read only recent human display text; background prompts and assistant/tool bodies stay unread. */
+  userTurns(threadId: string, limit = 20, since = ''): Array<{ ts: string; text: string }> {
+    return this.db.prepare(`SELECT tt.ts, substr(tt.text, 1, 120) AS text FROM turn_text tt
+      WHERE tt.thread_id = ? AND tt.role = 'user' AND tt.ts >= ?
+        AND EXISTS (SELECT 1 FROM events e WHERE e.thread_id = tt.thread_id AND e.turn_id = tt.turn_id
+          AND e.type = 'turn.started' AND NOT (
+            coalesce(json_extract(e.data, '$.background'), 0) OR coalesce(json_extract(e.data, '$.scheduled'), 0)
+            OR coalesce(json_extract(e.data, '$.review'), 0) OR coalesce(json_extract(e.data, '$.proactive'), 0)
+            OR json_type(e.data, '$.coordination') IS NOT NULL OR json_type(e.data, '$.handover') IS NOT NULL))
+      ORDER BY tt.ts DESC, tt.rowid DESC LIMIT ?`).all(threadId, since, limit) as Array<{ ts: string; text: string }>;
   }
 
   /**
@@ -689,6 +852,30 @@ export class Store {
 
   saveCoordination(id: string, data: string): void {
     this.db.prepare('INSERT INTO coordination (id, data) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data').run(id, data);
+  }
+
+  private injectionsReady = false;
+  /** What was last attached to this thread's messages, per kind of protocol block; see injections.ts. */
+  injection(threadId: string, kind: string): { digest: string; session: string | null; turns: number } | null {
+    if (!this.injectionsReady) {
+      this.db.exec('CREATE TABLE IF NOT EXISTS injections (thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE, kind TEXT NOT NULL, digest TEXT NOT NULL, session TEXT, turns INTEGER NOT NULL, PRIMARY KEY (thread_id, kind))');
+      this.injectionsReady = true;
+    }
+    return (this.db.prepare('SELECT digest, session, turns FROM injections WHERE thread_id = ? AND kind = ?').get(threadId, kind) as { digest: string; session: string | null; turns: number } | undefined) ?? null;
+  }
+  saveInjection(threadId: string, kind: string, value: { digest: string; session: string | null; turns: number }): void {
+    this.injection(threadId, kind);
+    if (!this.getThread(threadId)) return;
+    this.db.prepare('INSERT INTO injections (thread_id, kind, digest, session, turns) VALUES (?, ?, ?, ?, ?) ON CONFLICT(thread_id, kind) DO UPDATE SET digest = excluded.digest, session = excluded.session, turns = excluded.turns')
+      .run(threadId, kind, value.digest, value.session, value.turns);
+  }
+  ageInjection(threadId: string, kind: string): void {
+    this.injection(threadId, kind);
+    this.db.prepare('UPDATE injections SET turns = turns + 1 WHERE thread_id = ? AND kind = ?').run(threadId, kind);
+  }
+  clearInjections(threadId: string): void {
+    this.injection(threadId, '');
+    this.db.prepare('DELETE FROM injections WHERE thread_id = ?').run(threadId);
   }
 
   close(): void {
@@ -772,6 +959,15 @@ export class Store {
       .prepare('SELECT * FROM threads WHERE agent = ? AND agent_session_id = ? LIMIT 1')
       .get(agent, agentSessionId) as ThreadRow | undefined;
     return row ? toThread(row) : this.getThread(this.messageEdits.owner(agent, agentSessionId) ?? '');
+  }
+
+  /** Every agent-side session the hub has a thread for: sessionId → agent instance id. The
+   *  machine's token meter names the launcher of a transcript through this. */
+  agentSessionOwners(): Map<string, string> {
+    const rows = this.db
+      .prepare('SELECT agent, agent_session_id AS session FROM threads WHERE agent_session_id IS NOT NULL')
+      .all() as Array<{ agent: string; session: string }>;
+    return new Map(rows.map((row) => [row.session, row.agent]));
   }
 
   /** Copies a thread's whole event log to another thread, keeping order and timestamps. */
@@ -867,6 +1063,20 @@ export class Store {
       );
   }
 
+  /**
+   * Who set a thread's title: `default` (the hub, from the first message), `user` (renamed by the
+   * person) or `auto` (an extension). Null for threads from before this was kept.
+   */
+  titleBy(id: string): TitleBy | null {
+    const row = this.db.prepare('SELECT title_by FROM threads WHERE id = ?').get(id) as { title_by: string | null } | undefined;
+    const by = row?.title_by;
+    return by === 'default' || by === 'user' || by === 'auto' ? by : null;
+  }
+
+  setTitleBy(id: string, by: TitleBy): void {
+    this.db.prepare('UPDATE threads SET title_by = ? WHERE id = ?').run(by, id);
+  }
+
   listSections(): SectionRecord[] {
     return this.db.prepare('SELECT id, name, position FROM sections ORDER BY position ASC').all() as unknown as SectionRecord[];
   }
@@ -905,6 +1115,13 @@ export class Store {
 
   // ---------- Plan page (todos) ----------
 
+  /** Old Router conversations remain Router threads after a settings change creates a successor. */
+  isRouterThread(threadId: string): boolean {
+    return !!this.db.prepare(`SELECT 1 FROM events WHERE thread_id = ? AND type = 'turn.started'
+      AND json_extract(data, '$.hiddenPrompt') = 1
+      AND instr(json_extract(data, '$.text'), ?) > 0 LIMIT 1`).get(threadId, '\n\n<calli-personal-router>\n');
+  }
+
   isReviewThread(threadId: string): boolean {
     return !!this.db.prepare("SELECT 1 FROM events WHERE thread_id = ? AND type = 'turn.started' AND json_extract(data, '$.review') = 1 LIMIT 1").get(threadId);
   }
@@ -917,6 +1134,98 @@ export class Store {
     return (this.db.prepare('SELECT * FROM todos ORDER BY position ASC, created_at ASC').all() as unknown as TodoRow[]).map(toTodo);
   }
 
+  insertSignal(key: string, payload: unknown, disposition: SignalDisposition, at = new Date().toISOString()): boolean {
+    return this.db.prepare('INSERT OR IGNORE INTO signals (key, at, payload, disposition, updated_at) VALUES (?, ?, ?, ?, ?)')
+      .run(key, at, JSON.stringify(payload), JSON.stringify(disposition), at).changes > 0;
+  }
+
+  getSignal(key: string, materialScope?: string): SignalRecord | null {
+    // Only the small state crosses this join; the body has its own explicit read.
+    const row = this.db.prepare(`SELECT s.*, m.material FROM signals s LEFT JOIN signal_materials m
+      ON m.signal_key = s.key AND m.scope = ? WHERE s.key = ?`).get(materialScope ?? null, key) as SignalRow | undefined;
+    return row ? toSignal(row) : null;
+  }
+
+  updateSignalDisposition(key: string, disposition: SignalDisposition, at = new Date().toISOString()): void {
+    // A Router can associate a matter while a delivery is awaited. Never erase that provenance.
+    const previous = this.getSignal(key)?.disposition;
+    const matterIds = [...new Set([...(previous?.matterIds ?? []), ...(disposition.matterIds ?? [])])];
+    this.db.prepare('UPDATE signals SET disposition = ?, updated_at = ? WHERE key = ?')
+      .run(JSON.stringify({ ...disposition, ...(matterIds.length ? { matterIds } : {}) }), at, key);
+  }
+
+  listSignals(options: { matterId?: string; pending?: boolean; limit?: number; materialScope?: string } = {}): SignalRecord[] {
+    return (this.db.prepare(`SELECT s.*, m.material FROM signals s LEFT JOIN signal_materials m
+      ON m.signal_key = s.key AND m.scope = ? WHERE
+      (? IS NULL OR EXISTS (SELECT 1 FROM json_each(s.disposition, '$.matterIds') WHERE value = ?))
+      AND (? = 0 OR json_extract(s.disposition, '$.pending') = 1)
+      ORDER BY s.at DESC, s.key LIMIT ?`).all(options.materialScope ?? null, options.matterId ?? null, options.matterId ?? null,
+        options.pending ? 1 : 0, Math.max(1, Math.min(options.limit ?? 100, 1000))) as SignalRow[]).map(toSignal);
+  }
+
+  /** Explicit meeting identity, not a title, document token, meeting number or delivery ID. */
+  meetingSignals(meetingId: string): SignalRecord[] {
+    return (this.db.prepare(`SELECT * FROM signals WHERE json_extract(payload, '$.meeting.meetingId') = ?
+      AND json_extract(disposition, '$.outcome') != 'filtered' ORDER BY at DESC, key LIMIT 1000`)
+      .all(meetingId) as SignalRow[]).map(toSignal);
+  }
+
+  updateSignalMeeting(key: string, meeting: MeetingReference, at = new Date().toISOString()): void {
+    const previous = this.getSignal(key)?.payload as { meeting?: MeetingReference } | undefined;
+    if (!previous || JSON.stringify(previous.meeting) === JSON.stringify(meeting)) return;
+    this.transaction(() => {
+      this.db.prepare("UPDATE signals SET payload = json_set(payload, '$.meeting', json(?)), updated_at = ? WHERE key = ?")
+        .run(JSON.stringify(meeting), at, key);
+      this.db.prepare('DELETE FROM signal_materials WHERE signal_key = ?').run(key);
+    });
+  }
+
+  /** Called inside the matter write transaction; late artifacts inherit the same provenance. */
+  associateSignal(key: string, matterId: string): void {
+    const record = this.getSignal(key);
+    if (!record) throw new HttpError(404, 'signal not found');
+    if (!this.getTodo(matterId)) throw new HttpError(404, 'todo not found');
+    const meetingId = (record.payload as { meeting?: MeetingReference }).meeting?.meetingId;
+    const related = typeof meetingId === 'string' ? this.meetingSignals(meetingId) : [];
+    this.transaction(() => {
+      for (const row of new Map([record, ...related].map(row => [row.key, row])).values()) {
+        this.updateSignalDisposition(row.key, { ...row.disposition, matterIds: [...new Set([...(row.disposition.matterIds ?? []), matterId])] });
+      }
+    });
+  }
+
+  getSignalMaterial(key: string, scope: string, reference: string): SignalMaterialRead | null {
+    const row = this.db.prepare('SELECT material, content FROM signal_materials WHERE signal_key = ? AND scope = ? AND reference = ?')
+      .get(key, scope, reference) as { material: string; content: string | null } | undefined;
+    return row ? { material: JSON.parse(row.material) as SignalMaterial, content: row.content } : null;
+  }
+
+  saveSignalMaterial(key: string, scope: string, reference: string, read: SignalMaterialRead): void {
+    this.db.prepare(`INSERT INTO signal_materials (signal_key, scope, reference, material, content) VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(signal_key) DO UPDATE SET scope = excluded.scope, reference = excluded.reference,
+      material = excluded.material, content = excluded.content`).run(key, scope, reference, JSON.stringify(read.material), read.content);
+  }
+
+  clearSignalMaterials(): void { this.db.prepare('DELETE FROM signal_materials').run(); }
+
+  pruneSignals(now = new Date()): void {
+    this.db.prepare('DELETE FROM signals WHERE at < ?').run(new Date(now.getTime() - 90 * 86400000).toISOString());
+  }
+
+  activeSubscriptionThreads(): TodoThread[] {
+    return this.db.prepare(`SELECT DISTINCT json_extract(s.value, '$.kind') AS kind, json_extract(s.value, '$.ref') AS ref
+      FROM todos t, json_each(t.subscriptions) s WHERE t.done = 0 AND t.state != 'done'`).all() as unknown as TodoThread[];
+  }
+
+  /** Exact source identity; completed matters remain discoverable for fourteen days. */
+  subscribedTodos(thread: TodoThread, now = new Date()): TodoRecord[] {
+    return (this.db.prepare(`SELECT t.* FROM todos t WHERE
+      (t.state != 'done' AND t.done = 0 OR t.done_at >= ?)
+      AND EXISTS (SELECT 1 FROM json_each(t.subscriptions) s
+        WHERE json_extract(s.value, '$.kind') = ? AND json_extract(s.value, '$.ref') = ?)
+      ORDER BY t.position, t.created_at`).all(new Date(now.getTime() - 14 * 86400000).toISOString(), thread.kind, thread.ref) as unknown as TodoRow[]).map(toTodo);
+  }
+
   getTodo(id: string): TodoRecord | null {
     const row = this.db.prepare('SELECT * FROM todos WHERE id = ?').get(id) as TodoRow | undefined;
     return row ? toTodo(row) : null;
@@ -924,15 +1233,17 @@ export class Store {
 
   /** New items go to the end of their level: top level, or after their siblings under a parent. */
   createTodo(id: string, text: string, parentId: string | null, fields: TodoPatch = {}): TodoRecord {
+    const subscriptions = todoSubscriptions(fields.subscriptions ?? []);
     const row = this.db
       .prepare('SELECT COALESCE(MAX(position), 0) + 1 AS next FROM todos WHERE parent_id IS ?')
       .get(parentId) as { next: number };
     const now = new Date().toISOString();
     this.db
-      .prepare('INSERT INTO todos (id, text, done, parent_id, position, created_at) VALUES (?, ?, 0, ?, ?, ?)')
-      .run(id, text, parentId, row.next, now);
+      .prepare('INSERT INTO todos (id, text, done, parent_id, position, created_at, updated_at) VALUES (?, ?, 0, ?, ?, ?, ?)')
+      .run(id, text, parentId, row.next, now, now);
     if (Object.keys(fields).length) {
-      this.db.prepare('UPDATE todos SET owner = ?, due_at = ?, proposed = ? WHERE id = ?').run(fields.owner ?? 'me', fields.dueAt ?? null, fields.proposed ? 1 : 0, id);
+      this.db.prepare('UPDATE todos SET owner = ?, due_at = ?, proposed = ?, lane = ?, importance = ?, urgent_until = ?, source = ?, subscriptions = ? WHERE id = ?')
+        .run(fields.owner ?? 'me', fields.dueAt ?? null, fields.proposed ? 1 : 0, fields.lane ?? null, fields.importance ?? null, fields.urgentUntil ?? null, fields.source === undefined ? null : JSON.stringify(fields.source), JSON.stringify(subscriptions), id);
     }
     return this.getTodo(id)!;
   }
@@ -948,13 +1259,24 @@ export class Store {
 
   updateTodo(id: string, patch: TodoPatch, rev = this.getTodo(id)?.rev): TodoRecord {
     const current = this.checkTodoRev(id, rev);
-    const next = { ...current, ...patch };
+    if (patch.lane !== undefined && patch.lane !== null && !TODO_LANES.includes(patch.lane)) throw new HttpError(400, 'lane must be you, doing, wait, later or null');
+    if (patch.importance !== undefined && patch.importance !== null && !TODO_IMPORTANCES.includes(patch.importance)) throw new HttpError(400, 'importance must be high, normal, low or null');
+    if (patch.source !== undefined && patch.source !== null && (!TODO_SOURCE_TYPES.includes(patch.source.type) || !patch.source.ref)) throw new HttpError(400, 'invalid todo source');
+    const next = { ...current, ...patch, subscriptions: todoSubscriptions(patch.subscriptions ?? current.subscriptions) };
     if (patch.state !== undefined) next.done = patch.state === 'done';
     else if (patch.done !== undefined) next.state = patch.done ? 'done' : 'open';
     next.doneAt = next.done ? (current.doneAt ?? new Date().toISOString()) : null;
     if (next.state !== 'waiting') next.waitingOn = null;
-    this.db.prepare('UPDATE todos SET text = ?, done = ?, done_at = ?, owner = ?, state = ?, waiting_on = ?, due_at = ?, follow_up_at = ?, follow_up_no_progress = ?, follow_up_paused = ?, proposed = ?, rev = rev + 1 WHERE id = ?')
-      .run(next.text, next.done ? 1 : 0, next.doneAt, next.owner, next.state, next.waitingOn, next.dueAt, next.followUpAt, next.followUpNoProgress, next.followUpPaused ? 1 : 0, next.proposed ? 1 : 0, id);
+    next.updatedAt = new Date().toISOString();
+    this.db.prepare('UPDATE todos SET text = ?, done = ?, done_at = ?, owner = ?, state = ?, lane = ?, importance = ?, urgent_until = ?, source = ?, subscriptions = ?, waiting_on = ?, due_at = ?, follow_up_at = ?, follow_up_no_progress = ?, follow_up_paused = ?, proposed = ?, updated_at = ?, rev = rev + 1 WHERE id = ?')
+      .run(next.text, next.done ? 1 : 0, next.doneAt, next.owner, next.state, next.lane, next.importance, next.urgentUntil, next.source === null ? null : JSON.stringify(next.source), JSON.stringify(next.subscriptions), next.waitingOn, next.dueAt, next.followUpAt, next.followUpNoProgress, next.followUpPaused ? 1 : 0, next.proposed ? 1 : 0, next.updatedAt, id);
+    return this.getTodo(id)!;
+  }
+
+  /** 「还在跟」: refreshes only the activity timestamp; no rev bump, nothing else changes. */
+  touchTodo(id: string): TodoRecord {
+    if (!this.getTodo(id)) throw new HttpError(404, 'todo not found');
+    this.db.prepare('UPDATE todos SET updated_at = ? WHERE id = ?').run(new Date().toISOString(), id);
     return this.getTodo(id)!;
   }
 
@@ -968,8 +1290,8 @@ export class Store {
       const changed = this.todoNote(id).text !== text;
       const now = new Date().toISOString();
       this.db.prepare('INSERT INTO todo_notes (todo_id, text, updated_at, thread_id) VALUES (?, ?, ?, ?) ON CONFLICT(todo_id) DO UPDATE SET text = excluded.text, updated_at = excluded.updated_at, thread_id = excluded.thread_id').run(id, text, now, threadId);
-      this.db.prepare('UPDATE todos SET has_note = ?, note_preview = ?, note_updated_at = ?, follow_up_no_progress = ?, follow_up_paused = ?, rev = rev + ? WHERE id = ?')
-        .run(Number(Boolean(text.trim())), todoNotePreview(text), now, changed ? 0 : todo.followUpNoProgress, changed ? 0 : Number(todo.followUpPaused), bumpRev ? 1 : 0, id);
+      this.db.prepare('UPDATE todos SET has_note = ?, note_preview = ?, note_updated_at = ?, follow_up_no_progress = ?, follow_up_paused = ?, updated_at = ?, rev = rev + ? WHERE id = ?')
+        .run(Number(Boolean(text.trim())), todoNotePreview(text), now, changed ? 0 : todo.followUpNoProgress, changed ? 0 : Number(todo.followUpPaused), now, bumpRev ? 1 : 0, id);
       return this.getTodo(id)!;
     });
   }
@@ -1089,6 +1411,11 @@ export class Store {
       // A payload field the incoming snapshot does not carry (diffs especially) is only in the
       // old row; keep the row then. A call alternates fields rarely, so this stays bounded.
       if (!(!now.output && old.output) && !(!now.content && old.content)) {
+        // What names the call (a streamed one learns its command only from an update) goes on
+        // with the snapshot that replaces the row, or a reload would show "Terminal" again.
+        for (const field of ['title', 'kind', 'input'] as const) {
+          if (stored[field] === undefined && before[field] !== undefined) stored[field] = before[field];
+        }
         this.db.prepare('DELETE FROM events WHERE thread_id = ? AND seq = ?').run(threadId, prior.seq);
         this.db.prepare('DELETE FROM history_rows WHERE thread_id = ? AND seq = ?').run(threadId, prior.seq);
       }
@@ -1187,6 +1514,34 @@ export class Store {
     }
   }
 
+  /** Completed native compactions, by distinct id: a replayed terminal update counts once. */
+  compactionSummary(threadId: string): { count: number; last: { ts: string; automatic: boolean } | null } {
+    const done = "type='context.compaction' AND json_extract(data, '$.status')='completed'";
+    const count = (this.db.prepare(`SELECT COUNT(DISTINCT json_extract(data, '$.id')) AS n FROM events WHERE thread_id=? AND ${done}`).get(threadId) as { n: number }).n;
+    if (!count) return { count: 0, last: null };
+    const row = this.db
+      .prepare(`SELECT ts, json_extract(data, '$.automatic') AS automatic FROM events WHERE thread_id=? AND ${done} ORDER BY seq DESC LIMIT 1`)
+      .get(threadId) as { ts: string; automatic: number | null } | undefined;
+    return { count, last: row ? { ts: row.ts, automatic: row.automatic === 1 } : null };
+  }
+
+  /** Repair a hub-generated prompt's display without changing its agent input or event identity. */
+  setTurnDisplayText(threadId: string, seq: number, displayText: string): void {
+    const row = this.db.prepare("SELECT * FROM events WHERE thread_id=? AND seq=? AND type='turn.started'").get(threadId, seq) as unknown as EventRow | undefined;
+    if (!row) return;
+    const event = toEvent(row);
+    event.data = { ...event.data, displayText, hiddenPrompt: true };
+    this.transaction(() => {
+      this.db.prepare('UPDATE events SET data=? WHERE thread_id=? AND seq=?').run(JSON.stringify(event.data), threadId, seq);
+      this.history.record(event);
+      if (event.turnId && !event.data.handover && !event.data.coordination) {
+        this.saveText(threadId, event.turnId, 'user', event.ts, displayText);
+        const latest = this.db.prepare("SELECT MAX(seq) AS seq FROM events WHERE thread_id=? AND type='turn.started' AND json_extract(data, '$.handover') IS NULL AND json_extract(data, '$.coordination') IS NULL").get(threadId);
+        if (latest?.seq === seq) this.db.prepare('UPDATE threads SET preview=? WHERE id=?').run(askedText(displayText).slice(0, 80), threadId);
+      }
+    });
+  }
+
   /** Events after a sequence number, oldest first. A negative limit means all of them. */
   listEvents(threadId: string, afterSeq = 0, limit = 5000): StoredEvent[] {
     return [...this.iterateEvents(threadId, afterSeq, limit)];
@@ -1278,6 +1633,76 @@ export class Store {
       .prepare('SELECT * FROM events WHERE thread_id = ? AND seq >= ? AND seq < ? ORDER BY seq ASC')
       .iterate(threadId, start, end);
     for (const row of rows) yield toEvent(row as unknown as EventRow);
+  }
+
+  /** The context the agent last reported holding, in tokens; null when it never reported one. */
+  lastContextUsed(threadId: string): number | null {
+    const row = this.db
+      .prepare("SELECT json_extract(data, '$.used') AS used FROM events WHERE thread_id = ? AND type = 'usage.updated' ORDER BY seq DESC LIMIT 1")
+      .get(threadId) as { used: number | null } | undefined;
+    return typeof row?.used === 'number' ? row.used : null;
+  }
+
+  /**
+   * How the thread's latest turn failed, when it did: the newest lifecycle event, read through the
+   * lifecycle index so a thread list can afford it. Null when the latest turn did not fail.
+   */
+  lastTurnFailure(threadId: string): { turnId: string; at: string; code: string | null; message: string } | null {
+    const row = this.db
+      .prepare("SELECT turn_id, ts, type, data FROM events WHERE thread_id = ? AND type IN ('turn.started', 'turn.done', 'turn.error') ORDER BY seq DESC LIMIT 1")
+      .get(threadId) as { turn_id: string | null; ts: string; type: string; data: string } | undefined;
+    if (!row || row.type !== 'turn.error' || !row.turn_id) return null;
+    let data: { code?: unknown; message?: unknown } = {};
+    try { data = JSON.parse(row.data) as typeof data; } catch { /* a malformed payload still failed */ }
+    return { turnId: row.turn_id, at: row.ts, code: typeof data.code === 'string' ? data.code : null, message: typeof data.message === 'string' ? data.message : '' };
+  }
+
+  /** The newest turn starts, ends and failures, newest first: enough to read how the last few turns went. */
+  recentLifecycle(threadId: string, limit: number): Array<{ turnId: string; seq: number; type: 'turn.started' | 'turn.done' | 'turn.error'; ts: string; data: Record<string, unknown> }> {
+    const rows = this.db
+      .prepare("SELECT turn_id, seq, ts, type, data FROM events WHERE thread_id = ? AND type IN ('turn.started', 'turn.done', 'turn.error') ORDER BY seq DESC LIMIT ?")
+      .all(threadId, limit) as Array<{ turn_id: string | null; seq: number; ts: string; type: 'turn.started' | 'turn.done' | 'turn.error'; data: string }>;
+    return rows.filter(row => row.turn_id).map(row => {
+      let data: Record<string, unknown> = {};
+      try { data = JSON.parse(row.data) as Record<string, unknown>; } catch { /* a malformed payload still ended the turn */ }
+      return { turnId: row.turn_id!, seq: row.seq, type: row.type, ts: row.ts, data };
+    });
+  }
+
+  /**
+   * One turn's tool calls as logged, minus their output, which can be large and says nothing of what a
+   * call touched. `fromSeq` is where the turn began: events are indexed by position, not by turn.
+   */
+  turnToolEvents(threadId: string, turnId: string, fromSeq: number): StoredEvent[] {
+    const rows = this.db
+      .prepare("SELECT thread_id, turn_id, seq, type, ts, json_remove(data, '$.output') AS data FROM events WHERE thread_id = ? AND seq >= ? AND turn_id = ? AND type IN ('tool.start', 'tool.update', 'tool.end') ORDER BY seq")
+      .all(threadId, fromSeq, turnId) as unknown as EventRow[];
+    return rows.map(toEvent);
+  }
+
+  /** What the agent said last in a turn that began at `fromSeq`: the text after its final tool call, cut at `limit` characters. */
+  finalAnswer(threadId: string, turnId: string, fromSeq: number, limit = 2000): string {
+    const after = (this.db
+      .prepare("SELECT MAX(seq) AS seq FROM events WHERE thread_id = ? AND seq >= ? AND turn_id = ? AND type IN ('tool.start', 'tool.update', 'tool.end')")
+      .get(threadId, fromSeq, turnId) as { seq: number | null }).seq ?? fromSeq;
+    const rows = this.db
+      .prepare("SELECT type, data FROM events WHERE thread_id = ? AND seq > ? AND turn_id = ? AND type IN ('message.delta', 'message.replace') ORDER BY seq")
+      .iterate(threadId, after, turnId) as Iterable<{ type: string; data: string }>;
+    let text = '';
+    for (const row of rows) {
+      const data = JSON.parse(row.data) as Record<string, unknown>;
+      text = row.type === 'message.replace' ? replaceMessageTail(text, data) : text + (typeof data.text === 'string' ? data.text : '');
+      if (text.length >= limit) break;
+    }
+    return text.slice(0, limit);
+  }
+
+  /** The newest approval the agent asked for at or after `fromSeq`, or null when it has not. */
+  latestApprovalRequest(threadId: string, fromSeq: number): StoredEvent | null {
+    const row = this.db
+      .prepare("SELECT * FROM events WHERE thread_id = ? AND seq >= ? AND type = 'approval.request' ORDER BY seq DESC LIMIT 1")
+      .get(threadId, fromSeq) as unknown as EventRow | undefined;
+    return row ? toEvent(row) : null;
   }
 
   /** A thread's turns, oldest first, by where each began in the log. */

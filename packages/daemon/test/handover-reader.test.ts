@@ -18,7 +18,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const cli = join(here, '../bin/calli');
 async function setup() {
   const dir = mkdtempSync(join(tmpdir(), 'calli-handover-reader-'));
-  const registry = new AgentRegistry(['pi', 'claude', 'codex', 'agy', 'traex', 'zcode'].map(adapter => ({
+  const registry = new AgentRegistry(['pi', 'claude', 'codex', 'agy', 'traex', 'zcode', 'doubao'].map(adapter => ({
     id: adapter, adapter, label: adapter,
     command: [process.execPath, join(here, 'fixtures', `fake-${['claude', 'traex'].includes(adapter) ? 'acp' : adapter}.mjs`)],
     env: { CLAUDE_CONFIG_DIR: join(dir, 'claude'), ZCODE_DATA_BASE_DIR: join(dir, 'zcode') },
@@ -141,17 +141,13 @@ test('handover CLI reads ancestors without collaboration, pages safely and rejec
       assert.equal(await post(h.socket, '/command', env.CALLI_HANDOVER_KEY, { op }), 401);
     }
     assert.deepEqual(h.store.listEvents(source.id, 0, -1), before, 'reads do not append events');
-    const summary = await h.manager.handoverSummary(source.id, null);
+    const summary = await h.manager.handoverSummary(source.id, null, { carryFailed: true });
     assert.ok('summary' in summary);
-    assert.match(summary.summary, /来源 Session ID：source-session/);
-    assert.match(summary.summary, /来源简介：source task/);
+    // The same clean brief the auto handover sends: where to look, a few lines of progress.
+    assert.match(summary.summary, /# 接手/);
     assert.match(summary.summary, /calli history /);
-    assert.match(summary.summary, /以下命令只在 hub 里新建的接手会话中可用/);
-    const explanation = summary.summary.split('## 只读查阅来源历史\n\n')[1].split('\n\n## 接手要求')[0];
-    assert.equal(explanation.split('\n').length, 4);
-    assert.match(explanation, /nextCursor 和 command/);
-    assert.doesNotMatch(explanation, /--before|--turns|--turn |--offset|--snapshot/);
-    t.diagnostic(`Handover explanation: ${JSON.stringify(explanation)}`);
+    assert.match(summary.summary, /看不到原对话/);
+    assert.match(summary.summary, /git status、git diff 对齐现状再继续/);
     assert.doesNotMatch(summary.summary, new RegExp(env.CALLI_HANDOVER_KEY));
     h.store.deleteThread(source.id);
     assert.equal((await runCli(['handover'], env)).value.missingSource.sourceId, source.id);
@@ -293,7 +289,7 @@ test('all adapters inject handover credentials and run calli in their fake agent
   const h = await setup();
   try {
     const source = await h.manager.createThread({ agent: 'pi', cwd: h.dir });
-    for (const agent of ['pi', 'claude', 'codex', 'agy', 'traex', 'zcode']) {
+    for (const agent of ['pi', 'claude', 'codex', 'agy', 'traex', 'zcode', 'doubao']) {
       const next = await h.manager.createHandoverThread(source.id, agent);
       await h.manager.startTurn(next.id, { text: 'CALLI_HANDOVER_ENV' });
       await waitIdle(h.manager, next.id);

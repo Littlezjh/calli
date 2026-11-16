@@ -1,11 +1,15 @@
 import { HttpError } from './errors.js';
 import type { StoredEvent } from './events.js';
 import { turnOrigin, turnOutcome } from './lifecycle.js';
+import { PROACTIVE_RUNS_KEY, type ProactiveRun } from './proactive.js';
 import type { Store } from './store.js';
 
 const MINUTE = 60_000;
 const DAY = 24 * 60 * MINUTE;
 const KEY = 'personalReview';
+const LONG_RUN = 2 * 60 * MINUTE;
+const IDLE_ROUNDS = 3;
+const REPEATED_FAILURES = 2;
 const localDay = (at: Date) => `${at.getFullYear()}-${String(at.getMonth() + 1).padStart(2, '0')}-${String(at.getDate()).padStart(2, '0')}`;
 export interface ReviewState {
   reviewEnabled: boolean;
@@ -20,6 +24,38 @@ export interface ReviewState {
   active: { threadId: string; turnId: string; notified: boolean } | null;
 }
 
+export type WatchFact =
+  | { kind: 'long-running'; threadId: string; since: string }
+  | { kind: 'note-unchanged'; rounds: number; noteUpdatedAt: string | null; sinceRoundEndedAt: string }
+  | { kind: 'repeated-failure'; repo: string; failures: number };
+export interface WatchInput {
+  /** Linked work threads; `since` is when the running turn started. */
+  threads: ReadonlyArray<{ id: string; status: string; since: string | null }>;
+  noteUpdatedAt: string | null;
+  /** When the work threads' turns ended, in any order. */
+  turnEnds: readonly string[];
+  /** This matter's runs, oldest first. */
+  runs: ReadonlyArray<Pick<ProactiveRun, 'repo' | 'status'>>;
+}
+
+/** Facts only; whether any of them means idling or drifting is the review agent's call. */
+export function watchFacts(input: WatchInput, now: number): WatchFact[] {
+  const facts: WatchFact[] = [];
+  for (const thread of input.threads) {
+    if (thread.status === 'running' && thread.since && now - Date.parse(thread.since) > LONG_RUN) facts.push({ kind: 'long-running', threadId: thread.id, since: thread.since });
+  }
+  const oldest = [...input.turnEnds].sort().at(-IDLE_ROUNDS);
+  if (oldest && (!input.noteUpdatedAt || input.noteUpdatedAt < oldest)) facts.push({ kind: 'note-unchanged', rounds: IDLE_ROUNDS, noteUpdatedAt: input.noteUpdatedAt, sinceRoundEndedAt: oldest });
+  const streaks = new Map<string, number>();
+  for (const run of input.runs) {
+    // Not an outcome yet: an observed or approved run has not tried anything.
+    if (!run.repo || ['running', 'observed', 'approved'].includes(run.status)) continue;
+    streaks.set(run.repo, run.status === 'failed' ? (streaks.get(run.repo) ?? 0) + 1 : 0);
+  }
+  for (const [repo, failures] of streaks) if (failures >= REPEATED_FAILURES) facts.push({ kind: 'repeated-failure', repo, failures });
+  return facts;
+}
+
 /** Read-only review instructions, separate from the work delegated after the person's reply. */
 function reviewPrompt(summary: unknown[]): string {
   return `由 Calli 发起的私人事项盘点。
@@ -27,6 +63,7 @@ function reviewPrompt(summary: unknown[]): string {
 查看未完成事项摘要：笼统的事提 1～3 个具体问题，每个附建议默认；挑今天最值得做的 1～2 件，问要不要开始；卡住、逾期、已停止跟进的事项提醒人。
 把以上合成一条 calli notify --text-file FILE（不超过 500 字）；一次自动盘点最多一条 notify，不要分开发。没有需要人的事就 calli quiet，线程会自动归档。
 摘要只有说明预览，需要全文才用 calli todo show ID；关联线程是否运行只是状态，不是接手旧会话的入口。
+带 watch 字段的事项列出了可疑事实（长时间运行、多轮无进展、连续失败）；逐个判断是否空转或跑偏，值得人介入的写进 notify 并点名，正常的不提。
 结束前用 calli review next TIME 决定下次何时再看，依据截止、跟进、等待和人的回复节奏；时间至少 30 分钟后、最多 3 天后，Calli 会调整安静时段、每日上限和连续无回复的长间隔。没设置时默认下一个 09:00。
 人会在这条线程回复。按回答更新事项、接续说明、等待或跟进；只有人明确说「开始 X」后，才用 calli todo delegate ID 新开私人工作线程。本盘点线程不做事项的实际工作，自动盘点轮禁止 delegate，不得把“有待办”当作人的授权。
 未完成事项摘要：
@@ -152,11 +189,37 @@ export class PersonalReview {
     return [state.lastThreadId, state.enabledByThreadId].find(id => id && this.store.getThread(id)) ?? null;
   }
 
-  prompt(): string {
-    return reviewPrompt(this.store.listTodos().filter(todo => !todo.done).map(todo => ({
-      id: todo.id, title: todo.text, owner: todo.owner, state: todo.state, waitingOn: todo.waitingOn,
-      dueAt: todo.dueAt, followUpAt: todo.followUpAt, followUpPaused: todo.followUpPaused, notePreview: todo.notePreview,
-      threads: this.store.todoThreadIds(todo.id).map(id => ({ id, running: this.store.getThread(id)?.status === 'running' })),
-    })));
+  /** A turn the person stopped or a restart cut off, or one copied in from elsewhere, is not a round of work. */
+  private turnEnds(threadIds: readonly string[]): string[] {
+    // listTurns is indexed; the endings are read only for a matter that can have enough rounds.
+    if (threadIds.flatMap(id => this.store.listTurns(id)).length < IDLE_ROUNDS) return [];
+    return threadIds.flatMap(id => [...this.store.listEventsOfType(id, 'turn.done'), ...this.store.listEventsOfType(id, 'turn.error')]).filter(event => {
+      const end = turnOutcome(event);
+      return end && (end.outcome === 'ok' || end.outcome === 'error') && !end.imported && !end.fromTerminal;
+    }).map(event => event.ts);
+  }
+
+  prompt(now = Date.now()): string {
+    const summaries = this.store.summaryThreadIds();
+    const runs = this.store.hubSetting<ProactiveRun[]>(PROACTIVE_RUNS_KEY, []);
+    return reviewPrompt(this.store.listTodos().filter(todo => !todo.done).map(todo => {
+      const linked = this.store.todoThreadIds(todo.id);
+      const work = linked.flatMap(id => {
+        const thread = this.store.getThread(id);
+        return thread && !thread.archivedAt && !summaries.has(id) && !this.store.isRouterThread(id) && !this.store.isReviewThread(id) ? [thread] : [];
+      });
+      const watch = watchFacts({
+        threads: work.map(thread => ({ id: thread.id, status: thread.status, since: thread.hubTurnAt ?? thread.updatedAt })),
+        noteUpdatedAt: this.store.todoNote(todo.id).updatedAt,
+        turnEnds: this.turnEnds(work.map(thread => thread.id)),
+        runs: runs.filter(run => run.matterId === todo.id),
+      }, now);
+      return {
+        id: todo.id, title: todo.text, owner: todo.owner, state: todo.state, waitingOn: todo.waitingOn,
+        dueAt: todo.dueAt, followUpAt: todo.followUpAt, followUpPaused: todo.followUpPaused, notePreview: todo.notePreview,
+        threads: linked.map(id => ({ id, running: this.store.getThread(id)?.status === 'running' })),
+        ...(watch.length ? { watch } : {}),
+      };
+    }));
   }
 }

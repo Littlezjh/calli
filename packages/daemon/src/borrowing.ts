@@ -8,9 +8,11 @@ import { sniffImageType } from './attachments.js';
 import { turnAnswer } from './coordination.js';
 import { HttpError } from './errors.js';
 import type { StoredEvent } from './events.js';
+import type { InjectionGate } from './injections.js';
 import { turnOutcome } from './lifecycle.js';
 import type { PersonalBrowser } from './personal-browser.js';
-import type { Store } from './store.js';
+import { signalArchiveKey } from './personal.js';
+import type { SignalRecord, Store } from './store.js';
 import type { ThreadManager } from './threads.js';
 import type { ToolArtifact, ToolJob } from './tool-jobs.js';
 
@@ -39,7 +41,6 @@ export class BorrowingService {
   private readonly credentials = new Map<string, string>();
   private readonly byThread = new Map<string, string>();
   private readonly launches = new Set<Promise<void>>();
-  private readonly introduced = new Set<string>();
   private readonly unsubscribe: () => void;
   private stopped = false;
   /** The person's own browser, which agents drive directly with agent-browser. */
@@ -55,7 +56,7 @@ export class BorrowingService {
     manager.borrowing = this;
     for (const job of store.toolJobs.list()) {
       if (job.threadId) this.byThread.set(job.threadId, job.id);
-      if (!active(job)) continue;
+      if (!active(job)) { if (job.threadId) this.retire(job.threadId); continue; }
       const events = job.threadId ? store.listEvents(job.threadId, 0, -1) : [];
       const end = events.reverse().find(e => e.turnId === job.turnId && turnOutcome(e));
       if (end) this.finish(job, end);
@@ -63,6 +64,9 @@ export class BorrowingService {
     }
     this.unsubscribe = manager.subscribe(e => this.onEvent(e));
   }
+
+  /** Whether the thread runs a borrowed task for another thread. */
+  owns(threadId: string): boolean { return this.byThread.has(threadId); }
 
   environment(threadId: string): Record<string, string> | undefined {
     // A provider task must not recursively borrow another provider.
@@ -79,11 +83,11 @@ export class BorrowingService {
     return job ? this.tool(job.tool).spec.name : undefined;
   }
 
-  /** A single discovery hint per caller after startup; schemas and the Skill stay out of context. */
-  instructions(threadId: string, text: string): string {
-    if (this.byThread.has(threadId) || this.introduced.has(threadId)
-      || (!this.browser && ![...this.adapters.values()].some(a => a.borrowedTools?.length))) return text;
-    return `${text}\n\n<calli-tools>可按需借用其他 Agent 的能力：calli tools search 关键词。用 calli tools skill 读取使用说明。</calli-tools>`;
+  /** A discovery hint the agent reads once (see injections.ts); schemas and the Skill stay out of context. */
+  instructions(threadId: string, text: string, gate?: InjectionGate): string {
+    if (this.byThread.has(threadId) || (!this.browser && ![...this.adapters.values()].some(a => a.borrowedTools?.length))) return text;
+    const block = '<calli-tools>可按需借用其他 Agent 的能力：calli tools search 关键词。用 calli tools skill 读取使用说明。</calli-tools>';
+    return gate?.('tools', block) === false ? text : `${text}\n\n${block}`;
   }
 
   caller(key: string): string {
@@ -133,6 +137,19 @@ export class BorrowingService {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new HttpError(400, 'command must be an object');
     const input = raw as Record<string, unknown>;
     switch (input.op) {
+      case 'signals.show': {
+        if (owner === 'operator') throw new HttpError(403, 'signals require thread-scoped credentials');
+        return this.scopedSignal(owner, signalArchiveKey(input.key));
+      }
+      case 'signals.material': {
+        if (owner === 'operator') throw new HttpError(403, 'signals require thread-scoped credentials');
+        const key = signalArchiveKey(input.key);
+        this.scopedSignal(owner, key);
+        const read = await this.manager.lark.readMaterial(key);
+        // A matter can be unlinked or the caller deleted while the bounded read is in flight.
+        this.scopedSignal(owner, key);
+        return { key, ...read };
+      }
       case 'quiet':
         if (owner === 'operator') throw new HttpError(403, 'quiet requires thread-scoped credentials');
         return this.manager.quiet(owner);
@@ -171,6 +188,19 @@ export class BorrowingService {
       }
       default: throw new HttpError(400, 'unknown tools command');
     }
+  }
+
+  /** Tools credentials grant one delivered/associated record, never private-archive access. */
+  private scopedSignal(owner: string, key: string): SignalRecord {
+    if (owner === 'operator') throw new HttpError(403, 'signals require thread-scoped credentials');
+    const record = this.store.getSignal(key);
+    if (!this.store.getThread(owner) || !record || record.disposition.outcome === 'filtered') throw new HttpError(404, 'signal not found');
+    const disposition = record.disposition;
+    const delivered = disposition.deliveries?.some(delivery => delivery.threadId === owner)
+      || (disposition.outcome === 'delivered' && (disposition.threadId === owner || disposition.threadIds?.includes(owner)));
+    const associated = disposition.matterIds?.some(id => this.store.getTodo(id) && this.store.todoThreadIds(id).includes(owner));
+    if (!delivered && !associated) throw new HttpError(404, 'signal not found');
+    return this.manager.lark.signal(key);
   }
 
   private owned(owner: string, id: unknown): ToolJob {
@@ -234,7 +264,6 @@ export class BorrowingService {
   }
 
   private onEvent(event: StoredEvent): void {
-    if (event.type === 'turn.started' && typeof event.data.text === 'string' && /<(?:calli|limi)-tools>/.test(event.data.text)) this.introduced.add(event.threadId);
     const id = this.byThread.get(event.threadId);
     const job = id ? this.store.toolJobs.get(id) : undefined;
     if (!job || !active(job) || event.data.imported || event.data.fromTerminal) return;
@@ -264,7 +293,9 @@ export class BorrowingService {
       const artifacts: ToolArtifact[] = [];
       for (const path of collected.images ?? []) {
         try {
-          const { real } = this.manager.resolveInThread(job.threadId!, path, new HttpError(404, 'artifact outside task workspace'));
+          // Task scope: a borrowed tool's artifact counts only from the task's own folders, not
+          // from the file browser's wider choice of where a person may read.
+          const { real } = this.manager.resolveInThread(job.threadId!, path, new HttpError(404, 'artifact outside task workspace'), 'task');
           const image = this.manager.getThreadImage(job.threadId!, real);
           if (image.mimeType === 'image/svg+xml') continue;
           const bytes = readFileSync(image.path);
@@ -299,6 +330,23 @@ export class BorrowingService {
   private save(job: ToolJob): void {
     job.updatedAt = new Date().toISOString();
     this.store.toolJobs.save(job);
+    if (!active(job) && job.threadId) this.retire(job.threadId);
+  }
+
+  /**
+   * A finished task's thread goes to the archive: it is one agent's errand for another, not a
+   * conversation of the person's, so it stays out of the list but can still be looked up there.
+   * Its turn may still be winding down when the job settles; archiving waits for it.
+   */
+  private retire(threadId: string, tries = 0): void {
+    if (this.stopped) return;
+    const thread = this.store.getThread(threadId);
+    if (!thread || thread.archivedAt) return;
+    void this.manager.updateThread(threadId, { archived: true }).catch(() => {
+      if (tries >= 40) return;
+      const timer = setTimeout(() => this.retire(threadId, tries + 1), 250);
+      timer.unref?.();
+    });
   }
   private fail(job: ToolJob, code: string, message: string, state: 'failed' | 'cancelled' | 'interrupted' = 'failed'): void {
     job.state = state; job.error = { code, message }; this.save(job);

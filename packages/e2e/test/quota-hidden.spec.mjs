@@ -22,6 +22,11 @@ test('hidden accounts disappear from quota and are not queried; restoring brings
         page.on('request', request => { if (/\/api\/agents\/[^/]+\/quota/.test(request.url())) requests.push(new URL(request.url()).pathname); });
         await openUi(page, daemon);
         const toggle = async (name, hidden) => {
+          // Back from settings lands on the list they were opened from; a back swipe puts it away.
+          if (phone && await page.locator('.drawer-open').count()) {
+            await page.goBack();
+            await page.waitForFunction(() => !document.querySelector('.drawer-open'));
+          }
           await page.evaluate(() => { location.hash = '#/agents'; });
           const row = page.locator('.agents-row').filter({ has: page.getByText(name, { exact: true }) });
           await row.getByRole('button', { name: '操作', exact: true }).click();
@@ -29,12 +34,14 @@ test('hidden accounts disappear from quota and are not queried; restoring brings
           await row.locator('.agents-hidden').waitFor({ state: hidden ? 'visible' : 'detached' });
         };
         const settings = async () => {
-          if (phone) await page.locator('.menu-btn').click();
+          // Closing settings opened from the list leaves the list open.
+          if (phone && !await page.locator('.drawer-open').count()) await page.locator('.menu-btn').click();
           await page.getByRole('button', { name: '配置', exact: true }).click();
         };
-        const openBoard = async () => { await settings(); await page.getByRole('menuitem', { name: '额度', exact: true }).click(); };
-        const board = page.getByRole('dialog', { name: '额度看板', exact: true });
+        const openBoard = async () => { await settings(); await page.locator('.settings-nav').getByRole('button', { name: '额度', exact: true }).click(); };
+        const board = page.getByRole('region', { name: '额度', exact: true });
         await toggle('Primary', true);
+        requests.length = 0;
         await openBoard();
         await board.locator('.quota-percent').first().waitFor();
         assert.deepEqual(await board.locator('.quota-board-name').allTextContents(), ['Backup']);
@@ -47,17 +54,19 @@ test('hidden accounts disappear from quota and are not queried; restoring brings
           mkdirSync(process.env.CALLI_E2E_SHOTS_DIR, { recursive: true });
           await page.screenshot({ path: join(process.env.CALLI_E2E_SHOTS_DIR, `quota-hidden-${phone ? 'phone' : 'desktop'}-${theme}.png`), animations: 'disabled' });
         }
-        await board.getByRole('button', { name: '关闭', exact: true }).click();
+        await page.locator('.settings-topbar').getByRole('button', { name: '返回', exact: true }).click();
+        if (phone) await page.locator('.settings-topbar').getByRole('button', { name: '返回', exact: true }).click();
         await toggle('Primary', false);
         await openBoard();
         await board.locator('.quota-board-row').filter({ hasText: 'Primary' }).locator('.quota-percent').first().waitFor();
         assert.deepEqual((await board.locator('.quota-board-name').allTextContents()).sort(), ['Backup', 'Primary']);
         assert.equal(requests.includes('/api/agents/primary/quota'), true);
-        await board.getByRole('button', { name: '关闭', exact: true }).click();
+        await page.locator('.settings-topbar').getByRole('button', { name: '返回', exact: true }).click();
+        if (phone) await page.locator('.settings-topbar').getByRole('button', { name: '返回', exact: true }).click();
         await toggle('Primary', true);
         await toggle('Backup', true);
         await settings();
-        assert.equal(await page.getByRole('menuitem', { name: '额度', exact: true }).count(), 0, 'the entry hides when every quota account is hidden');
+        assert.equal(await page.locator('.settings-nav').getByRole('button', { name: '额度', exact: true }).count(), 0, 'the entry hides when every quota account is hidden');
       } finally { await context.close(); }
     }
   } finally { await browser?.close(); await daemon.stop(); }

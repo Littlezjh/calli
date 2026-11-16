@@ -56,6 +56,39 @@ test('pending questions, plans and permissions have distinct labels in both side
   }
 });
 
+test('an optional middle step of a form proceeds without input', { timeout: 30000 }, async () => {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  try {
+    const page = await context.newPage();
+    await openUi(page, daemon);
+    const created = await api(daemon, '/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'claude', title: '分步表单', cwd: daemon.workdir, workMode: 'plan', permissionMode: 'ask' }) });
+    assert.equal(created.status, 201);
+    const thread = await created.json();
+    assert.equal((await api(daemon, `/api/threads/${thread.id}/turns`, { method: 'POST', body: JSON.stringify({ text: 'plan-question-steps' }) })).status, 202);
+    await page.locator('.menu-btn').click();
+    await page.locator('.thread-title', { hasText: thread.title }).click();
+    const sheet = page.getByRole('dialog', { name: '智能体提问' });
+    await sheet.waitFor();
+    await sheet.getByRole('radio', { name: /桌面和手机/ }).click();
+    // The middle step is an optional free-text note: moving on without typing must be possible.
+    await sheet.getByText('补充说明', { exact: false }).first().waitFor();
+    const next = sheet.getByRole('button', { name: '下一步', exact: true });
+    assert.equal(await next.isEnabled(), true);
+    await next.click();
+    await sheet.getByRole('radio', { name: /需要截图/ }).click();
+    await sheet.waitFor({ state: 'detached' });
+    let answer = '';
+    for (let i = 0; i < 100; i++) {
+      const events = await (await api(daemon, `/api/threads/${thread.id}/events`)).json();
+      answer = events.filter(e => e.type === 'message.delta').map(e => e.data.text).join('');
+      if (answer.includes('answer:')) break;
+      await new Promise(resolve => setTimeout(resolve, 30));
+    }
+    assert.ok(answer.includes('桌面和手机') && answer.includes('需要截图'), answer);
+    assert.ok(!answer.includes('question_0_custom'), `the empty optional field is not sent to the agent: ${answer}`);
+  } finally { await context.close(); }
+});
+
 test('answering and cancelling remove the waiting labels', { timeout: 30000 }, async () => {
   const context = await browser.newContext({ viewport: { width: 1400, height: 900 } });
   try {

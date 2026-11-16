@@ -4,10 +4,11 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { effortsFromConfig, mapAcpUpdate, modelsFromConfig } from '../src/adapters/acp.js';
 import { ClaudeAcpAdapter } from '../src/adapters/claude.js';
+import { DshAcpAdapter } from '../src/adapters/dsh.js';
 import { TraexAcpAdapter } from '../src/adapters/traex.js';
 import { mapPiEvent, mapPiStats, piEfforts, PiRpcAdapter } from '../src/adapters/pi.js';
 import type { EmittedEvent } from '../src/events.js';
-import type { ApprovalDecision, TurnHooks, TurnInput } from '../src/adapters/types.js';
+import type { ApprovalDecision, ApprovalRequest, TurnHooks, TurnInput } from '../src/adapters/types.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const fakeAcp = join(here, 'fixtures', 'fake-acp.mjs');
@@ -139,6 +140,41 @@ test('ClaudeAcpAdapter: cancel resolves a slow prompt as cancelled', async () =>
   await session.close();
 });
 
+test('DshAcpAdapter: model list flattens provider groups and probes each model\'s efforts', async () => {
+  const adapter = new DshAcpAdapter([process.execPath, fakeAcp], { FAKE_ACP_FLAVOR: 'dsh' });
+  const models = await adapter.models();
+  assert.deepEqual(models.map((m) => m.label), ['DeepSeek V4 Pro', 'DeepSeek V4.1 Flash', 'Pi 5']);
+  // The provider group rides along as a note; the default model is the route the agent reported.
+  assert.equal(models[0].description, 'DeepSeek · 最强推理');
+  assert.equal(models.find((m) => m.isDefault)?.id, '["deepseek-official","deepseek-v4-pro"]');
+  // Probing asks each model for its own efforts; the empty provider-default value is not a level.
+  assert.deepEqual(models[0].efforts, ['off', 'low', 'high', 'max']);
+  // A model with no reasoning setting offers no levels, not the adapter-wide fallback.
+  assert.deepEqual(models.find((m) => m.label === 'Pi 5')?.efforts, []);
+});
+
+test('DshAcpAdapter: a model that cannot be selected stays listed without effort details', async () => {
+  const adapter = new DshAcpAdapter([process.execPath, fakeAcp], { FAKE_ACP_FLAVOR: 'dsh', FAKE_DSH_UNSELECTABLE: '["pi-ai","pi-5"]' });
+  const models = await adapter.models();
+  const pi = models.find((m) => m.label === 'Pi 5');
+  assert.ok(pi, 'the unselectable model is still there');
+  assert.equal(pi.efforts, undefined, 'no probe result, so the agent-wide list applies');
+});
+
+test('DshAcpAdapter: streams a turn with usage but no cost, and images pass through', async () => {
+  const adapter = new DshAcpAdapter([process.execPath, fakeAcp], { FAKE_ACP_FLAVOR: 'dsh' });
+  const session = await adapter.start({ cwd: here, permissionMode: 'auto_edit' });
+  const { hooks, events } = collectingHooks();
+  const result = await session.prompt(turn('usage and a picture', [{ data: PNG, mimeType: 'image/png' }]), hooks);
+  assert.equal(result.stopReason, 'end_turn');
+  // dsh reports context pressure without a price; the hub must not invent one.
+  const usage = events.find((e) => e.type === 'usage.updated')?.data as { used: number; size: number; cost?: unknown };
+  assert.deepEqual(usage, { used: 52000, size: 200000 });
+  assert.equal('cost' in (usage ?? {}), false);
+  assert.equal(events.find((e) => e.type === 'message.delta' && String(e.data.text).startsWith('images:'))?.data.text, 'images:1:image/png;');
+  await session.close();
+});
+
 test('ClaudeAcpAdapter: resume uses session/load and keeps the same id', async () => {
   const adapter = new ClaudeAcpAdapter([process.execPath, fakeAcp]);
   const session = await adapter.start({ cwd: here, resumeId: 'previous-session' });
@@ -147,6 +183,61 @@ test('ClaudeAcpAdapter: resume uses session/load and keeps the same id', async (
   await session.prompt(turn('hi'), hooks);
   // The replayed text sent during session/load must not leak into this turn.
   assert.ok(!events.some((e) => String(e.data.text ?? '').includes('replayed')));
+  await session.close();
+});
+
+test('DshAcpAdapter: resume goes through session/resume, which never replays', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'calli-dsh-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const log = join(dir, 'resume.log');
+  const adapter = new DshAcpAdapter([process.execPath, fakeAcp], { FAKE_ACP_FLAVOR: 'dsh', FAKE_ACP_RESUME_LOG: log });
+  const session = await adapter.start({ cwd: here, resumeId: 'dsh-persisted-1' });
+  assert.equal(session.agentSessionId, 'dsh-persisted-1');
+  assert.equal(readFileSync(log, 'utf8'), 'dsh-persisted-1\n');
+  const { hooks, events } = collectingHooks();
+  const result = await session.prompt(turn('hi'), hooks);
+  assert.equal(result.stopReason, 'end_turn');
+  assert.equal(events.at(-1)?.data.text, 'echo:hi');
+  await session.close();
+  // An id the agent cannot resume is the agent's own error, surfaced as a failed start.
+  await assert.rejects(adapter.start({ cwd: here, resumeId: 'not-resumable' }), /not resumable/);
+});
+
+test('DshAcpAdapter: no plan mode, and the approval names only the call id', async () => {
+  const adapter = new DshAcpAdapter([process.execPath, fakeAcp], { FAKE_ACP_FLAVOR: 'dsh' });
+  assert.deepEqual(adapter.capabilities.permissionModes, []);
+  await assert.rejects(adapter.start({ cwd: here, workMode: 'plan' }), /此 agent 不支持计划模式/);
+
+  // The approval request itself carries only the call id and one-shot options; what the card
+  // shows is borrowed from the tool's own update, and the agent gets the chosen option back.
+  const session = await adapter.start({ cwd: here, permissionMode: 'full_access' });
+  const seen: ApprovalRequest[] = [];
+  const hooks: TurnHooks = {
+    emit: () => undefined,
+    requestApproval: async (req) => {
+      seen.push(req);
+      return { optionId: 'reject-once' };
+    },
+  };
+  const result = await session.prompt(turn('please approve this'), hooks);
+  assert.equal(result.stopReason, 'end_turn');
+  assert.equal(seen.length, 1);
+  assert.deepEqual(seen[0].options.map((o) => o.optionId), ['allow-once', 'reject-once']);
+  // The request itself named only the call id; the title and payload are the tool's own.
+  assert.equal(seen[0].title, 'Run ls');
+  assert.equal(seen[0].toolCall.title, 'Run ls');
+  assert.deepEqual(seen[0].toolCall.rawInput, { command: 'ls' });
+  await session.close();
+});
+
+test('DshAcpAdapter: cancel resolves a slow prompt as cancelled', async () => {
+  const adapter = new DshAcpAdapter([process.execPath, fakeAcp], { FAKE_ACP_FLAVOR: 'dsh' });
+  const session = await adapter.start({ cwd: here });
+  const { hooks } = collectingHooks();
+  const pending = session.prompt(turn('slow task'), hooks);
+  await new Promise((r) => setTimeout(r, 50));
+  await session.cancel();
+  assert.equal((await pending).stopReason, 'cancelled');
   await session.close();
 });
 
@@ -222,23 +313,27 @@ test('modelsFromConfig reads the model option and keeps the description', () => 
 test('ClaudeAcpAdapter: model list and slash commands come from the agent', async () => {
   const adapter = new ClaudeAcpAdapter([process.execPath, fakeAcp]);
   const models = await adapter.models(); // no session yet: the adapter probes one
-  // "broken" is refused by the agent, so it is hidden rather than offered and failing later.
-  assert.deepEqual(models.map((m) => m.id), ['default', 'big', 'small']);
+  // Listing does not select models or hide one based on a preflight request.
+  assert.deepEqual(models.map((m) => m.id), ['default', 'big', 'small', 'broken']);
   assert.equal(models[1].description, 'For hard work');
-  // Effort levels are per model: one model lacks "max", another has no effort setting at all.
-  assert.deepEqual(models.map((m) => m.efforts), [['low', 'high', 'max'], ['low', 'high'], []]);
   assert.equal(await adapter.models(), models, 'the probe runs once and is cached');
   // What the agent announced, then the commands it answers without announcing them.
-  assert.deepEqual((await adapter.commands()).map((c) => c.name), ['compact', 'review', 'goal', 'cost', 'stats']);
+  assert.deepEqual((await adapter.commands()).map((c) => c.name), ['compact', 'review', 'goal', 'cost', 'stats', 'context']);
 });
 
-test('ClaudeAcpAdapter: permission mode, model and effort are applied at start', async () => {
-  const adapter = new ClaudeAcpAdapter([process.execPath, fakeAcp]);
+test('ClaudeAcpAdapter: permission mode, model and effort are applied when the native session starts', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'calli-claude-start-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const started = join(dir, 'new.jsonl');
+  const selected = join(dir, 'selected.log');
+  const adapter = new ClaudeAcpAdapter([process.execPath, fakeAcp], { FAKE_ACP_NEW_LOG: started, FAKE_ACP_MODEL_SELECTION_LOG: selected });
   const session = await adapter.start({ cwd: here, permissionMode: 'auto_edit', model: 'big', effort: 'high' });
   const { hooks, events } = collectingHooks();
   await session.prompt(turn('model?'), hooks);
   // The fake has no "auto" mode, so auto_edit falls back to acceptEdits.
   assert.equal(events.at(-1)?.data.text, 'model:big;mode:acceptEdits;effort:high');
+  assert.deepEqual(JSON.parse(readFileSync(started, 'utf8'))._meta.claudeCode.options, { model: 'big', effort: 'high' });
+  assert.equal(readFileSync(selected, 'utf8'), 'big\n', 'a fresh Claude session must select the model only at native startup');
   await session.close();
 });
 
@@ -250,11 +345,11 @@ test('ClaudeAcpAdapter: full_access skips the approval prompt, and settings chan
   assert.deepEqual(first.approvals, [], 'no approval should be requested in full_access');
 
   await session.setPermissionMode!('ask');
-  assert.equal(await session.setModel!('small'), true);
+  assert.equal(await session.setModel!('big'), true);
   assert.equal(await session.setEffort!('low'), true);
   const second = collectingHooks();
   await session.prompt(turn('model?'), second.hooks);
-  assert.equal(second.events.at(-1)?.data.text, 'model:small;mode:default;effort:low');
+  assert.equal(second.events.at(-1)?.data.text, 'model:big;mode:default;effort:low');
   await session.close();
 });
 
@@ -359,7 +454,7 @@ test('ClaudeAcpAdapter: commands keep the argument hint and are tracked per dire
   assert.deepEqual(commands[0], { name: 'compact', description: 'Summarise the conversation', hint: '<instructions>' });
   assert.equal('hint' in commands[1], false);
   // A directory with no session yet falls back to a known list instead of nothing.
-  assert.deepEqual((await adapter.commands('/somewhere/else')).map((c) => c.name), ['compact', 'review', 'goal', 'cost', 'stats']);
+  assert.deepEqual((await adapter.commands('/somewhere/else')).map((c) => c.name), ['compact', 'review', 'goal', 'cost', 'stats', 'context']);
   await session.close();
 });
 
@@ -550,11 +645,13 @@ test('a copy can be made for another directory, each agent in its own way', asyn
     assert.equal(await pi.forkSession('hist-p', here, 'e2', tree), 'hist-p-in-abcd1234-fork-e2');
     assert.deepEqual((await pi.loadHistory('hist-p-in-abcd1234-fork-e2', tree)).map((t) => t.text), ['run the tests']);
 
-    // TRAE CLI takes Claude's fork point and, like Claude, is asked for the copy from where it will run.
+    // TRAE CLI uses its app-server turn ids for history and fork, matching the protocol that runs
+    // live turns so an active writer does not block a history-boundary fork.
     const traex = new TraexAcpAdapter([process.execPath, fakeAcp], { FAKE_ACP_FLAVOR: 'traex' });
+    assert.deepEqual((await traex.loadHistory('hist-x', here)).map((t) => t.forkRef), ['turn-1', 'turn-2']);
     assert.equal(await traex.forkSession('hist-x', here, undefined, tree), 'hist-x-fork-in-abcd1234');
-    assert.equal(await traex.forkSession('hist-x', here, 'm1b', tree), 'hist-x-fork-at-m1b-in-abcd1234');
-    assert.equal(await traex.forkSession('hist-x', here, 'm1b'), 'hist-x-fork-at-m1b');
+    assert.equal(await traex.forkSession('hist-x', here, 'turn-1', tree), 'hist-x-fork-at-turn-1-in-abcd1234');
+    assert.equal(await traex.forkSession('hist-x', here, 'turn-1'), 'hist-x-fork-at-turn-1');
 
     // Codex is told where the copy will work; resuming says it again.
     const codex = new CodexAppServerAdapter([process.execPath, fakeCodex]);
@@ -857,7 +954,7 @@ test('formatPiCompact and formatPiStats cope with partial answers', () => {
 test('Claude: commands it answers but does not announce are added, once', () => {
   assert.deepEqual(withUnlistedCommands([]), [], 'nothing known yet');
   const listed = [{ name: 'compact', description: '' }, { name: 'stats', description: 'already there' }];
-  assert.deepEqual(withUnlistedCommands(listed).map((c) => c.name), ['compact', 'stats', 'goal', 'cost']);
+  assert.deepEqual(withUnlistedCommands(listed).map((c) => c.name), ['compact', 'stats', 'goal', 'cost', 'context']);
 });
 
 // TRAE CLI speaks ACP too (see acp.ts); these tests cover what is its own. The fake agent takes
@@ -868,6 +965,23 @@ import { tmpdir } from 'node:os';
 
 const traexEnv = { FAKE_ACP_FLAVOR: 'traex' };
 
+test('TraexAcpAdapter: pictures and follow-ups work when the backend rejects uploaded references', async (t) => {
+  const adapter = new TraexAcpAdapter([process.execPath, fakeAcp], { ...traexEnv, FAKE_CODEX_REJECT_LOCAL_IMAGES: '1' });
+  for (const resumeId of [undefined, 'existing-image-thread']) {
+    const session = await adapter.start({ cwd: here, resumeId });
+    t.after(() => session.close());
+    const { hooks, events } = collectingHooks();
+    const result = await session.prompt(turn('what is this', [{ data: PNG, mimeType: 'image/png', path: '/data/attachments/t/1.png' }]), hooks);
+    assert.equal(result.stopReason, 'end_turn');
+    assert.equal(result.error, undefined);
+    assert.match(textFrom(events), /inline-images:image\/png;/);
+    const followUp = collectingHooks();
+    assert.equal((await session.prompt(turn('hello again'), followUp.hooks)).stopReason, 'end_turn');
+    assert.match(textFrom(followUp.events), /hello again/);
+    await session.close();
+  }
+});
+
 
 test('TraexAcpAdapter: live settings use the native app-server sandbox, approval and effort fields', async (t) => {
   const adapter = new TraexAcpAdapter([process.execPath, fakeAcp], traexEnv);
@@ -877,14 +991,17 @@ test('TraexAcpAdapter: live settings use the native app-server sandbox, approval
 
   const session = await adapter.start({ cwd: here, permissionMode: 'auto_edit', model: 'big', effort: 'high' });
   t.after(() => session.close());
-  const { hooks, events } = collectingHooks();
+  const { hooks, events, approvals } = collectingHooks();
   await session.prompt(turn('model?'), hooks);
-  assert.equal(events.filter(e => e.type === 'message.delta').map(e => e.data.text).join(''), 'model:big;effort:high;sandbox:workspace-write;approval:on-request');
+  assert.equal(events.filter(e => e.type === 'message.delta').map(e => e.data.text).join(''), 'model:big;effort:high;sandbox:workspace-write;approval:on-request;reviewer:auto_review');
+  await session.prompt(turn('approve this'), hooks);
+  assert.deepEqual(approvals, [], 'native auto-review handles eligible approvals');
+  assert.match(events.filter(e => e.type === 'message.delta').map(e => e.data.text).join(''), /auto-review:approved/);
   await session.setPermissionMode!('full_access');
   await session.setEffort!('low');
   const second = collectingHooks();
   await session.prompt(turn('model?'), second.hooks);
-  assert.equal(second.events.filter(e => e.type === 'message.delta').map(e => e.data.text).join(''), 'model:big;effort:low;sandbox:danger-full-access;approval:never');
+  assert.equal(second.events.filter(e => e.type === 'message.delta').map(e => e.data.text).join(''), 'model:big;effort:low;sandbox:danger-full-access;approval:never;reviewer:user');
   await session.close();
 });
 
@@ -1276,9 +1393,12 @@ test('CodexAppServerAdapter: a server that dies mid-turn ends it as an error', a
 test('CodexAppServerAdapter: permission level, model and effort ride with the turns', async () => {
   const adapter = new CodexAppServerAdapter([process.execPath, fakeCodex]);
   const session = await adapter.start({ cwd: here, permissionMode: 'auto_edit', model: 'gpt-big', effort: 'low' });
-  const { hooks, events } = collectingHooks();
+  const { hooks, events, approvals } = collectingHooks();
   await session.prompt(turn('model?'), hooks);
-  assert.equal(textFrom(events), 'model:gpt-big;effort:low;sandbox:workspace-write;approval:on-request');
+  assert.equal(textFrom(events), 'model:gpt-big;effort:low;sandbox:workspace-write;approval:on-request;reviewer:auto_review');
+  await session.prompt(turn('approve this'), hooks);
+  assert.deepEqual(approvals, [], 'native auto-review handles eligible approvals');
+  assert.match(textFrom(events), /auto-review:approved/);
 
   // Changing them on the live session applies from the next turn, without a restart.
   await session.setPermissionMode!('full_access');
@@ -1286,12 +1406,67 @@ test('CodexAppServerAdapter: permission level, model and effort ride with the tu
   assert.equal(await session.setEffort!('high'), true);
   const second = collectingHooks();
   await session.prompt(turn('model?'), second.hooks);
-  assert.equal(textFrom(second.events), 'model:gpt-small;effort:high;sandbox:danger-full-access;approval:never');
+  assert.equal(textFrom(second.events), 'model:gpt-small;effort:high;sandbox:danger-full-access;approval:never;reviewer:user');
   // full_access answers nothing: the approval that would have been asked is skipped.
   const third = collectingHooks();
   await session.prompt(turn('approve this'), third.hooks);
   assert.deepEqual(third.approvals, []);
   await session.close();
+});
+
+test('CodexAppServerAdapter: native auto-review is selected when threads start or resume', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'calli-codex-auto-review-'));
+  const log = join(dir, 'rpc.jsonl');
+  try {
+    const adapter = new CodexAppServerAdapter([process.execPath, fakeCodex], { FAKE_CODEX_RPC_LOG: log });
+    const created = await adapter.start({ cwd: here, permissionMode: 'auto_edit' });
+    await created.close();
+    const resumed = await adapter.start({ cwd: here, resumeId: 'previous-thread', permissionMode: 'auto_edit' });
+    await resumed.close();
+
+    const calls = readFileSync(log, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+    const started = calls.find((call) => call.method === 'thread/start');
+    const resumedCall = calls.find((call) => call.method === 'thread/resume');
+    assert.equal(started?.params.approvalsReviewer, 'auto_review');
+    assert.equal(resumedCall?.params.approvalsReviewer, 'auto_review');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('CodexAppServerAdapter: changing permission during a turn updates its native reviewer', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'calli-codex-live-auto-review-'));
+  const log = join(dir, 'rpc.jsonl');
+  try {
+    const adapter = new CodexAppServerAdapter([process.execPath, fakeCodex], {
+      FAKE_CODEX_RPC_LOG: log,
+      FAKE_CODEX_TURN_DELAY: '80',
+    });
+    const session = await adapter.start({ cwd: here, permissionMode: 'ask' });
+    const live = collectingHooks();
+    const pending = session.prompt(turn('approve after switching'), live.hooks);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    await session.setPermissionMode!('auto_edit');
+
+    assert.equal((await pending).stopReason, 'end_turn');
+    assert.deepEqual(live.approvals, [], 'the active turn switches to the native reviewer');
+    assert.match(textFrom(live.events), /auto-review:approved/);
+
+    const calls = readFileSync(log, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+    const update = calls.find((call) => call.method === 'turn/settings/update');
+    assert.deepEqual(update?.params, {
+      threadId: 'codex-thread-1',
+      turnId: 'turn-1',
+      approvalsReviewer: 'auto_review',
+    });
+
+    const next = collectingHooks();
+    await session.prompt(turn('model?'), next.hooks);
+    assert.equal(textFrom(next.events), 'model:gpt-big;effort:high;sandbox:workspace-write;approval:on-request;reviewer:auto_review');
+    await session.close();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('CodexAppServerAdapter: resume keeps the thread id, /compact is answered locally', async () => {

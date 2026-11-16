@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import type { AgentInfo, Api, Thread } from '../api';
 import { folderName } from '../paths';
-import { IconArchive, IconClose, IconSearch } from './icons';
+import { IconSearch } from './icons';
 import { formatDate, t } from '../i18n';
+import { SettingsSection } from './PageNavigation';
 
 interface Props {
   api: Api;
@@ -11,7 +12,6 @@ interface Props {
   refreshKey: number;
   onRestore: (thread: Thread) => void;
   onDelete: (thread: Thread) => void;
-  onClose: () => void;
   onError: (e: unknown) => void;
 }
 
@@ -22,47 +22,33 @@ function archivedOn(iso: string | null): string {
 }
 
 /** Archived threads: out of the sidebar, still on disk, one tap from coming back. */
-export function ArchivePanel({ api, agents, refreshKey, onRestore, onDelete, onClose, onError }: Props) {
+export function ArchivePanel({ api, agents, refreshKey, onRestore, onDelete, onError }: Props) {
   const [threads, setThreads] = useState<Thread[] | null>(null);
   const [search, setSearch] = useState('');
+  const [error, setError] = useState('');
+  const [retry, setRetry] = useState(0);
 
   useEffect(() => {
     let alive = true;
+    setError('');
     api
       .threads({ archived: true })
       .then((list) => alive && setThreads(list))
-      .catch((e) => alive && onError(e));
+      .catch((e) => { if (alive) { setError(e instanceof Error ? e.message : String(e)); onError(e); } });
     return () => {
       alive = false;
     };
     // onError only reports; it is not a reason to reload.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [api, refreshKey]);
+  }, [api, refreshKey, retry]);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
 
   const query = search.trim().toLowerCase();
   const shown = (threads ?? []).filter((t) => !query || t.title.toLowerCase().includes(query) || t.cwd.toLowerCase().includes(query));
   const label = (id: string) => agents.find((a) => a.id === id)?.label ?? id;
 
   return (
-    <div className="dialog-scrim" onClick={onClose}>
-      <div className="panel" role="dialog" aria-modal="true" aria-labelledby="archive-title" onClick={(e) => e.stopPropagation()}>
-        <header className="panel-head">
-          <h2 id="archive-title" className="panel-title">
-            <IconArchive size={20} /> {t('archive.title')}
-          </h2>
-          <button className="icon-btn" aria-label={t('common.close')} onClick={onClose}>
-            <IconClose size={18} />
-          </button>
-        </header>
-        <p className="panel-hint">{t('archive.hint')}</p>
+    <SettingsSection title={t('archive.title')} hint={t('archive.hint')} className="history-settings">
         <label className="panel-search">
           <IconSearch size={16} />
           <input
@@ -75,7 +61,8 @@ export function ArchivePanel({ api, agents, refreshKey, onRestore, onDelete, onC
         </label>
 
         <div className="panel-list">
-          {threads === null && <p className="panel-empty">{t('common.loading')}</p>}
+          {error && <p className="panel-error" role="alert">{error} <button className="text-btn" onClick={() => setRetry(value => value + 1)}>{t('common.retry')}</button></p>}
+          {threads === null && !error && <p className="panel-empty">{t('common.loading')}</p>}
           {threads !== null && shown.length === 0 && (
             <p className="panel-empty">{threads.length === 0 ? t('archive.empty') : t('archive.noMatch')}</p>
           )}
@@ -98,7 +85,6 @@ export function ArchivePanel({ api, agents, refreshKey, onRestore, onDelete, onC
             </div>
           ))}
         </div>
-      </div>
-    </div>
+    </SettingsSection>
   );
 }

@@ -38,12 +38,18 @@ export function NoteMarks({ marks, scrollerRef }: { marks: NoteMark[]; scrollerR
     const place = () => {
       cancelAnimationFrame(raf);
       raf = requestAnimationFrame(() => {
-        const view = scrollerRef.current?.getBoundingClientRect();
+        const scroller = scrollerRef.current;
+        const view = scroller?.getBoundingClientRect();
+        // The scroller runs behind the glass top bar and composer; a number must not float over them.
+        const style = scroller ? getComputedStyle(scroller) : undefined;
+        const top = view ? view.top + Math.max(0, -parseFloat(style?.marginTop ?? '0') || 0) : 0;
+        const bottom = view ? view.bottom - Math.max(0, -parseFloat(style?.marginBottom ?? '0') || 0) : 0;
         setSpots(
           live.flatMap((m) => {
             const rects = m.range.getClientRects();
             const last = rects[rects.length - 1];
-            if (!last || !view || last.bottom < view.top || last.top > view.bottom) return [];
+            const mid = last ? last.top + last.height / 2 : 0;
+            if (!last || !view || mid < top || mid > bottom) return [];
             return [{ id: m.id, n: m.n, top: last.top + last.height / 2, left: last.right }];
           }),
         );

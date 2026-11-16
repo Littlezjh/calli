@@ -1,3 +1,4 @@
+import type { PushService } from './push.js';
 import { randomUUID } from 'node:crypto';
 import { existsSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -30,6 +31,7 @@ interface RunOutcome {
 
 const TICK_MS = 30_000;
 const FOLLOW_UP_BACKOFF_MS = [60_000, 5 * 60_000, 30 * 60_000, 60 * 60_000];
+const AUTO_ARCHIVE_SWEEP_MS = 60 * 60_000;
 /** How long a turn's ending is remembered without its run row, for the race at fire time. */
 const REMEMBERED_TURNS = 128;
 const MAX_PROMPT = 8000;
@@ -64,6 +66,8 @@ export class Scheduler {
   private stopped = false;
   private readonly quietArchives = new Set<string>();
   private timer: ReturnType<typeof setInterval> | null = null;
+  private lastAutoArchiveAt = 0;
+  private lastAutoArchiveDays: number | null = null;
   private readonly listeners = new Set<ChangeListener>();
   /** Turn endings that arrived before (or without) a run row, keyed by turn id. */
   private readonly outcomes = new Map<string, RunOutcome>();
@@ -72,6 +76,7 @@ export class Scheduler {
     private readonly store: Store,
     private readonly manager: ThreadManager,
     private readonly adapters: Map<string, AgentAdapter>,
+    private readonly push?: PushService,
   ) {}
 
   /** Page-change notifications, for the list stream. */
@@ -144,6 +149,7 @@ export class Scheduler {
 
   private recover(): void {
     this.manager.personal.review.recover();
+    this.manager.personal.proactive.recover();
     const now = new Date();
     for (const run of this.store.runningScheduleRuns()) {
       this.store.updateScheduleRun(run.id, { status: 'error', finishedAt: now.toISOString(), message: 'daemon 重启时被打断' });
@@ -182,8 +188,7 @@ export class Scheduler {
   }
 
   /** One pass of the clock. Awaiting fires is fine: a fire only starts a turn, it never waits for one. */
-  async tick(): Promise<void> {
-    const now = new Date();
+  async tick(now = new Date()): Promise<void> {
     for (const s of this.store.listSchedules()) {
       if (!s.enabled) continue;
       let fields: CronFields;
@@ -200,8 +205,21 @@ export class Scheduler {
     }
     await this.followUps();
     await this.reviews();
+    await this.autoArchive(now);
+    this.manager.briefs.tick(now, this.push);
+    await this.manager.personal.proactive.tick(now);
     this.sweep();
     this.changed();
+  }
+
+  private async autoArchive(now: Date): Promise<void> {
+    const days = this.manager.generalSettings().autoArchiveDays;
+    if (days === null) { this.lastAutoArchiveDays = null; return; }
+    const due = this.lastAutoArchiveDays !== days || now.getTime() - this.lastAutoArchiveAt >= AUTO_ARCHIVE_SWEEP_MS;
+    if (!due) return;
+    this.lastAutoArchiveDays = days;
+    this.lastAutoArchiveAt = now.getTime();
+    await this.manager.autoArchiveOldThreads(now);
   }
 
   /** Reviews own their schedule in hub settings, while their conversations remain ordinary threads. */

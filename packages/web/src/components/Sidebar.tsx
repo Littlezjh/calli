@@ -1,18 +1,20 @@
 import brandIcon from '../assets/calli.svg';
 import { Fragment, useEffect, useState, type MouseEvent, type ReactNode } from 'react';
-import type { AgentInfo, HostInfo, SearchHit, Section, Thread } from '../api';
+import type { ExternalSession, HostInfo, SearchHit, Section, Thread } from '../api';
+import type { AgentMarkInfo } from '../thread-cache';
 import { clockLabel } from '../timeline';
 import { useInTitlebar, useLongPress, useStoredFlag, useStoredSet } from '../hooks';
-import { attentionCount, threadMark, waitingLabel } from '../notices';
+import { attentionCount, threadMark, waitingLabel, type ThreadMark } from '../notices';
 import { folderName } from '../paths';
-import { buildActivity, buildMerged, buildSidebar, handoverGroups, markTerms, navOverflow, projectDir, SEARCH_MIN, taggedAgents, type HostSource } from '../sidebar';
+import { buildActivity, buildMerged, buildSidebar, externalThreadRow, handoverGroups, markTerms, navOverflow, projectDir, SEARCH_MIN, taggedAgents, withExternalSessions, type HostSource } from '../sidebar';
 import { timeAgo } from '../sessions';
 import { deliveredPreview } from '../timeline';
 import { HostSwitcher } from './Hosts';
 import { Menu } from './Menu';
+import { PetBustImage, type PetBust } from './Pet';
 import type { HostIconName } from '@calli/extension-api';
 import { HostIcon } from '../extensions/ui';
-import { AgentMark, IconBell, IconChevron, IconClock, IconClose, IconDesktop, IconEdit, IconFolder, IconList, IconMore, IconPin, IconPlus, IconSearch, IconSettings, IconSidebar } from './icons';
+import { AgentMark, IconBell, IconChevron, IconClock, IconClose, IconDesktop, IconEdit, IconFolder, IconList, IconMore, IconPin, IconPlus, IconSearch, IconSettings, IconSidebar, IconSparkle, IconServer } from './icons';
 import { t } from '../i18n';
 
 export { folderName } from '../paths';
@@ -50,8 +52,8 @@ interface Props {
   /** Each lead thread's team members, by the lead's id: rows under the lead instead of threads of their own. */
   members?: Map<string, Thread[]>;
   sections: Section[];
-  /** For the mark each row shows in place of its agent's name. */
-  agents: AgentInfo[];
+  /** For the mark each row shows in place of its agent's name; null while not known, so no name stands in. */
+  agents: AgentMarkInfo[] | null;
   selectedId: string | null;
   onSelect: (id: string) => void;
   onNew: () => void;
@@ -61,8 +63,14 @@ interface Props {
   onSectionMenu: (section: Section, x: number, y: number) => void;
   onNewSection: () => void;
   onOpenTodos?: () => void;
+  onOpenDesk?: () => void;
+  deskActive?: boolean;
+  petBust?: PetBust | null;
   /** The plan page is what the main area shows. */
   todosActive?: boolean;
+  /** Opens the machines page, listed behind the nav's "more" button unless it is on screen. */
+  onOpenMachines?: () => void;
+  machinesActive?: boolean;
   onOpenSchedules?: () => void;
   /** Opens the machine's desktop; absent when the machine shows none. */
   onOpenDesktop?: () => void;
@@ -70,7 +78,7 @@ interface Props {
   desktopRunning?: boolean;
   /** The scheduled-task page is what the main area shows. */
   schedulesActive?: boolean;
-  /** Entries enabled extensions pin to the sidebar, after the hub's own pages. */
+  /** Entries enabled extensions pin to the sidebar: rows of their own after the plans link. */
   extensionNav?: ExtensionNavEntry[];
   /** The phone layout: the list is a page of its own under the conversation, laid out for thumbs. */
   compact?: boolean;
@@ -94,12 +102,26 @@ interface Props {
   onSearch?: (query: string) => Promise<SearchHit[]>;
   /** Opens the thread a found turn is in, at that turn. */
   onOpenHit?: (hit: SearchHit) => void;
+  /** This machine's agent sessions that are not threads yet; they mix into the list by time. */
+  external?: ExternalSession[];
+  /** `off`: this machine does not list them (an older daemon, or the demo). */
+  externalState?: 'off' | 'loading' | 'ready' | 'failed';
+  /** Opens one of them: import it and continue it as a thread. */
+  onImportExternal?: (session: ExternalSession) => void;
+  /** `agent:sessionId` of the session being imported; its row says so. */
+  importingExternal?: string | null;
+  /** Something went wrong reading the list or importing one: shown once, with a way to try again. */
+  externalError?: { message: string; retry?: () => void } | null;
+  /** More external sessions are known but not shown; the call brings the next page. */
+  moreExternal?: boolean;
+  onLoadMoreExternal?: () => void;
   /** A line over the list, such as the demo's way to connect. */
   notice?: ReactNode;
 }
 
 /** In the merged list, the machine a row's thread is on when that is not the hub's own, and how to open it if it is not the one on screen. */
-interface Elsewhere { label?: string; open?: () => void }
+/** `agents`: that machine's, by id, when the row is another machine's; null while not known. */
+interface Elsewhere { label?: string; open?: () => void; agents?: Map<string, AgentMarkInfo> | null }
 
 /** Where a menu opened from a "more" button should appear: just under the button. */
 function below(e: MouseEvent<HTMLElement>): [number, number] {
@@ -138,7 +160,12 @@ export function Sidebar({
   onSectionMenu,
   onNewSection,
   onOpenTodos,
+  onOpenDesk,
+  deskActive = false,
+  petBust,
   todosActive = false,
+  onOpenMachines,
+  machinesActive = false,
   onOpenSchedules,
   onOpenDesktop,
   desktopRunning = false,
@@ -158,6 +185,13 @@ export function Sidebar({
   onOpenElsewhere,
   onSearch,
   onOpenHit,
+  external = [],
+  externalState = 'off',
+  onImportExternal,
+  importingExternal = null,
+  externalError = null,
+  moreExternal = false,
+  onLoadMoreExternal,
 }: Props) {
   const [search, setSearch] = useState('');
   // What was said, looked up a moment after the typing stops. `for` is the search the hits answer.
@@ -189,9 +223,12 @@ export function Sidebar({
   const [collapsed, toggle] = useStoredSet(`${storagePrefix}.collapsed`);
   // The other way to read the list: by what is going on, not by where a thread is filed. Like Codex's activity view.
   const [byActivity, setByActivity] = useStoredFlag(`${storagePrefix}.activity`);
-  const model = buildSidebar(threads, sections, search);
+  // This machine's sessions that are not threads yet mix into the list by their time; every
+  // machine's own list (the merged view) shows threads only.
+  const withExternal = merged ? threads : withExternalSessions(threads, external);
+  const model = buildSidebar(withExternal, sections, search);
   const mergedModel = merged ? buildMerged(merged, search, new Date(), selectedId) : null;
-  const activity = byActivity && !mergedModel ? buildActivity(threads, search, new Date(), selectedId) : null;
+  const activity = byActivity && !mergedModel ? buildActivity(withExternal, search, new Date(), selectedId) : null;
   // Out of their project groups, rows say where they are and what was asked last.
   const flat = byActivity || Boolean(mergedModel);
   // The machine on screen being down hides its list, unless every machine is listed.
@@ -201,22 +238,27 @@ export function Sidebar({
   const isOpen = (key: string) => Boolean(search.trim()) || !collapsed.has(key);
 
   const MARK_LABELS = { waiting: t('notices.unknown.label'), running: t('status.running'), error: t('status.error'), unread: t('sidebar.unread') } as const;
-  const agentById = new Map(agents.map((a) => [a.id, a]));
-  const tagged = taggedAgents(agents);
+  const agentById = new Map((agents ?? []).map((a) => [a.id, a]));
+  const tagged = taggedAgents(agents ?? []);
 
   /**
    * `chain`: the handover chain this row stands for, newest first, as `handoverGroups` gives it.
    * `on`: in the merged list, the other machine the thread is on (named on the row), and how to open
-   * it there; such a row has no menu, as its actions would go to the machine on screen.
+   * it there. The host routes menu actions to that same machine.
    */
   const row = (thread: Thread, title = thread.title, preview = thread.preview, chain?: Thread[], on?: Elsewhere) => {
     const open = on?.open;
     const mark = threadMark(thread, thread.id === selectedId);
-    const agent = agentById.get(thread.agent);
+    // A row of another machine is marked by that machine's agents, not by the ones on screen.
+    const theirs = on && on.agents !== undefined;
+    const known = theirs ? on.agents !== null : agents !== null;
+    const byId = theirs ? on.agents ?? new Map<string, AgentMarkInfo>() : agentById;
+    const tags = theirs ? taggedAgents([...byId.values()]) : tagged;
+    const agent = byId.get(thread.agent);
     // The agents the task passed through, first to last, and the one it came from.
-    const passed = chain ? [...chain].reverse().map((m) => agentById.get(m.agent)?.label ?? m.agent).join(' → ') : thread.handover ? `${agentById.get(thread.handover.agent)?.label ?? thread.handover.agent} → ${agent?.label ?? thread.agent}` : null;
-    const hint = [agent && tagged.has(agent.id) ? agent.label : null, thread.worktree ? t('sidebar.inWorktree', thread.worktree.branch) : null, thread.forkedFrom ? t('sidebar.fork') : null, passed ? t('sidebar.handover', passed) : null, thread.schedule ? t('sidebar.scheduleRun', thread.schedule.name) : null].filter(Boolean).join(' · ');
-    const from = chain ? agentById.get(chain.find((m) => m.id === thread.handover?.sourceId)?.agent ?? thread.handover?.agent ?? '') : undefined;
+    const passed = chain ? [...chain].reverse().map((m) => byId.get(m.agent)?.label ?? m.agent).join(' → ') : thread.handover ? `${byId.get(thread.handover.agent)?.label ?? thread.handover.agent} → ${agent?.label ?? thread.agent}` : null;
+    const hint = [agent && tags.has(agent.id) ? agent.label : null, thread.worktree ? t('sidebar.inWorktree', thread.worktree.branch) : null, thread.forkedFrom ? t('sidebar.fork') : null, passed ? t('sidebar.handover', passed) : null, thread.schedule ? t('sidebar.scheduleRun', thread.schedule.name) : null].filter(Boolean).join(' · ');
+    const from = chain ? byId.get(chain.find((m) => m.id === thread.handover?.sourceId)?.agent ?? thread.handover?.agent ?? '') : undefined;
     // Filed by project, the list is for scanning: a title per row, as in Codex. The latest ask
     // shows where it helps finding something, by activity and in a search. A thread that needs a
     // hand says so in every view.
@@ -228,9 +270,9 @@ export function Sidebar({
       className={`thread-row${thread.id === selectedId ? ' active' : ''}${mark === 'unread' || mark === 'waiting' ? ' attention' : ''}`}
       onContextMenu={(e) => {
         e.preventDefault();
-        if (!open) onThreadMenu(thread, e.clientX, e.clientY);
+        onThreadMenu(thread, e.clientX, e.clientY);
       }}
-      {...(open ? {} : longPress(thread))}
+      {...longPress(thread)}
     >
       {/* Two accounts of one agent share a mark; which one runs the thread shows on hover and in the
           open thread's top bar, not as text on every row. */}
@@ -241,7 +283,8 @@ export function Sidebar({
             {/* Beside the title, so the row stays one line like the rest. */}
             {note && <span className={`thread-note ${mark}`}>{note}</span>}
             {/* Out of its project group, a thread says where it is. */}
-            {flat && <span className="thread-dir">{on?.label ? `${on.label} · ` : ''}{folderName(projectDir(thread).cwd)}</span>}
+            {flat && on?.label && <span className="thread-host" title={on.label}>{on.label}</span>}
+            {flat && <span className="thread-dir">{folderName(projectDir(thread).cwd)}</span>}
           </span>
           {detail && <span className="thread-preview">{detail}</span>}
         </span>
@@ -256,14 +299,14 @@ export function Sidebar({
             <span className="agent-mark" role="img" aria-label={agent.label} title={agent.label}>
               <AgentMark path={agent.icon} size={compact ? 13 : 12} />
             </span>
-          ) : (
-            // An agent without a mark, or one this hub no longer has: its name, as before.
+          ) : known ? (
+            // An agent without a mark, or one this machine no longer has: its name, as before.
             <span className="agent-tag">{thread.agent}</span>
-          )}
+          ) : null}
           {mark && <span className={`dot ${mark}`} role="img" aria-label={mark === 'waiting' ? waitingLabel(thread) : MARK_LABELS[mark]} title={mark === 'waiting' ? waitingLabel(thread) : MARK_LABELS[mark]} />}
         </span>
       </button>
-      {!open && (
+      {(
         <button className="row-more" aria-label={t('sidebar.more', thread.title)} onClick={(e) => onThreadMenu(thread, ...below(e))}>
           <IconMore size={16} />
         </button>
@@ -277,8 +320,69 @@ export function Sidebar({
   const busy = (thread: Thread) => (thread.waiting ? 2 : thread.status === 'running' ? 1 : 0);
   const teamOrder = (a: Thread, b: Thread) => busy(b) - busy(a) || b.updatedAt.localeCompare(a.updatedAt);
 
+  // One run of overlapping agent marks, the frontmost carrying the most urgency; the words stay in
+  // the button's label. Like Orca's crew stack. Null when any agent has no mark, so text takes over.
+  const stackLine = (list: Thread[], dimQuiet = true) => {
+    const chips = list.map((m) => ({ id: m.id, mark: agentById.get(m.agent)?.icon, quiet: busy(m) === 0 && !threadMark(m, m.id === selectedId) }));
+    if (chips.some((c) => !c.mark)) return null;
+    const shown = chips.slice(0, 3);
+    return <span className="stack-line">
+      {shown.map((c, i) => <span key={c.id} className={`stack-chip${dimQuiet && c.quiet ? ' dim' : ''}`} style={{ zIndex: shown.length - i }}><AgentMark path={c.mark as string} size={compact ? 14 : 13} /></span>)}
+      {chips.length > shown.length && <span className="stack-more" aria-hidden="true">+{chips.length - shown.length}</span>}
+    </span>;
+  };
+  // One dot stands for the whole run: waiting, then error, unread, running; none when all is quiet.
+  const runDot = (list: Thread[]) => {
+    const marks = [...new Set(list.map((m) => threadMark(m, m.id === selectedId)).filter(Boolean))] as ThreadMark[];
+    const mark = (['waiting', 'error', 'unread', 'running'] as const).find((m) => marks.includes(m));
+    return mark ? <span className={`dot ${mark}`} role="img" aria-label={MARK_LABELS[mark]} title={MARK_LABELS[mark]} /> : null;
+  };
+
+  /**
+   * A conversation an agent on this machine already has, sitting among the threads by its time.
+   * Quieter than a thread (nothing is running): reading it is free, opening it imports it, which
+   * takes a moment and can fail — both said on the row, in place.
+   */
+  const externalRow = (thread: Thread) => {
+    const session = thread.external!;
+    const key = `${session.agent}:${session.sessionId}`;
+    const busy = importingExternal === key;
+    const agent = agentById.get(session.agent);
+    return (
+      <div key={thread.id} className="thread-row external">
+        <button
+          className="thread-item"
+          disabled={importingExternal !== null}
+          onClick={() => onImportExternal?.(session)}
+          title={t('sidebar.externalHint')}
+        >
+          <span className="thread-text">
+            <span className="thread-head">
+              <span className="thread-title">{thread.title}</span>
+              {busy && <span className="thread-note external">{t('sidebar.externalImporting')}</span>}
+              {flat && <span className="thread-dir">{folderName(projectDir(thread).cwd)}</span>}
+            </span>
+          </span>
+          <span className="thread-meta">
+            {agent?.icon ? (
+              <span className="agent-mark" role="img" aria-label={agent.label} title={agent.label}>
+                <AgentMark path={agent.icon} size={compact ? 13 : 12} />
+              </span>
+            ) : agents !== null ? (
+              <span className="agent-tag">{session.agent}</span>
+            ) : null}
+            {/* The one quiet mark that this is a conversation on disk, not a thread yet; the row's
+                tooltip says it in words. */}
+            <i className="external-dot" aria-hidden="true" />
+          </span>
+        </button>
+      </div>
+    );
+  };
+
   // Like Orca's agents under a task: the lead's row, then one line per member saying what it is doing.
   const entry = (thread: Thread, on?: Elsewhere) => {
+    if (thread.external) return externalRow(thread);
     const team = members?.get(thread.id);
     if (!team?.length || on?.open) return row(thread, thread.title, thread.preview, undefined, on);
     const sorted = [...team].sort(teamOrder);
@@ -286,14 +390,19 @@ export function Sidebar({
     const open = Boolean(search.trim()) || (teamOpen.get(thread.id) ?? auto);
     const working = sorted.filter((m) => m.status === 'running').length;
     const waiting = sorted.filter((m) => m.waiting).length;
-    const marks = [...new Set(sorted.map((m) => threadMark(m, m.id === selectedId)).filter(Boolean))];
+    const stack = stackLine(sorted);
     const current = thread.id === selectedId || sorted.some((m) => m.id === selectedId);
     return <div key={thread.id} className={`handover-group team-group${open ? ' open' : ''}${current ? ' selected' : ''}`}>
       {row(thread, thread.title, thread.preview, undefined, on)}
-      <button className="handover-toggle" aria-label={open ? t('sidebar.collapseTeam', thread.title) : t('sidebar.expandTeam', thread.title)} aria-expanded={open} onClick={() => setTeamOpen((old) => new Map(old).set(thread.id, !open))}>
-        <span>{t('sidebar.agents', sorted.length)}</span>
-        {(waiting || working) > 0 && <span className="team-note">{waiting ? t('sidebar.waitingCount', waiting) : t('team.running', working)}</span>}
-        {!open && marks.length > 0 && <span className="handover-marks">{marks.map((mark) => <span key={mark} className={`dot ${mark}`} role="img" aria-label={MARK_LABELS[mark!]} title={MARK_LABELS[mark!]} />)}</span>}
+      <button className="handover-toggle" aria-expanded={open} onClick={() => setTeamOpen((old) => new Map(old).set(thread.id, !open))}
+        aria-label={[t('sidebar.agents', sorted.length), waiting ? t('sidebar.waitingCount', waiting) : working ? t('team.running', working) : null, open ? t('sidebar.collapseTeam', thread.title) : t('sidebar.expandTeam', thread.title)].filter(Boolean).join(' · ')}>
+        {stack ? <>
+          {runDot(sorted)}
+          {stack}
+        </> : <>
+          <span>{t('sidebar.agents', sorted.length)}</span>
+          {(waiting || working) > 0 && <span className="team-note">{waiting ? t('sidebar.waitingCount', waiting) : t('team.running', working)}</span>}
+        </>}
         <IconChevron size={13} open={open} />
       </button>
       {open && <div className="handover-members">{sorted.map((m) => {
@@ -317,22 +426,27 @@ export function Sidebar({
     </div>;
   };
 
-  const groupedRows = (list: Thread[]) => handoverGroups(list).map(({ key, latest, members }) => {
+  const groupedRows = (list: Thread[], keepOrder = false) => handoverGroups(list, keepOrder).map(({ key, latest, members }) => {
     if (members.length === 1) return entry(latest);
     const storageKey = `${hostId ?? 'local'}:${key}`;
     const expanded = Boolean(search.trim()) || expandedHandovers.has(storageKey);
-    const marks = [...new Set(members.filter((thread) => thread.id !== latest.id).map((thread) => threadMark(thread, thread.id === selectedId)).filter(Boolean))];
+    const marks = [...new Set(members.filter((thread) => thread.id !== latest.id).map((thread) => threadMark(thread, thread.id === selectedId)).filter(Boolean))] as ThreadMark[];
+    const chainStack = stackLine(members, false);
+    const chainDot = (['waiting', 'error', 'unread', 'running'] as const).find((m) => marks.includes(m));
     const current = members.some((thread) => thread.id === selectedId);
     // Like Orca's agents under a task: one card, the latest conversation on top, the chain folded below it.
     return <div key={key} className={`handover-group${expanded ? ' open' : ''}${current ? ' selected' : ''}`}>
       {row(latest, latest.title.replace(/(?:（接手）)+$/, ''), latest.preview, members)}
-      <button className="handover-toggle" aria-label={expanded ? t('sidebar.collapseHandover', latest.title) : t('sidebar.expandHandover', latest.title)} aria-expanded={expanded} onClick={() => setExpandedHandovers((old) => {
+      <button className="handover-toggle" aria-expanded={expanded} onClick={() => setExpandedHandovers((old) => {
         const next = new Set(old);
         if (next.has(storageKey)) next.delete(storageKey); else next.add(storageKey);
         return next;
-      })}>
-        <span>{t('sidebar.sessions', members.length)}</span>
-        {!expanded && marks.length > 0 && <span className="handover-marks">{marks.map((mark) => <span key={mark} className={`dot ${mark}`} role="img" aria-label={t('sidebar.otherHandover', MARK_LABELS[mark!])} title={t('sidebar.otherHandover', MARK_LABELS[mark!])} />)}</span>}
+      })}
+        aria-label={[t('sidebar.sessions', members.length), expanded ? t('sidebar.collapseHandover', latest.title) : t('sidebar.expandHandover', latest.title)].join(' · ')}>
+        {chainStack ? <>
+          {chainDot && <span className={`dot ${chainDot}`} role="img" aria-label={t('sidebar.otherHandover', MARK_LABELS[chainDot])} title={t('sidebar.otherHandover', MARK_LABELS[chainDot])} />}
+          {chainStack}
+        </> : <span>{t('sidebar.sessions', members.length)}</span>}
         <IconChevron size={13} open={expanded} />
       </button>
       {expanded && <div className="handover-members handover-chain">{members.map((thread) => {
@@ -385,6 +499,7 @@ export function Sidebar({
     return sameDay ? hm : `${d.getMonth() + 1}/${d.getDate()} ${hm}`;
   };
   const labelOf = new Map((merged ?? []).map((s) => [s.hostId, s.label]));
+  const agentsOf = new Map((merged ?? []).map((s) => [s.hostId, s.agents ? new Map(s.agents.map((a) => [a.id, a])) : null]));
   const groups = mergedModel ? (
     <nav className="thread-groups activity merged" aria-label={t('sidebar.merged.label')}>
       {mergedModel.notes.map((n) => (
@@ -402,6 +517,7 @@ export function Sidebar({
                 // The hub's own machine is the usual one; only threads elsewhere are named.
                 label: on === null ? undefined : labelOf.get(on),
                 open: on === hostId ? undefined : () => onOpenElsewhere?.(on, thread.id),
+                agents: on === hostId ? undefined : agentsOf.get(on) ?? null,
               })}
             </Fragment>
           ))}
@@ -414,7 +530,7 @@ export function Sidebar({
       {activity.groups.map((g) => (
         <section key={g.key} className="thread-group" aria-label={g.label}>
           <div className="group-label">{g.label}</div>
-          {g.threads.map((t) => entry(t))}
+          {groupedRows(g.threads, true)}
         </section>
       ))}
     </nav>
@@ -484,11 +600,11 @@ export function Sidebar({
     </nav>
   );
 
-  // The pages after "Plans": behind a "more" button, except the one on screen or one with a state to keep an eye on.
+  // The pages after "Plans" and the pinned views: behind a "more" button, except the one on screen or one with a state to keep an eye on.
   const pages: NavPage[] = [
+    ...(onOpenMachines ? [{ key: 'machines', label: t('hosts.machines'), icon: IconServer, active: machinesActive, onOpen: onOpenMachines }] : []),
     ...(onOpenSchedules ? [{ key: 'schedules', label: t('sidebar.schedules'), icon: IconClock, active: schedulesActive, onOpen: onOpenSchedules }] : []),
     ...(onOpenDesktop ? [{ key: 'desktop', label: t('desktop.title'), icon: IconDesktop, active: false, live: desktopRunning, liveLabel: t('desktop.running'), onOpen: onOpenDesktop }] : []),
-    ...extensionNav.map((entry) => ({ key: entry.key, label: entry.label, icon: (p: { size?: number }) => <HostIcon name={entry.icon} size={p.size} />, active: entry.active, onOpen: entry.onOpen })),
   ];
   const { shown: pagesShown, hidden: pagesHidden } = navOverflow(pages);
 
@@ -540,7 +656,6 @@ export function Sidebar({
                 onClick={() => setByActivity(!byActivity)}
               >
                 <IconBell size={compact ? 20 : 16} />
-                {wanted > 0 && <span className="activity-badge" aria-hidden="true" />}
               </button>
               <button className="round-btn" aria-label={t('sidebar.search')} title={t('sidebar.search')} onClick={() => setSearching(true)}>
                 <IconSearch size={compact ? 20 : 16} />
@@ -564,9 +679,18 @@ export function Sidebar({
                     <IconEdit size={17} /> {t('sidebar.newThread')}
                   </button>
                 ),
+                onOpenDesk && <button key="desk" className={`side-link${deskActive ? ' active' : ''}`} aria-current={deskActive ? 'page' : undefined} onClick={onOpenDesk}>
+                  {petBust ? <PetBustImage bust={petBust} height={compact ? 30 : 24} slot={compact ? 21 : 17} /> : <IconSparkle size={compact ? 21 : 17} />} {t('pet.name')}
+                </button>,
                 onOpenTodos && <button key="todos" className={`side-link${todosActive ? ' active' : ''}`} aria-current={todosActive ? 'page' : undefined} onClick={onOpenTodos}>
                   <IconList size={compact ? 21 : 17} /> {t('todos.title')}
                 </button>,
+                // Views an extension pins (the board) keep a row of their own; the machines wait behind "more".
+                ...extensionNav.map((entry) => (
+                  <button key={entry.key} className={`side-link${entry.active ? ' active' : ''}`} aria-current={entry.active ? 'page' : undefined} onClick={entry.onOpen}>
+                    <HostIcon name={entry.icon} size={compact ? 21 : 17} /> {entry.label}
+                  </button>
+                )),
                 ...pagesShown.map((page) => (
                   <button key={page.key} className={`side-link${page.active ? ' active' : ''}`} aria-current={page.active ? 'page' : undefined} title={page.live ? page.liveLabel : undefined} onClick={page.onOpen}>
                     <page.icon size={compact ? 21 : 17} /> {page.label}
@@ -603,6 +727,27 @@ export function Sidebar({
           </div>
         )}
         {!down && groups}
+        {/* Reading the machine's sessions, or importing one, went wrong: said here, where the rows
+            are, with a way to try again. Cleared by the next attempt. */}
+        {!down && !mergedModel && externalError && (
+          <p className="group-empty external-error" role="alert">
+            {externalError.message}
+            {externalError.retry && (
+              <>
+                {' '}
+                <button type="button" className="text-btn" onClick={externalError.retry}>
+                  {t('common.retry')}
+                </button>
+              </>
+            )}
+          </p>
+        )}
+        {/* The machine may hold far more sessions than this: shown a page at a time, more on ask. */}
+        {!down && !mergedModel && moreExternal && onLoadMoreExternal && !search.trim() && (
+          <button type="button" className="sidebar-more-sessions" onClick={onLoadMoreExternal}>
+            {t('sidebar.moreExternal')}
+          </button>
+        )}
         {!down && onSearch && query.length >= SEARCH_MIN && (
           <section className="search-hits" aria-label={t('sidebar.inConversations')}>
             <div className="search-hits-head">{t('sidebar.inConversations')}</div>

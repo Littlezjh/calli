@@ -1,7 +1,10 @@
-import { useEffect, useState } from 'react';
-import { ApiError, AuthError, type Api, type HostFailure, type HostInfo } from '../api';
+import { useEffect, useMemo, useState } from 'react';
+import { Api, ApiError, AuthError, type HostFailure, type HostInfo } from '../api';
 import { hostProblem, hostStatus } from '../hosts';
+import { todayTokens, totalTokens } from '../machine-usage';
+import { compactLabel } from '../observability';
 import { Dialog } from './Dialog';
+import { SettingsSection, usePageDraft } from './PageNavigation';
 import { IconCheck, IconChevron, IconClose, IconComputer, IconGlobe, IconPlus, IconServer, IconSettings } from './icons';
 import { Popover } from './Popover';
 import { t } from '../i18n';
@@ -9,6 +12,48 @@ import { t } from '../i18n';
 /** ssh's own words, for whoever has to fix it. When no daemon answered there is nothing of ssh's to quote. */
 const SshSaid = ({ host }: { host: Pick<HostInfo, 'code' | 'error'> }) =>
   host.error && host.code !== 'daemon_missing' ? <code className="host-error">{host.error}</code> : null;
+
+/** Every machine's tokens today, one read for the line above the list and each row's number.
+ *  A machine that is down cannot answer; its number waits as a dash, not as a zero. */
+function useTodays(api: Api, token: string, machines: Array<{ key: string; host: HostInfo | null }>): Map<string, number | null> {
+  const [todays, setTodays] = useState<Map<string, number | null>>(new Map());
+  useEffect(() => {
+    // The detail page asks for nothing; answering would only churn (an empty read still lands
+    // as a new Map, and a fresh empty machines array re-arms the effect on every render).
+    if (machines.length === 0) return;
+    let alive = true;
+    const read = async () => {
+      const next = new Map<string, number | null>();
+      await Promise.all(machines.map(async (machine) => {
+        if (machine.host?.status === 'offline') {
+          next.set(machine.key, null);
+          return;
+        }
+        try {
+          // In the demo the local machine is the demo api itself: nothing else is there to answer.
+          const machineApi = api.demo && !machine.host ? api : new Api(token, '', machine.host?.id ?? null);
+          const day = await machineApi.machineUsage(24);
+          if (alive) next.set(machine.key, totalTokens(todayTokens(day)));
+        } catch {
+          next.set(machine.key, null);
+        }
+      }));
+      if (alive) setTodays(next);
+    };
+    void read();
+    const timer = setInterval(() => { if (!document.hidden) void read(); }, 60_000);
+    return () => { alive = false; clearInterval(timer); };
+  }, [api, token, machines]);
+  return todays;
+}
+
+/** A machine's tokens today as the number on its row: reading the usage is separate from managing
+ *  the machine, so the number is a button of its own and never touches the row's actions. */
+function MachineToday({ today, onOpen }: { today: number | null; onOpen: () => void }) {
+  return <button type="button" className="host-today" disabled={today === null} title={t('machine.today')} aria-label={t('machine.openUsage')} onClick={onOpen}>
+    {today === null ? '—' : compactLabel(today)}
+  </button>;
+}
 
 const StatusDot = ({ status }: { status: HostInfo['status'] }) => (
   <span className={`host-dot ${status}`} role="img" aria-label={hostStatus(status)} title={hostStatus(status)} />
@@ -123,7 +168,11 @@ export function HostDown({ host, onRetry }: { host: HostInfo; onRetry: () => Pro
 
 interface PanelProps {
   api: Api;
+  /** For asking each machine its own usage: the page's token, which every proxy call reuses. */
+  token: string;
   hosts: HostInfo[];
+  /** Opens the machine's usage detail on the machines page: reading it is separate from managing it. */
+  onOpenUsage: (machine: string | null) => void;
   /** Called after machines were added, removed or retried, so the rest of the page hears of it. */
   onChanged: () => Promise<void>;
   onClose: () => void;
@@ -134,8 +183,28 @@ interface PanelProps {
  * The machines this hub shows besides its own. Adding one takes only what ssh calls it: the hub
  * signs in, finds the Calli running there, and keeps a connection to it.
  */
-export function HostsPanel({ api, hosts, onChanged, onClose, onError }: PanelProps) {
-  const [candidates, setCandidates] = useState<string[]>([]);
+export function HostsPanel({ api, token, hosts, onOpenUsage, onChanged, onError }: PanelProps) {
+  const machines = useMemo(() => [
+    { key: 'local', host: null as HostInfo | null, label: t('hosts.local') },
+    ...hosts.map((host) => ({ key: host.id, host, label: host.label || host.target })),
+  ], [hosts]);
+  const todays = useTodays(api, token, machines);
+  return <HostsList api={api} hosts={hosts} machines={machines} todays={todays} onOpenUsage={onOpenUsage} onChanged={onChanged} onError={onError} />;
+}
+
+/** The list itself: today over every machine in one line, one row per machine, and the adding. */
+function HostsList({ api, hosts, machines, todays, onOpenUsage, onChanged, onError }: {
+  api: Api;
+  hosts: HostInfo[];
+  machines: Array<{ key: string; host: HostInfo | null; label: string }>;
+  todays: Map<string, number | null>;
+  onOpenUsage: (machine: string | null) => void;
+  onChanged: () => Promise<void>;
+  onError: (e: unknown) => void;
+}) {
+  const [candidates, setCandidates] = useState<string[] | null>(null);
+  const [candidatesError, setCandidatesError] = useState('');
+  const [showAdd, setShowAdd] = useState(false);
   const [target, setTarget] = useState('');
   /** The ssh name being signed in to, while that takes its seconds. */
   const [adding, setAdding] = useState<string | null>(null);
@@ -143,24 +212,14 @@ export function HostsPanel({ api, hosts, onChanged, onClose, onError }: PanelPro
   const [busy, setBusy] = useState<string | null>(null);
   const [removing, setRemoving] = useState<HostInfo | null>(null);
 
-  const loadCandidates = () =>
-    api
-      .hostCandidates()
-      .then(setCandidates)
-      .catch(() => undefined);
+  const loadCandidates = async () => {
+    setCandidatesError('');
+    try { setCandidates(await api.hostCandidates()); }
+    catch (e) { setCandidatesError(String(e)); }
+  };
 
-  useEffect(() => {
-    void loadCandidates();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !removing) onClose();
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [onClose, removing]);
+  useEffect(() => { if (showAdd) void loadCandidates(); }, [showAdd]);
+  usePageDraft(Boolean(target.trim()), adding !== null || busy !== null);
 
   const add = async (name: string) => {
     const wanted = name.trim();
@@ -207,19 +266,20 @@ export function HostsPanel({ api, hosts, onChanged, onClose, onError }: PanelPro
 
   return (
     <>
-    <div className="dialog-scrim" onClick={onClose}>
-      <div className="panel" role="dialog" aria-modal="true" aria-labelledby="hosts-title" onClick={(e) => e.stopPropagation()}>
-        <header className="panel-head">
-          <h2 id="hosts-title" className="panel-title">
-            <IconServer size={20} /> {t('hosts.machines')}
-          </h2>
-          <button className="icon-btn" aria-label={t('common.close')} onClick={onClose}>
-            <IconClose size={18} />
-          </button>
-        </header>
-        <p className="panel-hint">{t('hosts.hint')}</p>
-
+    <SettingsSection title={t('hosts.machines')} hint={t('hosts.hint')} className="hosts-settings">
         <div className="panel-list">
+          {/* The hub's own machine reads here too: its usage is one click away like the rest. */}
+          <div className="panel-row single host-row">
+            <div className="panel-row-main">
+              <div className="panel-row-title">
+                <StatusDot status="online" /> {t('hosts.local')}
+              </div>
+              <div className="panel-row-meta">
+                <span>{t('hosts.localHint')}</span>
+              </div>
+            </div>
+            <MachineToday today={todays.get('local') ?? null} onOpen={() => onOpenUsage(null)} />
+          </div>
           {hosts.map((h) => (
             <div key={h.id} className="panel-row single host-row">
               <div className="panel-row-main">
@@ -238,6 +298,7 @@ export function HostsPanel({ api, hosts, onChanged, onClose, onError }: PanelPro
                   </p>
                 )}
               </div>
+              <MachineToday today={todays.get(h.id) ?? null} onOpen={() => onOpenUsage(h.id)} />
               {h.status !== 'online' && (
                 <button className="text-btn" disabled={busy !== null} onClick={() => void retry(h)}>
                   {t('common.retry')}
@@ -249,7 +310,8 @@ export function HostsPanel({ api, hosts, onChanged, onClose, onError }: PanelPro
             </div>
           ))}
 
-          <div className="group-label host-add-label">{t('hosts.add')}</div>
+          <button className="settings-add-row" aria-expanded={showAdd} onClick={() => setShowAdd(value => !value)}><IconPlus size={17} />{t('hosts.add')}</button>
+          {showAdd && <>
           <form
             className="host-add"
             onSubmit={(e) => {
@@ -281,8 +343,9 @@ export function HostsPanel({ api, hosts, onChanged, onClose, onError }: PanelPro
             </p>
           )}
 
-          {candidates.length > 0 && <p className="host-candidates-hint">{t('hosts.candidates')}</p>}
-          {candidates.length > 0 && (
+          {candidatesError ? <p className="panel-error" role="alert">{candidatesError} <button className="ghost" onClick={() => void loadCandidates()}>{t('common.retry')}</button></p> : candidates === null && <p role="status">{t('common.loading')}</p>}
+          {candidates && candidates.length > 0 && <p className="host-candidates-hint">{t('hosts.candidates')}</p>}
+          {candidates && candidates.length > 0 && (
             <div className="host-candidates">
               {candidates.map((alias) => (
                 <button key={alias} type="button" className="host-candidate" aria-label={t('hosts.addAlias', alias)} disabled={adding !== null} onClick={() => void add(alias)}>
@@ -294,9 +357,9 @@ export function HostsPanel({ api, hosts, onChanged, onClose, onError }: PanelPro
             </div>
           )}
           <p className="host-foot">{t('hosts.foot')}</p>
+          </>}
         </div>
-      </div>
-    </div>
+    </SettingsSection>
     {removing && (
       <Dialog
         title={t('hosts.removeTitle', removing.label)}

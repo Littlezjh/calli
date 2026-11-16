@@ -2,10 +2,11 @@ import { useMemo, useState } from 'react';
 import { ApiError, type AgentInfo, type AgentLogin, type AgentReferences, type Api } from '../api';
 import { AgentAccountDialog } from './AgentAccountDialog';
 import { AgentLoginDialog } from './AgentLoginDialog';
+import { AgentSettingsDialog } from './AgentSettingsDialog';
 import { t } from '../i18n';
 import { Dialog } from './Dialog';
 import { Popover } from './Popover';
-import { AgentMark, IconAgents, IconArchive, IconEdit, IconMore, IconPlus, IconRestore, IconSignIn, IconTrash } from './icons';
+import { AgentMark, IconAgents, IconArchive, IconEdit, IconMore, IconPlus, IconRestore, IconSignIn, IconSettings, IconTrash } from './icons';
 
 interface Props {
   api: Api;
@@ -39,6 +40,7 @@ const total = (references: AgentReferences): number =>
 export function AgentsPage({ api, agents, onAdd, onReload, onLogin }: Props) {
   const [adding, setAdding] = useState(false);
   const [signingIn, setSigningIn] = useState<{ agent: AgentInfo; login: AgentLogin } | null>(null);
+  const [settings, setSettings] = useState<AgentInfo | null>(null);
   const [renaming, setRenaming] = useState<AgentInfo | null>(null);
   const [removing, setRemoving] = useState<{ agent: AgentInfo; references: AgentReferences } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -188,6 +190,9 @@ export function AgentsPage({ api, agents, onAdd, onReload, onLogin }: Props) {
                     >
                       {(close) => (
                         <>
+                          {agent.capabilities.streamBridge && <button type="button" className="pop-item compact" role="menuitem" onClick={() => { close(); setSettings(agent); }}>
+                            <IconSettings size={15} />{t('agents.settings')}
+                          </button>}
                           <button
                             type="button"
                             className="pop-item compact"
@@ -236,6 +241,7 @@ export function AgentsPage({ api, agents, onAdd, onReload, onLogin }: Props) {
       )}
 
       {adding && <AgentAccountDialog api={api} agents={agents} onClose={() => setAdding(false)} onDiscover={() => { setAdding(false); onAdd(); }} onCreated={async () => { setAdding(false); try { await onReload(); } catch (e) { fail(e); } }} />}
+      {settings && <AgentSettingsDialog api={api} agent={settings} onReload={onReload} onClose={() => setSettings(null)} />}
       {signingIn && <AgentLoginDialog api={api} agent={signingIn.agent} initial={signingIn.login} onReload={onReload} onClose={() => setSigningIn(null)} />}
 
       {renaming && (

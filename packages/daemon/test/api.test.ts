@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { get, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -16,9 +16,11 @@ import { PiRpcAdapter } from '../src/adapters/pi.js';
 import type { AgentAdapter } from '../src/adapters/types.js';
 import { AttachmentStore, sniffImageType, sniffSvg } from '../src/attachments.js';
 import { createHttpServer, tokenMatches } from '../src/http.js';
+import { LocalSessions } from '../src/local-sessions.js';
 import { Store } from '../src/store.js';
 import { matchTurns, ThreadManager } from '../src/threads.js';
 import { contentHash } from '../src/writing.js';
+import type { ThreadOutputs } from '../src/outputs.js';
 import { Workdirs } from '../src/workdirs.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -52,6 +54,7 @@ before(async () => {
   dataDir = mkdtempSync(join(tmpdir(), 'calli-test-data-'));
   // The fake ACP agent appends the ids it is asked to delete to this file.
   process.env.FAKE_ACP_DELETE_LOG = join(dataDir, 'acp-deleted.log');
+  process.env.FAKE_ACP_PERMISSION_LOG = join(dataDir, 'acp-permissions.jsonl');
   // Sessions the fake agents claim to have already. Tests fill these in; they start out empty.
   process.env.FAKE_ACP_SESSIONS_FILE = join(dataDir, 'acp-sessions.json');
   process.env.PI_CODING_AGENT_DIR = join(dataDir, 'pi-agent');
@@ -144,6 +147,51 @@ test('agents carry their own mark, and instances of one adapter share it', async
 test('config exposes allowed workdirs', async () => {
   const res = await api('/api/config');
   assert.deepEqual(await res.json(), { workdirs: [workdir], roots: [{ path: workdir, removable: false }], scratch: true });
+});
+
+test('general settings default to a new thread and persist across clients and store reopen', async () => {
+  const path = '/api/general-settings';
+  assert.equal((await api(path, {}, false)).status, 401);
+  assert.equal((await api(path, { method: 'PUT', body: JSON.stringify({ startupPage: 'recent-thread' }) }, false)).status, 401);
+  assert.deepEqual(await (await api(path)).json(), { startupPage: 'new-thread', autoArchiveDays: null });
+  for (const value of [null, {}, { startupPage: 'unknown', autoArchiveDays: null }, { startupPage: true, autoArchiveDays: null }, { startupPage: 'new-thread', autoArchiveDays: 2 }, { startupPage: 'new-thread', autoArchiveDays: '7' }]) {
+    assert.equal((await api(path, { method: 'PUT', body: JSON.stringify(value) })).status, 400);
+  }
+  const saved = await api(path, { method: 'PUT', body: JSON.stringify({ startupPage: 'recent-thread', autoArchiveDays: 7 }) });
+  assert.equal(saved.status, 200);
+  assert.deepEqual(await saved.json(), { startupPage: 'recent-thread', autoArchiveDays: 7 });
+  assert.deepEqual(await (await api(path)).json(), { startupPage: 'recent-thread', autoArchiveDays: 7 });
+  const reopened = new Store(dataDir);
+  try { assert.deepEqual(reopened.hubSetting('general.settings', null), { startupPage: 'recent-thread', autoArchiveDays: 7 }); }
+  finally { reopened.close(); }
+  assert.deepEqual(await (await api(path, { method: 'PUT', body: JSON.stringify({ startupPage: 'new-thread', autoArchiveDays: null }) })).json(), { startupPage: 'new-thread', autoArchiveDays: null });
+});
+
+test('draft model preferences are stored by the daemon and sanitized by agent capability', async () => {
+  const path = '/api/draft-model-preferences';
+  assert.equal((await api(path, {}, false)).status, 401);
+  assert.equal((await api(path, { method: 'PUT', body: JSON.stringify({ pi: { model: 'fake/think' } }) }, false)).status, 401);
+  assert.deepEqual(await (await api(path)).json(), {});
+  assert.equal((await api(path, { method: 'PUT', body: JSON.stringify(null) })).status, 400);
+
+  const saved = await api(path, { method: 'PUT', body: JSON.stringify({
+    pi: { model: 'fake/think', effort: 'high', speed: 'fast' },
+    ghost: { model: 'fake/think', effort: 'high', speed: 'fast' },
+    junk: 'not a preference',
+  }) });
+  assert.equal(saved.status, 200);
+  assert.deepEqual(await saved.json(), { pi: { model: 'fake/think', effort: 'high', speed: null } });
+  assert.deepEqual(await (await api(path)).json(), { pi: { model: 'fake/think', effort: 'high', speed: null } });
+  const reopened = new Store(dataDir);
+  try { assert.deepEqual(reopened.hubSetting('draft.model.preferences', null), { pi: { model: 'fake/think', effort: 'high', speed: null } }); }
+  finally { reopened.close(); }
+
+  store.saveHubSetting('draft.model.preferences', {
+    pi: { model: 'fake/missing', effort: 'high', speed: 'fast' },
+    ghost: { model: 'fake/think', effort: 'high', speed: 'fast' },
+  });
+  assert.deepEqual(await (await api(path)).json(), { pi: { model: null, effort: 'high', speed: null } });
+  assert.deepEqual(store.hubSetting('draft.model.preferences', null), { pi: { model: null, effort: 'high', speed: null } });
 });
 
 test('project directory browsing is authenticated, read-only, and independent of file access', async () => {
@@ -426,9 +474,9 @@ test('agents report permission modes and effort levels; pi has no permission mod
 
 test('model and command lists are served per agent; unknown agents are 404', async () => {
   const models = (await (await api('/api/agents/claude/models')).json()) as Array<{ id: string }>;
-  assert.deepEqual(models.map((m) => m.id), ['default', 'big', 'small']);
+  assert.deepEqual(models.map((m) => m.id), ['default', 'big', 'small', 'broken']);
   const commands = (await (await api('/api/agents/claude/commands')).json()) as Array<{ name: string }>;
-  assert.deepEqual(commands.map((c) => c.name), ['compact', 'review', 'goal', 'cost', 'stats']);
+  assert.deepEqual(commands.map((c) => c.name), ['compact', 'review', 'goal', 'cost', 'stats', 'context']);
   assert.equal((await api('/api/agents/nope/models')).status, 404);
 });
 
@@ -500,42 +548,46 @@ test('deleting a thread removes it and its events; a running thread cannot be de
 });
 
 test('effort is checked against the model: a model without effort rejects it, and switching clears it', async () => {
-  const created = await api('/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'claude', cwd: workdir }) });
+  const created = await api('/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'pi', cwd: workdir }) });
   const thread = (await created.json()) as { id: string };
   const patch = async (body: unknown) => {
     const res = await api(`/api/threads/${thread.id}`, { method: 'PATCH', body: JSON.stringify(body) });
     return { status: res.status, body: (await res.json()) as { model: string | null; effort: string | null } };
   };
 
-  // "max" exists on the default model but not on "big".
+  // Pi reports effort capabilities in its catalog, without selecting each model.
   assert.equal((await patch({ effort: 'max' })).body.effort, 'max');
-  const toBig = await patch({ model: 'big' });
-  assert.deepEqual([toBig.body.model, toBig.body.effort], ['big', null], 'unsupported effort is dropped with the model change');
+  const toLoose = await patch({ model: 'fake/loose' });
+  assert.deepEqual([toLoose.body.model, toLoose.body.effort], ['fake/loose', null], 'unsupported effort is dropped with the model change');
 
   assert.equal((await patch({ effort: 'max' })).status, 400);
   assert.equal((await patch({ effort: 'high' })).body.effort, 'high');
 
-  // "small" has no effort setting at all.
-  const toSmall = await patch({ model: 'small' });
-  assert.deepEqual([toSmall.body.model, toSmall.body.effort], ['small', null]);
+  const toPlain = await patch({ model: 'fake/plain' });
+  assert.deepEqual([toPlain.body.model, toPlain.body.effort], ['fake/plain', null]);
   assert.equal((await patch({ effort: 'low' })).status, 400);
 
   // Model and effort in one request are checked together.
-  assert.equal((await patch({ model: 'big', effort: 'max' })).status, 400);
+  assert.equal((await patch({ model: 'fake/loose', effort: 'max' })).status, 400);
   assert.equal((await patch({ model: null, effort: 'max' })).body.effort, 'max');
 });
 
-test('creating a thread with an effort the chosen model lacks is rejected; unusable models are not offered', async () => {
-  const bad = await api('/api/threads', {
-    method: 'POST',
-    body: JSON.stringify({ agent: 'claude', cwd: workdir, model: 'small', effort: 'high' }),
-  });
-  assert.equal(bad.status, 400);
-  const broken = await api('/api/threads', {
-    method: 'POST',
-    body: JSON.stringify({ agent: 'claude', cwd: workdir, model: 'broken' }),
-  });
-  assert.equal(broken.status, 400);
+test('Claude validates unknown model capabilities when used; known catalog restrictions reject creation', async () => {
+  for (const choice of [{ model: 'small', effort: 'high' }, { model: 'broken' }]) {
+    const created = await api('/api/threads', {
+      method: 'POST', body: JSON.stringify({ agent: 'claude', cwd: workdir, ...choice }),
+    });
+    assert.equal(created.status, 201, 'creating a thread does not probe model access or unknown capabilities');
+    const thread = (await created.json()) as { id: string };
+    assert.equal((await api(`/api/threads/${thread.id}/turns`, {
+      method: 'POST', body: JSON.stringify({ text: 'hi' }),
+    })).status, 202);
+    const failed = await waitFor(async () => {
+      const events = (await (await api(`/api/threads/${thread.id}/events`)).json()) as StoredEvent[];
+      return events.some(event => event.type === 'turn.error') ? events : null;
+    });
+    assert.equal(failed.some(event => event.type === 'message.delta'), false, 'the rejected configuration must not run a prompt');
+  }
   const piPlain = await api('/api/threads', {
     method: 'POST',
     body: JSON.stringify({ agent: 'pi', cwd: workdir, model: 'fake/plain', effort: 'high' }),
@@ -701,6 +753,29 @@ test('file changes from an edit arrive as diff content on the tool events', asyn
   assert.ok(withDiff, 'expected a tool event carrying diff content');
   assert.equal(withDiff!.data.content[0].type, 'diff');
   assert.match(withDiff!.data.content[0].path, /src\/app\.ts$/);
+});
+
+test('a command named only by a later update keeps its name and input once its result is stored', async () => {
+  const thread = await newThread({ agent: 'claude' });
+  await api(`/api/threads/${thread.id}/turns`, { method: 'POST', body: JSON.stringify({ text: 'run a streamed command' }) });
+  const events = (await finishedEvents(thread.id)).filter((e) => e.type.startsWith('tool.') && e.data.id === 's1');
+  assert.equal(events[0].type, 'tool.start');
+  assert.equal(events[0].data.title, 'Terminal', 'the call surfaced before its command was known');
+  // The update that named the command is superseded by the result, but what it said is kept.
+  const last = events.at(-1)!;
+  assert.equal(last.type, 'tool.end');
+  assert.equal(last.data.title, 'npm test -- --grep upload');
+  assert.equal(last.data.kind, 'execute');
+  assert.deepEqual(last.data.input, { command: 'npm test -- --grep upload', description: 'Run the upload tests' });
+  assert.equal(last.data.output, '2 passing');
+  // The page's first screen of the thread reads the same merged record.
+  const page = (await (await api(`/api/threads/${thread.id}/events?tail`)).json()) as { events?: StoredEvent[] } | StoredEvent[];
+  const replayed = (Array.isArray(page) ? page : page.events ?? []).filter((e) => e.type.startsWith('tool.') && e.data.id === 's1');
+  assert.equal(replayed.at(-1)!.data.title, 'npm test -- --grep upload');
+  // Opening the step reads its detail from the history projection, which has the command too.
+  const start = events[0] as StoredEvent & { seq: number; turnId: string };
+  const detail = await (await api(`/api/threads/${thread.id}/history/detail?turn=${encodeURIComponent(start.turnId)}&id=${start.seq}`)).json() as { input?: unknown };
+  assert.deepEqual(detail.input, { command: 'npm test -- --grep upload', description: 'Run the upload tests' });
 });
 
 const patchThread = async (id: string, body: unknown) => {
@@ -1024,6 +1099,55 @@ test('import: a session with no title is named after its first message', async (
   assert.equal(((await res.json()) as { title: string }).title, 'first question');
 });
 
+test('local sessions: listed as external rows, and an import turns one into a normal thread', async () => {
+  // A second server over the same manager, carrying the local-session scanner; the page's list
+  // comes from its cache, not from starting an agent per request.
+  const adapters = new Map<string, AgentAdapter>();
+  adapters.set('claude', new ClaudeAcpAdapter([process.execPath, join(here, 'fixtures', 'fake-acp.mjs')]));
+  const scanner = new LocalSessions({
+    adapters,
+    workdirs: () => [workdir],
+    importedSessions: () => store.agentSessionOwners(),
+    instances: () => [{ id: 'claude', hidden: false, store: 'claude:' }],
+  });
+  await scanner.scan();
+  const srv = createHttpServer({ manager, token: TOKEN, webDir: null, version: 'test', localSessions: scanner });
+  try {
+    await new Promise<void>((r) => srv.listen(0, '127.0.0.1', () => r()));
+    const root = `http://127.0.0.1:${(srv.address() as AddressInfo).port}`;
+    const call = async (path: string) => fetch(root + path, { headers: auth });
+
+    // hist-b is a thread already (imported above); hist-a became one too. hist-elsewhere is
+    // outside the workdirs. What is left of the fake agent's sessions: the undated hist-c… which
+    // the import just above also took. Everything the scan began with is accounted for.
+    const page = await (await call('/api/local-sessions?limit=100')).json() as { sessions: Array<{ sessionId: string; agent: string }>; nextCursor: string | null };
+    for (const row of page.sessions) {
+      assert.equal(store.findThreadByAgentSession(row.agent, row.sessionId), null, `${row.sessionId} is not a thread`);
+      assert.notEqual(row.sessionId, 'hist-elsewhere', 'outside the allowed directories');
+    }
+
+    // A fresh session shows up, imports through the same endpoint the page uses, and leaves the
+    // external list for the threads list.
+    writeFileSync(process.env.FAKE_ACP_SESSIONS_FILE!, JSON.stringify([
+      { sessionId: 'hist-external', cwd: workdir, title: 'From a terminal', updatedAt: '2026-03-05T09:00:00.000Z' },
+    ]));
+    await scanner.scan();
+    const listed = await (await call('/api/local-sessions')).json() as { sessions: Array<{ sessionId: string }> };
+    assert.deepEqual(listed.sessions.map((s) => s.sessionId), ['hist-external']);
+    const made = await fetch(`${root}/api/threads/import`, {
+      method: 'POST', headers: auth, body: JSON.stringify({ agent: 'claude', sessionId: 'hist-external' }),
+    });
+    assert.equal(made.status, 201);
+    const thread = await made.json() as { id: string };
+    const after = await (await call('/api/local-sessions')).json() as { sessions: Array<{ sessionId: string }> };
+    assert.deepEqual(after.sessions, [], 'no longer external');
+    const threads = await (await call('/api/threads')).json() as Array<{ id: string }>;
+    assert.ok(threads.some((t) => t.id === thread.id), 'listed as the thread it became');
+  } finally {
+    srv.close();
+  }
+});
+
 test('import: pi sessions are found from its files and imported with tool calls and pictures', async () => {
   const dir = join(process.env.PI_CODING_AGENT_DIR!, 'sessions', '--work--');
   mkdirSync(dir, { recursive: true });
@@ -1192,6 +1316,36 @@ test('fork at a turn: the copy ends where that turn ended, on the hub and on the
   assert.equal((await turnsOf(last.id)).length, 3);
 
   assert.equal((await forkAt(thread.id, 'no-such-turn')).status, 404);
+
+  // While a new turn is still running, a finished history boundary is safe to copy; the unfinished
+  // current turn is not.
+  const running = (await (await api(`/api/threads/${thread.id}/turns`, { method: 'POST', body: JSON.stringify({ text: 'slow while forking' }) })).json()) as { turnId: string };
+  await waitFor(async () => {
+    const t = (await (await api(`/api/threads/${thread.id}`)).json()) as { status: string };
+    return t.status === 'running' ? t : null;
+  });
+  const pi = (manager as unknown as { adapters: Map<string, AgentAdapter> }).adapters.get('pi')!;
+  const loadHistory = pi.loadHistory!;
+  let historyReads = 0;
+  pi.loadHistory = async (...args) => {
+    const history = await loadHistory.call(pi, ...args);
+    return ++historyReads === 1 ? [] : history.slice(0, 1);
+  };
+  try {
+    const historyFork = await forkAt(thread.id, first.turnId!);
+    assert.equal(historyFork.status, 201);
+    assert.equal(((await historyFork.json()) as Record<string, any>).agentSessionId, 'hist-forkat-fork-e2');
+    assert.equal(historyReads, 2, 'an active writer history snapshot that is one turn behind is retried');
+  } finally {
+    pi.loadHistory = loadHistory;
+  }
+  assert.equal((await api(`/api/threads/${thread.id}/fork`, { method: 'POST' })).status, 409);
+  assert.equal((await forkAt(thread.id, running.turnId)).status, 409);
+  await api(`/api/threads/${thread.id}/cancel`, { method: 'POST' });
+  await waitFor(async () => {
+    const t = (await (await api(`/api/threads/${thread.id}`)).json()) as { status: string };
+    return t.status === 'idle' ? t : null;
+  });
 
   // A turn the user stopped is no place to end a copy, wherever it stands.
   const stopping = await newThread({ agent: 'pi' });
@@ -1574,6 +1728,51 @@ test('waiting: a thread says when its agent is waiting for approval, in the list
   assert.equal(after.waitingReason, null);
 });
 
+const permissionOutcomes = () => {
+  const file = process.env.FAKE_ACP_PERMISSION_LOG!;
+  return existsSync(file) ? readFileSync(file, 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line) as { scenario: string; outcome: { outcome: string } }) : [];
+};
+
+test('approval lifecycle: a permission arriving after cancel cannot reopen a stopped turn', { timeout: 5000 }, async () => {
+  const thread = await newThread({ agent: 'claude', permissionMode: 'ask' });
+  await post(`/api/threads/${thread.id}/turns`, { text: 'approval lifecycle after-cancel' });
+  await waitFor(async () => (await events(thread.id)).find(e => e.type === 'message.delta' && e.data.text === 'waiting-for-cancel'));
+  assert.equal((await post(`/api/threads/${thread.id}/cancel`)).status, 200);
+  const view = await untilIdle(thread.id);
+  assert.deepEqual([view.status, view.waiting, view.waitingReason], ['idle', false, null]);
+  const list = await events(thread.id);
+  assert.equal(list.filter(e => e.type === 'approval.request').length, 0);
+  assert.ok(list.some(e => e.type === 'turn.done' && e.data.stopReason === 'cancelled'));
+  const outcome = await waitFor(async () => permissionOutcomes().find(p => p.scenario === 'after-cancel'));
+  assert.equal(outcome.outcome.outcome, 'cancelled', 'the adapter answers the late native permission, letting cancellation finish');
+});
+
+for (const scenario of ['error', 'end', 'exit'] as const) {
+  test(`approval lifecycle: ${scenario} clears pending decisions and rejects obsolete approval ids`, { timeout: 5000 }, async () => {
+    const thread = await newThread({ agent: 'claude', permissionMode: 'ask' });
+    await post(`/api/threads/${thread.id}/turns`, { text: `approval lifecycle ${scenario}` });
+    const view = await untilIdle(thread.id);
+    assert.deepEqual([view.status, view.waiting, view.waitingReason], [scenario === 'end' ? 'idle' : 'error', false, null]);
+    const list = await events(thread.id);
+    const request = list.find(e => e.type === 'approval.request')!;
+    assert.ok(request, 'the permission is received before the turn ends');
+    const resolved = list.filter(e => e.type === 'approval.resolved' && e.data.approvalId === request.data.approvalId);
+    assert.equal(resolved.length, 1);
+    assert.deepEqual(resolved[0].data.decision, { cancelled: true });
+    assert.equal((await post(`/api/approvals/${request.data.approvalId}`, { optionId: 'allow' })).status, 404);
+    assert.equal((await post(`/api/approvals/${request.data.approvalId}`, { cancel: true })).status, 404);
+    const threads = (await (await api('/api/threads')).json()) as View[];
+    assert.deepEqual([threads.find(t => t.id === thread.id)?.waiting, threads.find(t => t.id === thread.id)?.waitingReason], [false, null]);
+    const history = await (await api(`/api/threads/${thread.id}/history`)).text();
+    assert.ok(history.includes(request.data.approvalId), 'the resolved decision remains in the conversation');
+    assert.equal(history.includes('APPROVAL_LIFECYCLE_SECRET'), false, 'obsolete decision payloads are no longer loaded into history');
+    if (scenario !== 'exit') {
+      const outcome = await waitFor(async () => permissionOutcomes().find(p => p.scenario === scenario));
+      assert.equal(outcome.outcome.outcome, 'cancelled', 'cleanup sends the native cancellation answer');
+    }
+  });
+}
+
 test('the thread-list stream reports approvals, so a waiting thread shows up without polling', async () => {
   const thread = await newThread({ agent: 'claude', permissionMode: 'ask' });
   const ctrl = new AbortController();
@@ -1789,6 +1988,50 @@ test('videos upload as original files, stay scoped to a thread, and survive queu
   assert.deepEqual(Buffer.from(await (await api(`/api/threads/${fork.id}/attachments/${video.id}`)).arrayBuffer()), bytes);
 });
 
+test('any file can be attached: kept under its own name, served only as bytes, and given to the agent by path', async () => {
+  const thread = await newThread({ agent: 'pi', model: 'fake/plain' });
+  const other = await newThread({ agent: 'pi' });
+  const bytes = Buffer.from('<script>alert(1)</script>\n会议记录');
+  const upload = (id: string, name: string, body: Buffer = bytes, authenticated = true) => api(`/api/threads/${id}/files`, { method: 'POST', headers: { 'Content-Type': 'text/html', 'X-File-Name': encodeURIComponent(name) }, body }, authenticated);
+  assert.equal((await upload(thread.id, 'a.txt', bytes, false)).status, 401);
+  assert.equal((await upload(thread.id, 'a.txt', Buffer.alloc(0))).status, 400);
+  const uploaded = await upload(thread.id, '../../transcript.txt');
+  assert.equal(uploaded.status, 201);
+  const file = await uploaded.json();
+  assert.deepEqual(file, { id: file.id, mimeType: 'application/octet-stream', size: bytes.length, name: 'transcript.txt' });
+  const stored = join(dataDir, 'attachments', thread.id, file.id, 'transcript.txt');
+  assert.deepEqual(readFileSync(stored), bytes, 'the name cannot climb out of its folder');
+  const downloaded = await api(`/api/threads/${thread.id}/attachments/${file.id}`);
+  assert.equal(downloaded.headers.get('content-type'), 'application/octet-stream', 'the claimed type is never served back');
+  assert.deepEqual(Buffer.from(await downloaded.arrayBuffer()), bytes);
+  assert.equal((await api(`/api/threads/${other.id}/attachments/${file.id}`)).status, 404);
+  assert.equal((await post(`/api/threads/${other.id}/turns`, { videos: [file.id] })).status, 404);
+
+  assert.equal((await post(`/api/threads/${thread.id}/turns`, { videos: [file.id] })).status, 202);
+  await untilIdle(thread.id);
+  const log = await events(thread.id);
+  const start = log.find(e => e.type === 'turn.started')!;
+  assert.deepEqual(start.data.videos, [file]);
+  assert.match(start.data.text, /The user attached 1 file\(s\)/);
+  assert.doesNotMatch(start.data.text, /video/);
+  const answer = log.filter(e => e.type === 'message.delta').map(e => e.data.text).join('');
+  assert.ok(answer.includes(stored), 'the agent gets the path with the original name');
+  assert.equal((await api(`/api/threads/${thread.id}`).then(r => r.json())).title, 'transcript.txt');
+
+  await post(`/api/threads/${thread.id}/turns`, { text: 'slow' });
+  const queued = await (await post(`/api/threads/${thread.id}/turns`, { text: '总结', videos: [file.id], queue: true })).json();
+  const waiting = (await (await api(`/api/threads/${thread.id}`)).json()).queued[0];
+  assert.equal(waiting.videos, 0);
+  assert.equal(waiting.files, 1);
+  const taken = await (await api(`/api/threads/${thread.id}/queue/${queued.id}`, { method: 'DELETE' })).json();
+  assert.deepEqual(taken.videos, [file]);
+  await manager.cancelTurn(thread.id);
+  await untilIdle(thread.id);
+  const fork = await (await post(`/api/threads/${thread.id}/fork`, {})).json();
+  await api(`/api/threads/${thread.id}`, { method: 'DELETE' });
+  assert.deepEqual(Buffer.from(await (await api(`/api/threads/${fork.id}/attachments/${file.id}`)).arrayBuffer()), bytes);
+});
+
 test('files: an image in the thread directory is served; anything else, or anywhere else, is not', async () => {
   const thread = await newThread({ agent: 'claude' });
   const png = Buffer.from(PNG, 'base64');
@@ -1982,12 +2225,78 @@ test('browse: folders and text files in the thread directory can be read, and no
     assert.equal((await text('src')).status, 404, 'a folder is not a file');
     assert.equal((await text('')).status, 400);
     assert.equal((await tree('src/a2.ts')).status, 404, 'a file is not a folder');
-    assert.equal((await tree('..')).status, 404);
+    const up = (await tree('..')).json() as Promise<{ root: string }>;
+    assert.equal((await up).root, realpathSync(workdir), 'the project root above the thread is itself a browse root');
+    assert.equal((await tree('../..')).status, 404, 'above the project root is outside');
     assert.equal((await tree(dataDir)).status, 404);
     assert.equal((await api(`/api/threads/${thread.id}/tree`, {}, false)).status, 401);
     assert.equal((await api(`/api/threads/${thread.id}/text?path=src/a2.ts`, { method: 'POST' })).status, 404, 'read only');
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('browse: the file browser stands on the thread directory, project directories and the home directory', async () => {
+  const second = mkdtempSync(join(tmpdir(), 'calli-second-root-'));
+  const homeCorner = mkdtempSync(join(homedir(), '.calli-home-browse-'));
+  const corner = mkdirSync(join(workdir, 'browse-roots'), { recursive: true });
+  writeFileSync(join(second, 'util.ts'), 'export const u = 1;\n');
+  writeFileSync(join(corner, 'local.txt'), 'thread file\n');
+  writeFileSync(join(homeCorner, 'note.md'), '# home note\n');
+  try {
+    assert.equal((await api('/api/workdirs', { method: 'POST', body: JSON.stringify({ path: second }) })).status, 200);
+    const thread = await newThread({ agent: 'claude', cwd: corner });
+    const tree = (path?: string) => api(`/api/threads/${thread.id}/tree${path === undefined ? '' : `?path=${encodeURIComponent(path)}`}`);
+    const roots = (await (await api(`/api/threads/${thread.id}/roots`)).json()) as { roots: Array<{ path: string; kind: string }> };
+    assert.deepEqual(roots.roots, [
+      { path: realpathSync(corner), kind: 'thread' },
+      { path: realpathSync(workdir), kind: 'project' },
+      { path: realpathSync(second), kind: 'project' },
+      { path: realpathSync(homedir()), kind: 'home' },
+    ], 'most specific first, the thread directory deduped against the project root');
+
+    const project = (await (await tree(second)).json()) as { entries: Array<{ name: string }> };
+    assert.ok(project.entries.some((e) => e.name === 'util.ts'), 'another project root is browsable');
+    const found = (await (await api(`/api/threads/${thread.id}/find?q=util&path=${encodeURIComponent(second)}`)).json()) as { paths: string[] };
+    assert.deepEqual(found.paths, ['util.ts'], 'the filter searches the root it is given');
+    const local = (await (await api(`/api/threads/${thread.id}/find?q=local`)).json()) as { paths: string[] };
+    assert.deepEqual(local.paths, ['local.txt'], 'without a path it searches the thread directory');
+
+    const homeTree = (await (await tree(homeCorner)).json()) as typeof project;
+    assert.ok(homeTree.entries.some((e) => e.name === 'note.md'), 'the home directory is browsable');
+    const note = (await (await api(`/api/threads/${thread.id}/text?path=${encodeURIComponent(join(homeCorner, 'note.md'))}`)).json()) as { text: string };
+    assert.equal(note.text, '# home note\n');
+
+    assert.equal((await tree(tmpdir())).status, 404, 'the temp root is not a browse root');
+    assert.equal((await tree('/etc')).status, 404, 'nor is the system');
+
+    // A removed project root stops being browsable at once.
+    assert.equal((await api(`/api/workdirs?path=${encodeURIComponent(second)}`, { method: 'DELETE' })).status, 200);
+    assert.equal((await tree(second)).status, 404);
+  } finally {
+    rmSync(second, { recursive: true, force: true });
+    rmSync(homeCorner, { recursive: true, force: true });
+    rmSync(corner, { recursive: true, force: true });
+  }
+});
+
+test('browse: ~ paths open, as answers and the file browser spell them', async () => {
+  const corner = mkdtempSync(join(homedir(), '.calli-tilde-'));
+  const file = join(corner, 'answer.md');
+  writeFileSync(file, '# written home\n');
+  try {
+    const thread = await newThread({ agent: 'claude' });
+    const spelled = `~/${relative(homedir(), file)}`;
+    const text = (path: string) => api(`/api/threads/${thread.id}/text?path=${encodeURIComponent(path)}`);
+    const read = await text(spelled);
+    assert.equal(read.status, 200, 'a ~ path reaches the file under the home root');
+    assert.equal(((await read.json()) as { text: string }).text, '# written home\n');
+    const tree = await api(`/api/threads/${thread.id}/tree?path=${encodeURIComponent(spelled.replace(/\/[^/]+$/, ''))}`);
+    assert.equal(tree.status, 200, 'a ~ path works for the tree as well');
+    const home = await api(`/api/threads/${thread.id}/tree?path=~`);
+    assert.equal(home.status, 200, 'a bare ~ is the home directory');
+  } finally {
+    rmSync(corner, { recursive: true, force: true });
   }
 });
 
@@ -2153,6 +2462,40 @@ test('sync: turns the terminal added appear, are marked, and warn until the hub 
     assert.equal((await viewOf(thread.id)).terminalActivity, false);
   } finally {
     delete process.env.FAKE_PI_MESSAGES_FILE;
+  }
+});
+
+test('sync: a hub turn sent while the history is being read is not copied back as a terminal turn', async () => {
+  const messagesFile = join(dataDir, 'pi-terminal-messages-race.json');
+  process.env.FAKE_PI_MESSAGES_FILE = messagesFile;
+  process.env.FAKE_PI_MESSAGES_DELAY_MS = '600';
+  try {
+    const thread = await newThread({ agent: 'pi', cwd: workdir });
+    await post(`/api/threads/${thread.id}/turns`, { text: 'hello' });
+    await untilIdle(thread.id);
+
+    const syncing = api(`/api/threads/${thread.id}/sync`, { method: 'POST' });
+    await new Promise((r) => setTimeout(r, 200));
+    // The person sends while the sync is still reading; the agent records the message at once.
+    await post(`/api/threads/${thread.id}/turns`, { text: 'slow, sent mid-sync' });
+    writeFileSync(
+      messagesFile,
+      JSON.stringify({
+        'pi-session-1': [
+          { role: 'user', content: 'hello' },
+          { role: 'assistant', content: [{ type: 'text', text: 'hi there hello' }] },
+          { role: 'user', content: 'slow, sent mid-sync' },
+        ],
+      }),
+    );
+    const { added } = (await (await syncing).json()) as { added: number };
+    assert.equal(added, 0);
+    assert.equal((await events(thread.id)).filter((e) => e.data.fromTerminal === true).length, 0);
+    await api(`/api/threads/${thread.id}/cancel`, { method: 'POST' });
+    await untilIdle(thread.id);
+  } finally {
+    delete process.env.FAKE_PI_MESSAGES_FILE;
+    delete process.env.FAKE_PI_MESSAGES_DELAY_MS;
   }
 });
 
@@ -2658,11 +3001,10 @@ test('handover: the agent writes the summary; the log stands in when it cannot',
   assert.match(written.summary, /hi there/);
   assert.match(written.summary, /Antigravity/, 'the prompt names the successor by its label');
 
-  // Without the turn: the hub synthesizes from the log, quoting the user's asks.
+  // Without the turn: the hub synthesizes from the log, the brief carrying the last real ask.
   const synthesized = (await (await api(`/api/threads/${thread.id}/handover?turn=&target=agy`)).json()) as { summary: string; source: string };
   assert.equal(synthesized.source, 'log');
-  assert.match(synthesized.summary, /1\. hello/);
-  assert.match(synthesized.summary, /Antigravity/);
+  assert.match(synthesized.summary, /最近的要求：hello/);
   // The hub-injected handover turn is not one of the asks.
   assert.doesNotMatch(synthesized.summary, /请写一份交接摘要/);
 });
@@ -2810,4 +3152,225 @@ test('edit refuses a stale page, a running turn, and an agent with no way to cop
   });
   assert.equal(refused.status, 400);
   assert.match(((await refused.json()) as { error: string }).error, /cannot edit/);
+});
+
+test('outputs gather what a thread changed and the pictures and files its answers name', async () => {
+  const created = await api('/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'claude', cwd: workdir }) });
+  const thread = (await created.json()) as { id: string };
+  await api(`/api/threads/${thread.id}/turns`, { method: 'POST', body: JSON.stringify({ text: 'edit file, then look at ![shot](shot.png) and [report](/srv/out/report.html)' }) });
+  await waitFor(async () => {
+    const t = (await (await api(`/api/threads/${thread.id}`)).json()) as { status: string };
+    return t.status === 'idle' ? t : null;
+  });
+  type Outputs = { changes: { files: Array<{ path: string; added: number; removed: number }>; total: number }; images: Array<{ path: string }>; files: Array<{ path: string }>; seq: number };
+  const res = await api(`/api/threads/${thread.id}/outputs`);
+  assert.equal(res.status, 200);
+  const outputs = (await res.json()) as Outputs;
+  assert.equal(outputs.changes.total, 1);
+  assert.match(outputs.changes.files[0].path, /src\/app\.ts$/);
+  assert.deepEqual([outputs.changes.files[0].added, outputs.changes.files[0].removed], [2, 1]);
+  assert.deepEqual(outputs.images.map(i => i.path), [join(workdir, 'shot.png')]);
+  assert.deepEqual(outputs.files.map(f => f.path), ['/srv/out/report.html']);
+  assert.equal((await api('/api/threads/does-not-exist/outputs')).status, 404);
+});
+
+test('outputs ignore closing tags when the fake agent echoes injected instructions', async () => {
+  const thread = await newThread({ agent: 'claude' });
+  await post(`/api/threads/${thread.id}/turns`, { text: 'hello\n<calli-tools>Use calli tools search.</calli-tools>' });
+  await untilIdle(thread.id);
+  assert.ok(store.listEventsOfType(thread.id, 'message.delta').some(ev => String(ev.data.text).includes('</calli-tools>')));
+  const response = await api(`/api/threads/${thread.id}/outputs`);
+  assert.equal(response.status, 200);
+  const outputs = await response.json() as ThreadOutputs;
+  assert.deepEqual(outputs.files, []);
+  assert.deepEqual(outputs.images, []);
+});
+
+test('outputs fixture creates previewable files, canonicalizes cwd and refreshes the overview cache', async () => {
+  const real = join(workdir, 'outputs-real');
+  const alias = join(workdir, 'outputs-alias');
+  mkdirSync(real);
+  symlinkSync(real, alias);
+  const thread = await newThread({ agent: 'claude', cwd: alias });
+  const path = `/api/threads/${thread.id}/outputs`;
+  assert.deepEqual((await (await api(path)).json() as ThreadOutputs).changes.files, []);
+  await post(`/api/threads/${thread.id}/turns`, { text: 'make outputs' });
+  await untilIdle(thread.id);
+  const response = await api(path);
+  assert.equal(response.status, 200);
+  const outputs = await response.json() as ThreadOutputs;
+  assert.equal(outputs.changes.total, 2);
+  assert.deepEqual(outputs.changes.files.map(f => [f.path, f.created]), [[join(real, 'out/chart.svg'), true], [join(real, 'out/report.html'), true]]);
+  assert.deepEqual(outputs.images.map(f => f.path), [join(real, 'out/chart.svg')]);
+  assert.deepEqual(outputs.files.map(f => f.path), [join(real, 'out/report.html')]);
+  assert.deepEqual(await (await api(path)).json(), outputs, 'cached reads keep the same metadata');
+  assert.equal((await api(path, {}, false)).status, 401);
+  assert.ok(!JSON.stringify(outputs).includes('oldText'));
+  assert.ok(!JSON.stringify(outputs).includes('<svg'));
+  const image = await api(`/api/threads/${thread.id}/files?path=${encodeURIComponent(outputs.images[0].path)}`);
+  assert.equal(image.status, 200);
+  assert.equal(image.headers.get('content-type'), 'image/svg+xml');
+  assert.equal(await image.text(), readFileSync(join(real, 'out/chart.svg'), 'utf8'));
+  const report = await api(`/api/threads/${thread.id}/text?path=${encodeURIComponent(outputs.files[0].path)}`);
+  assert.equal(report.status, 200);
+  assert.equal((await report.json()).text, readFileSync(join(real, 'out/report.html'), 'utf8'));
+  const fork = await post(`/api/threads/${thread.id}/fork`, {});
+  assert.equal(fork.status, 201);
+  const forked = await fork.json() as { id: string };
+  const copied = await (await api(`/api/threads/${forked.id}/outputs`)).json() as ThreadOutputs;
+  assert.deepEqual(copied.changes, outputs.changes);
+  assert.deepEqual(copied.images, outputs.images);
+  assert.deepEqual(copied.files, outputs.files);
+});
+
+test('outputs include imported edits and every turn beyond the history page', async () => {
+  const sessions = existsSync(process.env.FAKE_ACP_SESSIONS_FILE!) ? JSON.parse(readFileSync(process.env.FAKE_ACP_SESSIONS_FILE!, 'utf8')) as unknown[] : [];
+  writeFileSync(process.env.FAKE_ACP_SESSIONS_FILE!, JSON.stringify([...sessions, { sessionId: 'hist-outputs', cwd: workdir, title: 'outputs' }]));
+  const imported = await post('/api/threads/import', { agent: 'claude', sessionId: 'hist-outputs' });
+  assert.equal(imported.status, 201);
+  const thread = await imported.json() as { id: string };
+  const read = async () => await (await api(`/api/threads/${thread.id}/outputs`)).json() as ThreadOutputs;
+  assert.deepEqual((await read()).changes.files.map(f => [f.path, f.added, f.removed, f.created]), [[join(workdir, 'notes.md'), 1, 1, false]]);
+  for (let i = 0; i < 12; i++) {
+    const turn = `output-${i}`;
+    store.appendEvent(thread.id, turn, 'turn.started', { text: 'generate' });
+    store.appendEvent(thread.id, turn, 'tool.update', { id: 'edit', content: [{ type: 'diff', path: `out/${i}.md`, oldText: null, newText: 'line\n' }] });
+    store.appendEvent(thread.id, turn, 'message.delta', { text: `[file](out/${i}.md)` });
+    store.appendEvent(thread.id, turn, 'turn.done', {});
+  }
+  const outputs = await read();
+  assert.equal(outputs.changes.total, 13);
+  assert.equal(outputs.files.length, 12);
+  assert.equal(outputs.files.at(-1)?.path, join(workdir, 'out/0.md'));
+});
+
+test('outputs cap lists after aggregation without dropping older generated images', async () => {
+  const thread = await newThread({ agent: 'claude' });
+  store.appendEvent(thread.id, 't', 'turn.started', { text: 'generate' });
+  for (let i = 0; i < 205; i++) {
+    store.appendEvent(thread.id, 't', 'tool.update', { id: `e${i}`, content: [{ type: 'diff', path: i === 0 ? 'old.png' : `out/${i}.txt`, oldText: null, newText: 'line\n' }] });
+  }
+  store.appendEvent(thread.id, 't', 'turn.done', {});
+  const outputs = await (await api(`/api/threads/${thread.id}/outputs`)).json() as ThreadOutputs;
+  assert.equal(outputs.changes.total, 205);
+  assert.equal(outputs.changes.added, 205);
+  assert.equal(outputs.changes.files.length, 200);
+  assert.equal(outputs.files.length, 200);
+  assert.deepEqual(outputs.images.map(f => f.path), [join(workdir, 'old.png')]);
+});
+
+test('outputs refresh only disk state after 30 seconds and rebuild when the log changes', async t => {
+  const now = Date.now();
+  t.mock.timers.enable({ apis: ['Date'], now });
+  const thread = await newThread({ agent: 'claude' });
+  const present = join(workdir, 'outputs-present.png');
+  const absent = join(workdir, 'outputs-restored.html');
+  const directory = join(workdir, 'outputs-directory');
+  writeFileSync(present, 'image');
+  mkdirSync(directory);
+  store.appendEvent(thread.id, 't', 'turn.started', { text: 'report' });
+  store.appendEvent(thread.id, 't', 'tool.update', { id: 'e', content: [present, absent, directory].map(path => ({ type: 'diff', path, oldText: null, newText: 'line' })) });
+  store.appendEvent(thread.id, 't', 'message.delta', { text: [present, absent, directory].map(path => `[file](${path})`).join(' ') });
+  store.appendEvent(thread.id, 't', 'turn.done', {});
+  const sources = t.mock.method(store, 'outputSources');
+  const read = async () => {
+    const res = await api(`/api/threads/${thread.id}/outputs`);
+    assert.equal(res.status, 200);
+    return await res.json() as ThreadOutputs;
+  };
+  const [first, parallel] = await Promise.all([read(), read()]);
+  assert.deepEqual(parallel, first);
+  assert.equal(sources.mock.callCount(), 1, 'concurrent readers share one build');
+  assert.equal(Object.hasOwn(first.images[0], 'missing'), false);
+  assert.deepEqual(first.files.map(f => f.missing), [true, true]);
+  assert.equal(first.changes.files.find(f => f.path === absent)?.missing, true);
+  assert.equal(first.changes.files.find(f => f.path === directory)?.missing, true);
+  writeFileSync(absent, 'restored');
+  rmSync(present);
+  t.mock.timers.setTime(now + 29_999);
+  assert.deepEqual(await read(), first, 'fresh metadata avoids checking the disk again');
+  t.mock.timers.setTime(now + 30_001);
+  const refreshed = await read();
+  assert.equal(refreshed.seq, first.seq);
+  assert.equal(refreshed.images[0].missing, true);
+  assert.equal(Object.hasOwn(refreshed.files.find(f => f.path === absent)!, 'missing'), false);
+  assert.equal(refreshed.changes.files.find(f => f.path === present)?.missing, true);
+  assert.equal(Object.hasOwn(refreshed.changes.files.find(f => f.path === absent)!, 'missing'), false);
+  assert.equal(sources.mock.callCount(), 1, 'expiry reuses summaries when the log is unchanged');
+  store.appendEvent(thread.id, 'next', 'turn.started', { text: 'follow-up' });
+  store.appendEvent(thread.id, 'next', 'message.delta', { text: '[new](new.md)' });
+  store.appendEvent(thread.id, 'next', 'turn.done', {});
+  const latest = await read();
+  assert.ok(latest.seq > refreshed.seq);
+  assert.equal(latest.files[0].path, join(workdir, 'new.md'));
+  assert.equal(latest.files[0].missing, true);
+  assert.equal(sources.mock.callCount(), 2);
+});
+
+test('outputs expand home paths and their exact referenced images can be previewed', async () => {
+  const dir = mkdtempSync(join(homedir(), 'outputs-home-'));
+  const path = join(dir, 'chart.png');
+  const sibling = join(dir, 'sibling.png');
+  writeFileSync(path, Buffer.from(PNG, 'base64'));
+  writeFileSync(sibling, Buffer.from(PNG, 'base64'));
+  try {
+    const thread = await newThread({ agent: 'claude' });
+    store.appendEvent(thread.id, 't', 'turn.started', { text: 'generate' });
+    store.appendEvent(thread.id, 't', 'message.delta', { text: `![chart](~/${path.slice(homedir().length + 1)})` });
+    store.appendEvent(thread.id, 't', 'turn.done', {});
+    const outputs = await (await api(`/api/threads/${thread.id}/outputs`)).json() as ThreadOutputs;
+    assert.equal(outputs.images.length, 1);
+    assert.equal(outputs.images[0].path, path);
+    assert.equal(Object.hasOwn(outputs.images[0], 'missing'), false);
+    assert.equal((await api(`/api/threads/${thread.id}/files?path=${encodeURIComponent(path)}`)).status, 200);
+    // The home directory is a browse root, so a neighbour there is readable in its own right.
+    assert.equal((await api(`/api/threads/${thread.id}/files?path=${encodeURIComponent(sibling)}`)).status, 200);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('outputs diff references read each call through history detail using the canonical file path', async () => {
+  const dir = join(workdir, 'outputs-diff-real');
+  const alias = join(workdir, 'outputs-diff-alias');
+  mkdirSync(dir);
+  symlinkSync(dir, alias);
+  const thread = await newThread({ agent: 'claude', cwd: alias });
+  const expected = [
+    { turn: 'first', id: 'a', path: 'report.html', oldText: null, newText: 'first body' },
+    { turn: 'first', id: 'b', path: join(alias, 'report.html'), oldText: 'first body', newText: 'second body' },
+    { turn: 'second', id: 'a', path: join(dir, 'report.html'), oldText: 'second body', newText: 'final body' },
+  ];
+  const refs: ThreadOutputs['changes']['files'][number]['details'] = [];
+  let previousTurn = '';
+  for (const edit of expected) {
+    if (edit.turn !== previousTurn) {
+      if (previousTurn) store.appendEvent(thread.id, previousTurn, 'turn.done', {});
+      store.appendEvent(thread.id, edit.turn, 'turn.started', { text: 'edit' });
+      previousTurn = edit.turn;
+    }
+    const start = store.appendEvent(thread.id, edit.turn, 'tool.start', { id: edit.id, kind: 'edit' });
+    store.appendEvent(thread.id, edit.turn, 'tool.update', { id: edit.id, content: [{ type: 'diff', path: edit.path, oldText: edit.oldText, newText: 'partial' }] });
+    const update = store.appendEvent(thread.id, edit.turn, 'tool.update', { id: edit.id, content: [
+      { type: 'diff', path: edit.path, oldText: edit.oldText, newText: edit.newText },
+      { type: 'diff', path: 'other.txt', oldText: 'unrelated old', newText: 'unrelated new' },
+    ], output: 'unrelated tool output' });
+    store.appendEvent(thread.id, edit.turn, 'tool.end', { id: edit.id, status: 'completed' });
+    refs.push({ turnId: edit.turn, id: start.seq, version: update.seq });
+  }
+  store.appendEvent(thread.id, previousTurn, 'turn.done', {});
+  const res = await api(`/api/threads/${thread.id}/outputs`);
+  assert.equal(res.status, 200);
+  const outputs = await res.json() as ThreadOutputs;
+  const file = outputs.changes.files.find(f => f.path === join(dir, 'report.html'))!;
+  assert.equal(file.missing, true, 'recorded diffs survive missing disk files');
+  assert.deepEqual(file.details, refs);
+  assert.equal(Object.hasOwn(file, 'detailsTotal'), false);
+  assert.ok(!JSON.stringify(outputs).includes('oldText'));
+  for (const [i, ref] of file.details.entries()) {
+    const detail = await api(`/api/threads/${thread.id}/history/detail?turn=${ref.turnId}&id=${ref.id}&path=${encodeURIComponent(file.path)}`);
+    assert.equal(detail.status, 200);
+    const body = await detail.json() as { content: unknown[]; output?: string };
+    const edit = expected[i];
+    assert.deepEqual(body.content, [{ type: 'diff', path: edit.path, oldText: edit.oldText, newText: edit.newText }]);
+    assert.equal(body.output, undefined);
+  }
 });

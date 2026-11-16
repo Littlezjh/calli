@@ -1,15 +1,22 @@
 import { randomUUID } from 'node:crypto';
-import { lstatSync, mkdirSync, realpathSync, statSync } from 'node:fs';
+import { lstatSync, mkdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { homeDirectory } from './config.js';
 import { fileURLToPath } from 'node:url';
 import type { AgentAdapter } from './adapters/types.js';
+import type { LarkSignal } from './channels/lark.js';
 import { isWithinWorkdirs } from './workdirs.js';
 import { HttpError } from './errors.js';
+import { PROFILE_TEMPLATE, PersonalFiles } from './personal-files.js';
+import { PersonalExplore } from './personal-explore.js';
 import { PersonalReview } from './personal-review.js';
-import type { Store, TodoPatch, TodoRecord, TodoProposal } from './store.js';
+import { PersonalRouter } from './personal-router.js';
+import { ProactiveService } from './proactive.js';
+import type { SignalRecord, Store, TodoImportance, TodoLane, TodoNote, TodoPatch, TodoRecord, TodoSource, TodoSubscription, TodoThread, TodoProposal } from './store.js';
+import { TODO_IMPORTANCES, TODO_LANES, TODO_SOURCE_TYPES, todoThread, urgencyOf } from './store.js';
+import type { InjectionGate } from './injections.js';
 import type { ThreadManager } from './threads.js';
 import { SummaryService } from './summary.js';
 
@@ -32,6 +39,11 @@ export interface PersonalSettings { directory: string | null; agent: string | nu
 export function personalText(value: unknown, limit: number, empty = false): string {
   if (typeof value !== 'string' || (!empty && !value.trim()) || [...value].length > limit) throw new HttpError(400, `text must contain ${empty ? '0' : '1'}–${limit} characters`);
   if (/-----BEGIN (?:[A-Z ]*PRIVATE KEY)-----|\b(?:sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|AKIA[A-Z0-9]{16})/.test(value)) throw new HttpError(400, 'text contains a credential; remove secrets before saving');
+  return value;
+}
+/** Archive keys are opaque JSON data, never document IDs or URL paths. */
+export function signalArchiveKey(value: unknown): string {
+  if (typeof value !== 'string' || !value || value.length > 240 || /[\u0000-\u001f\u007f]/.test(value)) throw new HttpError(400, 'invalid signal key');
   return value;
 }
 const time = (value: unknown): string | null => {
@@ -65,13 +77,21 @@ ${workflow}
 
 export class PersonalService {
   private readonly credentials = new Map<string, string>();
-  private readonly introduced = new Set<string>();
+  /** The plan page's file mirror under the personal directory; the database stays the source of truth. */
+  private readonly files = new PersonalFiles(() => this.directory());
   socket = '';
   readonly summary: SummaryService;
   readonly review: PersonalReview;
-  constructor(readonly store: Store, private readonly manager: ThreadManager, private readonly adapters: Map<string, AgentAdapter>) {
+  readonly router: PersonalRouter;
+  readonly proactive: ProactiveService;
+  /** The one-shot onboarding explore; mutable so tests can substitute a fixture-backed instance. */
+  explore: PersonalExplore;
+  constructor(readonly store: Store, readonly manager: ThreadManager, private readonly adapters: Map<string, AgentAdapter>) {
     this.summary = new SummaryService(store, manager, this, adapters);
     this.review = new PersonalReview(store);
+    this.router = new PersonalRouter(store, manager, this, adapters);
+    this.proactive = new ProactiveService(store, manager, this, adapters);
+    this.explore = new PersonalExplore(store, manager, this);
   }
   private storedSettings(): PersonalSettings { return this.store.hubSetting('personal', { directory: null, agent: null, model: null }); }
   directory(): string {
@@ -97,9 +117,11 @@ export class PersonalService {
     const display = (path: string | null) => path === home ? '~' : path?.startsWith(home + sep) ? '~' + path.slice(home.length) : path;
     const defaultDirectory = defaultPersonalDirectory();
     return { ...settings, directoryDisplay: display(settings.directory), directoryIsDefault: settings.directory === defaultDirectory,
-      defaultDirectory, defaultDirectoryDisplay: display(defaultDirectory) };
+      defaultDirectory, defaultDirectoryDisplay: display(defaultDirectory), routerThreadId: this.router.status().threadId };
   }
   putSettings(input: Record<string, unknown>): PersonalSettings {
+    // Compare the stored value, not the resolved directory: a broken path must stay resettable.
+    const previousDirectory = input.directory !== undefined ? this.storedSettings().directory : undefined;
     const next = { ...this.storedSettings() };
     if (input.directory !== undefined) {
       if (input.directory === null || input.directory === '') next.directory = null;
@@ -121,6 +143,7 @@ export class PersonalService {
       next.model = input.model ? String(input.model) : null;
     }
     this.store.saveHubSetting('personal', next);
+    if (previousDirectory !== undefined && previousDirectory !== next.directory) this.manager.lark?.invalidateMaterials?.();
     return next;
   }
   async delegate(id: string, input: { cwd?: unknown } = {}) {
@@ -140,9 +163,7 @@ export class PersonalService {
       const note = this.store.todoNote(id);
       const text = delegationPrompt(todo, note.text, this.within(thread.cwd, settings.directory));
       await this.manager.startTurn(thread.id, { text }, undefined, false, undefined, () => {
-        this.store.checkTodoRev(id, todo.rev);
-        this.store.linkTodoThread(id, thread.id);
-        this.store.updateTodo(id, {}, todo.rev);
+        this.linkWorkThread(id, thread.id, todo.rev);
       });
       this.manager.broadcastTodo();
       return this.manager.threadView(thread.id);
@@ -154,6 +175,13 @@ export class PersonalService {
   private within(path: string, root: string) {
     try { const rel = relative(realpathSync(root), realpathSync(path)); return rel === '' || (!rel.startsWith(`..${sep}`) && rel !== '..' && !isAbsolute(rel)); }
     catch { return false; }
+  }
+  /** Called in startTurn's transaction, so an unsent turn never becomes a matter's worker. */
+  linkWorkThread(id: string, threadId: string, rev: number): void {
+    this.store.checkTodoRev(id, rev);
+    this.store.linkTodoThread(id, threadId);
+    this.store.updateTodo(id, {}, rev);
+    this.mirror(id);
   }
   allowed(threadId: string): boolean {
     const thread = this.store.getThread(threadId), root = this.settings().directory;
@@ -170,16 +198,116 @@ export class PersonalService {
     for (const [id, secret] of this.credentials) if (key === secret) { this.require(id); return id; }
     throw new HttpError(401, 'invalid personal credentials');
   }
-  instructions(threadId: string, text: string): string {
-    if (!this.allowed(threadId) || this.introduced.has(threadId)) return text;
-    return `${text}\n\n<calli-todo>由 Calli 附加：事项和跟进用 calli todo，用法 calli todo --help。改了事项的这一轮结束前，请写接续说明。</calli-todo>`;
+  instructions(threadId: string, text: string, gate?: InjectionGate): string {
+    if (!this.allowed(threadId)) return text;
+    const block = '<calli-todo>由 Calli 附加：事项和跟进用 calli todo，用法 calli todo --help。改了事项的这一轮结束前，请写接续说明。</calli-todo>';
+    return gate?.('todo', block) === false ? text : `${text}\n\n${block}`;
   }
-  started(threadId: string) { if (this.allowed(threadId)) this.introduced.add(threadId); }
   note(id: string) {
     if (!this.store.getTodo(id)) throw new HttpError(404, 'todo not found');
     return { ...this.store.todoNote(id), rev: this.store.getTodo(id)!.rev };
   }
-  private patch(input: Record<string, unknown>): TodoPatch {
+  /** Writes one matter's mirror file; the mirror never throws, so API answers cannot fail on it. */
+  private mirror(id: string): void {
+    const todo = this.store.getTodo(id);
+    if (!todo) return;
+    void this.files.writeMatter(todo, this.store.todoNote(id), this.store.todoThreadIds(id));
+  }
+  /** Mirror removal; public because the web's plan-page delete (threads.ts) bypasses remove(). */
+  mirrorTodoRemoval(id: string): void { void this.files.removeMatter(id); }
+  /** Reconciles the whole mirror at startup: extra directories removed, missing ones written. */
+  syncMirror(): void {
+    void this.files.syncAll(this.store.listTodos().map(todo => ({ todo, note: this.store.todoNote(todo.id), threads: this.store.todoThreadIds(todo.id) })));
+  }
+  /** Waits for the queued mirror writes, so shutdown can close the store and remove the directory safely. */
+  async flushMirror(): Promise<void> { await this.proactive.flush(); await this.files.dispose(); }
+
+  artifacts(id: string): Promise<string> { return this.files.artifacts(id); }
+  commitArtifacts(id: string) { return this.files.commitArtifacts(id); }
+
+  /** The person's profile.md; a missing or untouched file reports itself as the template. */
+  profile(): { text: string; updatedAt: string | null; path: string; isTemplate: boolean; rev: number } {
+    const path = join(this.directory(), 'profile.md');
+    let text = '';
+    try { text = readFileSync(path, 'utf8'); } catch { /* first use: nothing written yet */ }
+    const state = this.store.hubSetting('personalProfile', { rev: 0, updatedAt: null as string | null });
+    const isTemplate = text === PROFILE_TEMPLATE;
+    return { text, updatedAt: text ? state.updatedAt : null, path, isTemplate: !text || isTemplate, rev: state.rev };
+  }
+
+  /** Saves profile.md through the mirror; rev guards concurrent web edits when provided. Awaiting
+   *  the write keeps PUT→GET consistent — profile saves are human-paced, the commit is worth it. */
+  async saveProfile(input: { text?: unknown; rev?: unknown }): Promise<{ text: string; updatedAt: string; path: string; isTemplate: boolean; rev: number }> {
+    const text = personalText(input.text, 20_000);
+    const state = this.store.hubSetting('personalProfile', { rev: 0, updatedAt: null as string | null });
+    if (input.rev !== undefined && input.rev !== state.rev) throw new HttpError(409, 'profile changed; read it again and retry with its rev');
+    const updatedAt = new Date().toISOString();
+    const rev = state.rev + 1;
+    this.store.saveHubSetting('personalProfile', { rev, updatedAt });
+    await this.files.writeProfile(text);
+    return { text, updatedAt, path: join(this.directory(), 'profile.md'), isTemplate: false, rev };
+  }
+
+  /**
+   * What the person wrote about themselves, for the Router's trigger message: the first 1500
+   * characters plus a pointer to `calli profile show`. Empty when there is nothing personal to
+   * say yet — the untouched template carries no information worth injecting.
+   */
+  profileDigest(limit = 1500): string {
+    let text = '';
+    try { text = readFileSync(join(this.directory(), 'profile.md'), 'utf8'); } catch { return ''; }
+    if (!text.trim() || text === PROFILE_TEMPLATE) return '';
+    const whole = [...text.trim()];
+    const digest = whole.slice(0, limit).join('');
+    const more = whole.length > limit ? '\n（以上是摘要，用 calli profile show 读全文。）' : '';
+    return `\n\n<calli-personal-profile>由 Calli 附加：这个人写下的是「你在意什么」——判断「重要」时引用这里的依据，并把依据写进理由：\n${digest}${more}</calli-personal-profile>`;
+  }
+  /**
+   * A channel source: must name its kind and an origin ref; only https links; every string
+   * bounded and passed through the credential check. Unknown keys are dropped.
+   */
+  private source(input: unknown): TodoSource {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new HttpError(400, 'source must be an object');
+    const value = input as Record<string, unknown>;
+    if (!TODO_SOURCE_TYPES.includes(String(value.type) as TodoSource['type'])) throw new HttpError(400, 'source.type must be lark-task, lark-message, lark-flag, lark-calendar or manual');
+    const out: TodoSource = { type: String(value.type) as TodoSource['type'], ref: personalText(value.ref, 200).trim() };
+    if (value.url !== undefined && value.url !== null) {
+      const url = personalText(value.url, 500).trim();
+      if (!url.startsWith('https://')) throw new HttpError(400, 'source.url must start with https://');
+      out.url = url;
+    }
+    if (value.from !== undefined && value.from !== null) out.from = personalText(value.from, 100).trim();
+    if (value.at !== undefined && value.at !== null) {
+      const at = time(value.at);
+      if (at) out.at = at;
+    }
+    if (value.thread !== undefined) out.thread = this.subscription(value.thread);
+    return out;
+  }
+  /** Only a private caller may attach provenance from the canonical, nonfiltered archive. */
+  private inputSignal(input: Record<string, unknown>, actor?: string): SignalRecord | undefined {
+    if (input.signal === undefined) return undefined;
+    if (!actor) throw new HttpError(403, 'signal provenance requires private thread credentials');
+    this.require(actor);
+    if (input.source !== undefined) throw new HttpError(400, 'signal and source are mutually exclusive');
+    return this.manager.lark.signal(signalArchiveKey(input.signal));
+  }
+  private signalSource(record: SignalRecord): TodoSource {
+    const signal = record.payload as LarkSignal;
+    // The discussion ID comes from the archived top-level reference, not supplied source JSON.
+    return this.source({ ...signal.source, thread: signal.thread });
+  }
+  private subscription(value: unknown): TodoThread {
+    const thread = todoThread(value);
+    personalText(thread.ref, 200);
+    return thread;
+  }
+  private subscriptionList(value: unknown): TodoThread[] {
+    if (value === undefined) return [];
+    if (!Array.isArray(value)) throw new HttpError(400, 'subscribe/unsubscribe must be an array');
+    return value.map(item => this.subscription(item));
+  }
+  private patch(input: Record<string, unknown>, current: TodoSubscription[] = []): TodoPatch {
     const patch: TodoPatch = {};
     if (input.text !== undefined) patch.text = personalText(input.text, 300).trim();
     if (input.owner !== undefined) {
@@ -189,6 +317,29 @@ export class PersonalService {
     if (input.state !== undefined) {
       if (!['open', 'waiting', 'done'].includes(String(input.state))) throw new HttpError(400, 'invalid todo state');
       patch.state = input.state as TodoRecord['state'];
+    }
+    if (input.lane !== undefined) {
+      if (input.lane !== null && !TODO_LANES.includes(String(input.lane) as TodoLane)) throw new HttpError(400, 'lane must be you, doing, wait, later or null');
+      patch.lane = input.lane === null ? null : String(input.lane) as TodoLane;
+    }
+    if (input.importance !== undefined) {
+      if (input.importance !== null && !TODO_IMPORTANCES.includes(String(input.importance) as TodoImportance)) throw new HttpError(400, 'importance must be high, normal, low or null');
+      patch.importance = input.importance === null ? null : String(input.importance) as TodoImportance;
+    }
+    if (input.urgentUntil !== undefined) patch.urgentUntil = time(input.urgentUntil);
+    if (input.source !== undefined) patch.source = input.source === null ? null : this.source(input.source);
+    if (input.subscribe !== undefined || input.unsubscribe !== undefined || patch.source?.thread) {
+      const subscriptions = new Map(current.map(s => [JSON.stringify({ kind: s.kind, ref: s.ref }), s]));
+      const additions = this.subscriptionList(input.subscribe);
+      if (patch.source?.thread) additions.push(patch.source.thread);
+      for (const thread of additions) {
+        const key = JSON.stringify(thread);
+        if (!subscriptions.has(key)) subscriptions.set(key, { ...thread, at: new Date().toISOString() });
+      }
+      // Explicit removal wins, including the source's automatic subscription.
+      for (const thread of this.subscriptionList(input.unsubscribe)) subscriptions.delete(JSON.stringify(thread));
+      if (subscriptions.size > 20) throw new HttpError(400, 'at most 20 subscriptions are allowed');
+      patch.subscriptions = [...subscriptions.values()];
     }
     if (input.done !== undefined) {
       if (typeof input.done !== 'boolean') throw new HttpError(400, 'done must be a boolean');
@@ -213,7 +364,13 @@ export class PersonalService {
   }
   create(input: Record<string, unknown>, actor?: string): TodoRecord {
     if (actor) this.require(actor);
-    const patch = this.patch(input), links = actor ? this.threadList(input.threads, 'threads') : [];
+    const signal = this.inputSignal(input, actor);
+    if (signal && ((input.owner !== undefined && input.owner !== 'me') || (input.state !== undefined && input.state !== 'open')
+      || (input.done !== undefined && input.done !== false) || (input.proposed !== undefined && input.proposed !== true) || input.doneAt != null)) {
+      throw new HttpError(403, 'signals can only propose open, human-owned matters; they are not authorization');
+    }
+    const patch = this.patch(signal ? { ...input, owner: 'me', source: this.signalSource(signal) } : input);
+    const links = actor ? this.threadList(input.threads, 'threads') : [];
     const text = personalText(input.text, 300).trim();
     let parentId: string | null = null;
     if (input.parentId != null) {
@@ -225,11 +382,14 @@ export class PersonalService {
     const todo = this.store.transaction(() => {
       // An agent's "me" item is a suggestion, unless it records existing threads or the person asked
       // for it through the plan page's summary: then it describes work that happened.
-      const recorded = links.some(id => id !== actor) || Boolean(actor && this.store.summaryThreadIds().has(actor));
-      const proposed = Boolean(actor && (patch.owner ?? 'me') === 'me' && !recorded);
-      const todo = this.store.createTodo(randomUUID(), text, parentId, { owner: patch.owner, dueAt: patch.dueAt, proposed });
+      // External provenance never inherits the summary/recorded-thread acceptance shortcuts.
+      const recorded = !signal && (links.some(id => id !== actor) || Boolean(actor && this.store.summaryThreadIds().has(actor)));
+      const proposed = Boolean(signal || (actor && (patch.owner ?? 'me') === 'me' && !recorded));
+      const todo = this.store.createTodo(randomUUID(), text, parentId, { owner: patch.owner, dueAt: patch.dueAt, lane: patch.lane, importance: patch.importance, urgentUntil: patch.urgentUntil, source: patch.source, subscriptions: patch.subscriptions, proposed });
       if (this.recordsSelf(actor, links)) this.store.linkTodoThread(todo.id, actor!);
       for (const id of links) this.store.linkTodoThread(todo.id, id);
+      // Provenance lands in the archive's matter links; the source alone is not a delivery.
+      if (signal) this.store.associateSignal(signal.key, todo.id);
       // Work the person already marked done in every one of its threads is recorded as done.
       if (recorded && links.length && links.every(id => this.store.getThread(id)?.doneAt)) return this.store.updateTodo(todo.id, { done: true });
       if (proposed) this.store.saveTodoProposal({ id: randomUUID(), todoId: todo.id, kind: 'add', evidence: '', threadId: actor!, createdAt: new Date().toISOString(), state: 'open' });
@@ -237,11 +397,27 @@ export class PersonalService {
     });
     this.manager.broadcastTodo();
     if (todo.proposed) this.manager.notice(actor!, `待你确认：${todo.text}`, true);
+    this.mirror(todo.id);
     return todo;
   }
   update(id: string, input: Record<string, unknown>, actor?: string): TodoRecord {
     if (actor) this.require(actor);
-    const current = this.store.checkTodoRev(id, input.rev === undefined && !actor ? this.store.getTodo(id)?.rev : input.rev), patch = this.patch(input);
+    // 「还在跟」: when touch is the whole request, only the activity timestamp moves — no rev
+    // bump, so it can never conflict with an agent's read-before-write.
+    if (input.touch !== undefined) {
+      if (typeof input.touch !== 'boolean') throw new HttpError(400, 'touch must be a boolean');
+      if (Object.keys(input).filter(key => input[key] !== undefined).length === 1) {
+        const todo = this.store.touchTodo(id);
+        this.manager.broadcastTodo();
+        return todo;
+      }
+    }
+    const current = this.store.checkTodoRev(id, input.rev === undefined && !actor ? this.store.getTodo(id)?.rev : input.rev);
+    const signal = this.inputSignal(input, actor);
+    if (signal && Object.keys(input).some(key => input[key] !== undefined && !['rev', 'signal', 'note'].includes(key))) {
+      throw new HttpError(403, 'signal updates only attach provenance and a continuation note; change the matter itself without --signal');
+    }
+    const patch = this.patch(signal ? {} : input, current.subscriptions);
     if (actor && patch.owner !== undefined && patch.owner !== current.owner) throw new HttpError(403, 'agents cannot change ownership');
     if (actor && current.owner === 'me' && (patch.done === true || patch.state === 'done' || patch.owner === 'agent')) throw new HttpError(403, 'use calli todo propose-done for your personal commitments');
     if ((patch.state ?? current.state) === 'waiting' && !(patch.waitingOn ?? current.waitingOn)) throw new HttpError(400, 'waitingOn is required for waiting');
@@ -259,9 +435,12 @@ export class PersonalService {
       if (this.recordsSelf(actor, links)) this.store.linkTodoThread(id, actor!);
       for (const thread of links) this.store.linkTodoThread(id, thread);
       for (const thread of unlinks) this.store.unlinkTodoThread(id, thread);
+      if (signal) this.store.associateSignal(signal.key, id);
       return next;
     });
-    this.manager.broadcastTodo(); return todo;
+    this.manager.broadcastTodo();
+    this.mirror(id);
+    return todo;
   }
   /** Agents delete with a fresh rev, one item at a time: a plan with sub-items goes only once they are gone. */
   remove(id: string, input: Record<string, unknown>, actor: string) {
@@ -271,6 +450,7 @@ export class PersonalService {
     if (current.owner === 'me' && current.done) throw new HttpError(403, 'finished commitments stay; only the person removes them');
     this.store.deleteTodo(id);
     this.manager.broadcastTodo();
+    this.mirrorTodoRemoval(id);
     return { id, deleted: true };
   }
   writeNote(id: string, input: Record<string, unknown>, actor?: string): TodoRecord {
@@ -279,7 +459,9 @@ export class PersonalService {
     const text = personalText(input.text, 4000, true);
     const todo = this.store.writeTodoNote(id, text, actor ?? null, current.rev);
     if (actor) this.store.linkTodoThread(id, actor);
-    this.manager.broadcastTodo(); return todo;
+    this.manager.broadcastTodo();
+    this.mirror(id);
+    return todo;
   }
   propose(id: string, input: Record<string, unknown>, actor: string) {
     this.require(actor);
@@ -291,6 +473,7 @@ export class PersonalService {
       this.store.updateTodo(id, {}, current.rev); this.store.saveTodoProposal(proposal); this.store.linkTodoThread(id, actor);
     });
     this.manager.broadcastTodo(); this.manager.notice(actor, `待你确认：${current.text}`, true);
+    this.mirror(id);
     return { ...proposal, rev: this.store.getTodo(id)!.rev };
   }
   resolveProposal(id: string, pid: string, action: 'accept' | 'dismiss', rev: unknown) {
@@ -298,25 +481,31 @@ export class PersonalService {
     const proposal = this.store.todoProposals(id).find(p => p.id === pid);
     if (!proposal) throw new HttpError(404, 'proposal not found');
     if (proposal.state !== 'open') throw new HttpError(409, 'proposal already resolved');
+    const removed = proposal.kind === 'add' && action === 'dismiss';
     this.store.transaction(() => {
-      if (proposal.kind === 'add' && action === 'dismiss') this.store.deleteTodo(id);
+      if (removed) this.store.deleteTodo(id);
       else {
         this.store.updateTodo(id, action === 'dismiss' ? {} : proposal.kind === 'add' ? { proposed: false } : { state: 'done', followUpAt: null }, current.rev);
         this.store.saveTodoProposal({ ...proposal, state: action === 'accept' ? 'accepted' : 'dismissed' });
       }
     });
-    this.manager.broadcastTodo(); return this.store.getTodo(id);
+    this.manager.broadcastTodo();
+    if (removed) this.mirrorTodoRemoval(id); else this.mirror(id);
+    return this.store.getTodo(id);
   }
   inherit(sourceId: string, targetId: string): void {
     if (!this.allowed(sourceId) || !this.allowed(targetId)) return;
+    const touched: string[] = [];
     this.store.transaction(() => {
       for (const todo of this.store.listTodos()) {
         if (!this.store.todoThreadIds(todo.id).includes(sourceId)) continue;
         this.store.linkTodoThread(todo.id, targetId);
         this.store.updateTodo(todo.id, {}, todo.rev);
+        touched.push(todo.id);
       }
     });
     this.manager.broadcastTodo();
+    for (const id of touched) this.mirror(id);
   }
 
   context(threadId: string): string {
@@ -332,11 +521,12 @@ export class PersonalService {
     this.require(owner);
     if (String(input.op).startsWith('review.')) return this.review.command(owner, String(input.op), input.time);
     const linkedThreads = (id: string) => this.store.todoThreadIds(id).map(threadId => ({ id: threadId, self: threadId === owner }));
+    const withUrgency = (todo: TodoRecord) => ({ ...todo, urgency: urgencyOf(todo) });
     switch (input.op) {
-      case 'todo.list': return this.store.listTodos().filter(t => !t.done).map(todo => ({ ...todo, threads: linkedThreads(todo.id) }));
+      case 'todo.list': return this.store.listTodos().filter(t => !t.done).map(todo => ({ ...withUrgency(todo), threads: linkedThreads(todo.id) }));
       case 'todo.show': {
         const todo = this.store.getTodo(String(input.id)); if (!todo) throw new HttpError(404, 'todo not found');
-        return { ...todo, note: this.note(todo.id), threads: linkedThreads(todo.id), proposals: this.store.todoProposals(todo.id) };
+        return { ...withUrgency(todo), note: this.note(todo.id), threads: linkedThreads(todo.id), proposals: this.store.todoProposals(todo.id) };
       }
       case 'todo.delegate': this.review.assertCanDelegate(owner); return this.delegate(String(input.id));
       case 'todo.add': return this.create(input, owner);
@@ -346,7 +536,107 @@ export class PersonalService {
       case 'threads': return this.summary.threads(input, owner);
       case 'threads.show': return this.summary.show(input);
       case 'wish': { const id = randomUUID(); this.store.saveWish(id, owner, personalText(input.text, 500)); return { id }; }
+      case 'profile.show': return this.profile();
+      case 'settings.list': return this.settingsSummary();
+      case 'settings.set': return this.setSetting(String(input.key ?? ''), input.value);
       default: throw new HttpError(400, 'unknown personal command; see calli todo --help');
+    }
+  }
+
+  /** Every personal domain at a glance; watch IDs are masked — this text goes through the agent's reply. */
+  private settingsSummary(): Record<string, Record<string, unknown>> {
+    const mask = (id: string) => (id.length > 11 ? `${id.slice(0, 3)}…${id.slice(-4)}` : id);
+    const lark = this.manager.lark.settings();
+    const brief = this.manager.briefs.settings();
+    const push = this.pushSettings();
+    const proactive = this.proactive.settings();
+    return {
+      personal: { agent: this.settings().agent, model: this.settings().model },
+      lark: { enabled: lark.enabled, intervalMin: lark.intervalMin,
+        people: lark.people.map(person => ({ name: person.name, id: mask(person.id) })),
+        chats: lark.chats.map(chat => ({ name: chat.name, id: mask(chat.id) })) },
+      brief: { ...brief }, push: { enabled: push.enabled, waiting: push.waiting, failure: push.failure, notice: push.notice,
+        recipientSet: Boolean(push.recipient), addressSet: Boolean(push.baseUrl) },
+      proactive: { mode: proactive.mode, repos: proactive.repos },
+    };
+  }
+
+  /** Push settings live in the store and are read per event, so a validated merge takes effect at once. */
+  private pushSettings(): { enabled: boolean; recipient: string; baseUrl: string; waiting: boolean; failure: boolean; notice: boolean; scheduled: boolean } {
+    return this.store.hubSetting('push', { enabled: false, recipient: '', baseUrl: '', waiting: true, failure: true, notice: true, scheduled: false });
+  }
+
+  private boolean(value: unknown, key: string): boolean {
+    if (value === true || value === false) return value;
+    const text = String(value ?? '').trim().toLowerCase();
+    if (text === 'true') return true;
+    if (text === 'false') return false;
+    throw new HttpError(400, `${key} 必须是 true 或 false，收到：${String(value ?? '')}`);
+  }
+
+  /** 「名字:ID，名字:ID」or an array of such pairs, for the Lark watch lists the web edits too. */
+  private watchList(value: unknown, key: string): Array<{ id: string; name: string }> {
+    const items = (Array.isArray(value) ? value : String(value ?? '').split(',')).filter(item => typeof item !== 'string' || item.trim());
+    const list = items.map(item => {
+      const text = typeof item === 'string' ? item.trim() : '';
+      const at = text.indexOf(':');
+      const name = at > 0 ? text.slice(0, at).trim() : '', id = at > 0 ? text.slice(at + 1).trim() : '';
+      if (!name || !id) throw new HttpError(400, `${key} 每项必须是 名字:ID（半角冒号分隔），收到：${typeof item === 'string' ? item : JSON.stringify(item) ?? ''}`);
+      return { name, id };
+    });
+    if (!list.length) throw new HttpError(400, `${key} 不能为空，格式：名字:ID,名字:ID`);
+    return list;
+  }
+
+  /**
+   * One key, one field, written through the owning service's own save so the web and the
+   * conversation can never disagree about what is valid. Keys a person should only change
+   * in person (directory, push recipient, removing repos) refuse here.
+   */
+  private async setSetting(key: string, value: unknown): Promise<unknown> {
+    const [domain, field] = key.split('.');
+    if (!domain || !field) throw new HttpError(400, `设置项必须是 域.字段，例如 brief.morning；收到：${key || '（空）'}`);
+    const echo = () => ({ changed: key, settings: this.settingsSummary()[domain] });
+    switch (key) {
+      case 'personal.directory': case 'push.recipient': case 'push.baseUrl':
+        throw new HttpError(403, `「${key}」这一项请人在网页设置里改`);
+      case 'personal.agent': case 'personal.model': {
+        const text = String(value ?? '').trim();
+        const cleared = !text || text === 'none' || text === 'null' ? null : text;
+        this.putSettings(field === 'agent' ? { agent: cleared } : { model: cleared });
+        return echo();
+      }
+      case 'lark.enabled':
+        this.manager.lark.save({ enabled: this.boolean(value, key) }); return echo();
+      case 'lark.intervalMin': {
+        const minutes = Number(String(value ?? '').trim());
+        if (!Number.isInteger(minutes)) throw new HttpError(400, `${key} 必须是整数分钟（5～1440），收到：${String(value ?? '')}`);
+        this.manager.lark.save({ intervalMin: minutes }); return echo();
+      }
+      case 'lark.people': case 'lark.chats':
+        this.manager.lark.save({ [field]: this.watchList(value, key) }); return echo();
+      case 'brief.enabled':
+        this.manager.briefs.save({ enabled: this.boolean(value, key) }); return echo();
+      case 'brief.morning': case 'brief.evening': {
+        const at = String(value ?? '').trim();
+        if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(at)) throw new HttpError(400, `${key} 必须是 HH:mm（24 小时制），例如 08:30`);
+        this.manager.briefs.save({ [field]: at }); return echo();
+      }
+      case 'push.enabled': case 'push.waiting': case 'push.failure': case 'push.notice':
+        this.store.saveHubSetting('push', { ...this.pushSettings(), [field]: this.boolean(value, key) }); return echo();
+      case 'proactive.mode': {
+        const mode = String(value ?? '').trim();
+        if (mode !== 'off' && mode !== 'observe' && mode !== 'auto') throw new HttpError(400, `${key} 必须是 off、observe 或 auto`);
+        await this.proactive.save({ mode }); return echo();
+      }
+      case 'proactive.repos': {
+        const adds = (Array.isArray(value) ? value : String(value ?? '').split(',')).map(path => String(path).trim()).filter(Boolean);
+        if (!adds.length) throw new HttpError(400, `${key} 需要至少一个绝对路径；移除允许仓库请人在网页设置里改`);
+        const current = this.proactive.settings();
+        await this.proactive.save({ repos: [...current.repos, ...adds] }); return echo();
+      }
+      default:
+        throw new HttpError(400, `未知或不可改的设置项：${key}；用 calli settings 查看可以改哪些`);
     }
   }
 }

@@ -498,3 +498,23 @@ test('an idle delegation cycle does not keep itself alive on continuation', asyn
     await h.settled(threadId);
   } finally { await h.close(); }
 });
+
+test('a member spoken to directly answers the person and routes nothing in the team', async () => {
+  const h = await setup();
+  try {
+    const { threadId } = await h.dispatch(); await h.settled(threadId);
+    const before = h.coordination.view(threadId)!;
+    const dev = before.members.find(m => m.name === 'dev')!;
+    const sent = await fetch(`${h.base}/api/threads/${dev.id}/turns`, { method: 'POST', headers: { Authorization: 'Bearer test-token', 'Content-Type': 'application/json' }, body: JSON.stringify({ text: 'rename the helper' }) });
+    assert.equal(sent.status, 202);
+    await wait(() => h.coordination.view(threadId)!.messages.some(d => d.from === 'user' && d.state === 'returned'));
+    const prompt = h.store.listEvents(dev.id, 0, -1).filter(e => e.type === 'turn.started').at(-1)!;
+    assert.match(String(prompt.data.text), /用户直接发给你的：直接回复用户，不要 @ 任何人/);
+    await new Promise(r => setTimeout(r, 200));
+    const after = h.coordination.view(threadId)!;
+    assert.equal(after.team!.status, 'awaiting_confirm');
+    assert.equal(after.team!.deliveries, before.team!.deliveries);
+    assert.equal(after.messages.filter(d => d.from !== 'user').length, before.messages.length);
+    assert.equal(h.manager.threadView(threadId).status, 'idle');
+  } finally { await h.close(); }
+});

@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { Store } from '../src/store.js';
+import { HttpError } from '../src/errors.js';
 import { ThreadManager } from '../src/threads.js';
 import { AttachmentStore } from '../src/attachments.js';
 import { Workdirs } from '../src/workdirs.js';
@@ -80,7 +81,11 @@ test('Claude ACP process borrows native image generation through the scoped CLI,
     const entry = events.find(e => e.type === 'turn.started')!;
     assert.equal(entry.data.displayText, 'borrow-image');
     assert.ok(String(entry.data.text).length < 180, 'only the short discovery hint is introduced');
-    assert.equal(h.service.instructions(h.root.id, 'next request'), 'next request', 'do not repeat the hint');
+    const again = await h.manager.startTurn(h.root.id, { text: 'next request' });
+    assert.ok('turnId' in again);
+    await wait(() => h.manager.threadView(h.root.id).status !== 'running');
+    const second = h.store.listEventsOfType(h.root.id, 'turn.started').at(-1)!;
+    assert.equal(second.data.text, 'next request', 'do not repeat the hint');
     assert.equal((await h.runCli(['tools', 'skill'])).name, 'calli-tools');
     const job = JSON.parse(turnAnswer(events, started.turnId));
     assert.equal(job.state, 'succeeded');
@@ -186,6 +191,30 @@ test('CLI preserves plain-text errors from old servers or proxies in both transp
     rmSync(dir, { recursive: true, force: true });
   }
 });
+test('a finished task leaves the thread list for the archive; its result stays downloadable', async () => {
+  const h = await setup();
+  try {
+    const started = await h.run('archived');
+    const job = await h.done(started.id);
+    assert.equal(job.state, 'succeeded');
+    await wait(() => Boolean(h.store.getThread(job.threadId)?.archivedAt));
+    assert.equal(h.store.getThread(h.root.id)?.archivedAt, null, 'the caller\'s own thread stays');
+    const fetched = await h.runCli(['jobs', 'fetch', job.id, job.artifacts[0].id, '--output', join(h.cwd, 'after-archive.png')]);
+    assert.equal(fetched.sha256, job.artifacts[0].sha256);
+  } finally { await h.close(); }
+});
+
+test('a cancelled task is archived once its turn has stopped', async () => {
+  const h = await setup('slow');
+  try {
+    const job = await h.run('cancel-archive');
+    await wait(() => h.store.toolJobs.get(job.id)?.state === 'running');
+    await h.call({ op: 'jobs.cancel', id: job.id });
+    const threadId = h.store.toolJobs.get(job.id)!.threadId!;
+    await wait(() => Boolean(h.store.getThread(threadId)?.archivedAt));
+  } finally { await h.close(); }
+});
+
 test('cancellation works before dispatch and during generation; wait timeout does not cancel', async () => {
   const h = await setup('slow');
   try {
@@ -247,4 +276,36 @@ test('runtime environments discard inherited scopes and administrator tokens', (
   assert.equal(env.CALLI_TOKEN, undefined);
   assert.equal(env.CALLI_TOKEN, undefined);
   assert.ok(env.PATH?.startsWith('/example/bin:'));
+});
+
+test('signals commands expose archived provenance only to the scoped thread', async () => {
+  const h = await setup();
+  try {
+    h.store.createTodo('m1', '事项 one', null, {});
+    h.store.linkTodoThread('m1', h.root.id);
+    const archive = (key: string, outcome: any, payload: Record<string, unknown> = { summary: '评审会已结束', source: { type: 'lark-calendar', ref: key } }) =>
+      h.store.insertSignal(key, payload, outcome, '2026-11-01T02:00:00.000Z');
+    archive('lark-calendar:evt1', { outcome: 'delivered', matterIds: ['m1'], deliveries: [{ matterId: 'm1', threadId: h.root.id }], threadId: h.root.id },
+      { summary: '评审会已结束', source: { type: 'lark-calendar', ref: 'evt1' }, meeting: { event: 'ended', meetingId: 'mtg1' } });
+    archive('lark-message:noise', { outcome: 'filtered', reason: 'not-a-request' });
+    const shown = await h.call({ op: 'signals.show', key: 'lark-calendar:evt1' });
+    assert.equal(shown.key, 'lark-calendar:evt1'); assert.equal(shown.payload.summary, '评审会已结束');
+    assert.deepEqual(shown.payload.meeting, { event: 'ended', meetingId: 'mtg1' }); assert.equal(shown.material, undefined);
+    assert.equal((await h.call({ op: 'signals.material', key: 'lark-calendar:evt1' })).material.error, 'lark_disabled');
+    const cli = await h.runCli(['signals', 'show', 'lark-calendar:evt1']);
+    assert.equal(cli.payload.summary, '评审会已结束');
+    assert.equal((await h.runCli(['signals', 'material', 'lark-calendar:evt1'])).material.error, 'lark_disabled');
+    const outsider = await h.manager.createThread({ agent: 'claude', cwd: h.cwd });
+    for (const [owner, key, status] of [
+      ['operator', 'lark-calendar:evt1', 403],
+      [outsider.id, 'lark-calendar:evt1', 404],
+      [h.root.id, 'lark-message:noise', 404],
+      [h.root.id, 'lark-calendar:absent', 404],
+      [h.root.id, 'bad\nkey', 400],
+    ] as const) {
+      const error = await h.service.command(owner, { op: 'signals.show', key }).then(() => null, (e: any) => e);
+      assert.ok(error instanceof HttpError && error.status === status, `${owner} ${key}`);
+    }
+    assert.equal((await h.api({ op: 'signals.show', key: 'lark-calendar:evt1' })).status, 403);
+  } finally { await h.close(); }
 });

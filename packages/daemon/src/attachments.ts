@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { HttpError } from './errors.js';
-import { MAX_VIDEOS, storeVideo, VIDEO_EXTENSIONS } from './videos.js';
+import { cleanFileName, FILE_TYPE, MAX_UPLOADS, MAX_VIDEOS, storeFile, storeVideo, VIDEO_EXTENSIONS } from './videos.js';
 
 export const MAX_IMAGES = 6;
 export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -41,7 +41,13 @@ export interface StoredAttachment {
   size: number;
 }
 
+/**
+ * An uploaded file: a video (`video/*`) or any other file (`application/octet-stream`). Messages keep
+ * both in their `videos` list, the name it had before other files could be attached.
+ */
 export interface StoredVideo extends StoredAttachment { name: string }
+
+export const isVideoType = (mimeType: string): boolean => Boolean(VIDEO_EXTENSIONS[mimeType]);
 
 /**
  * Finds the image type from the first bytes of the data. The type the client claims is ignored,
@@ -90,10 +96,18 @@ export class AttachmentStore {
     return { id, ...await storeVideo(join(dir, id), source, name) };
   }
 
+  async saveFile(threadId: string, source: AsyncIterable<Uint8Array>, name: string): Promise<StoredVideo> {
+    if (!UUID.test(threadId)) throw new HttpError(400, 'invalid thread id');
+    const dir = join(this.root, threadId);
+    mkdirSync(dir, { recursive: true });
+    const id = randomUUID();
+    return { id, ...await storeFile(join(dir, id), source, name) };
+  }
+
   /** One stored image by id, for reusing it in an edited message. */
   image(threadId: string, id: string): { stored: StoredAttachment; image: ImageInput } | null {
     const found = this.find(threadId, id);
-    if (!found || VIDEO_EXTENSIONS[found.mimeType]) return null;
+    if (!found || isVideoType(found.mimeType) || found.mimeType === FILE_TYPE) return null;
     const bytes = readFileSync(found.path);
     return { stored: { id, mimeType: found.mimeType, size: bytes.length }, image: { data: bytes.toString('base64'), mimeType: found.mimeType, path: found.path } };
   }
@@ -101,21 +115,37 @@ export class AttachmentStore {
   /** Only ids uploaded to this thread can be sent, never a client-supplied local path. */
   videos(threadId: string, raw: unknown): StoredVideo[] {
     if (raw === undefined) return [];
-    if (!Array.isArray(raw) || raw.length > MAX_VIDEOS) throw new HttpError(400, `一条消息最多 ${MAX_VIDEOS} 个视频`);
+    if (!Array.isArray(raw) || raw.length > MAX_UPLOADS) throw new HttpError(400, `一条消息最多 ${MAX_UPLOADS} 个文件`);
     const ids = raw.map(value => typeof value === 'string' ? value : value?.id);
-    if (new Set(ids).size !== ids.length) throw new HttpError(400, '视频不能重复');
-    return ids.map(id => {
-      if (typeof id !== 'string' || !UUID.test(id)) throw new HttpError(400, 'invalid video id');
-      const found = this.find(threadId, id);
-      if (!found || !VIDEO_EXTENSIONS[found.mimeType]) throw new HttpError(404, 'video not found in this thread');
-      let name = `视频.${VIDEO_EXTENSIONS[found.mimeType]}`;
-      try { name = JSON.parse(readFileSync(join(this.root, threadId, `${id}.json`), 'utf8')).name || name; } catch { /* Older metadata may be missing. */ }
-      return { id, name, mimeType: found.mimeType, size: found.size };
+    if (new Set(ids).size !== ids.length) throw new HttpError(400, '文件不能重复');
+    const found = ids.map(id => {
+      if (typeof id !== 'string' || !UUID.test(id)) throw new HttpError(400, 'invalid file id');
+      const file = this.find(threadId, id);
+      if (!file || !(isVideoType(file.mimeType) || file.mimeType === FILE_TYPE)) throw new HttpError(404, 'file not found in this thread');
+      return { id, name: this.uploadName(threadId, id, file.mimeType), mimeType: file.mimeType, size: file.size };
     });
+    if (found.filter(f => isVideoType(f.mimeType)).length > MAX_VIDEOS) throw new HttpError(400, `一条消息最多 ${MAX_VIDEOS} 个视频`);
+    return found;
   }
 
-  videoNote(threadId: string, videos: StoredVideo[]): string {    if (!videos.length) return '';
-    return `\n\nThe user attached ${videos.length} video file(s). Use your available tools to inspect the original files; if you cannot inspect them, say so rather than guessing their contents.\n${videos.map(v => `- ${JSON.stringify(v.name)}: ${this.find(threadId, v.id)!.path}`).join('\n')}`;
+  private meta(threadId: string, id: string): { name?: string } | null {
+    try { return JSON.parse(readFileSync(join(this.root, threadId, `${id}.json`), 'utf8')); } catch { return null; }
+  }
+
+  private uploadName(threadId: string, id: string, mimeType: string): string {
+    const fallback = isVideoType(mimeType) ? `视频.${VIDEO_EXTENSIONS[mimeType]}` : 'file';
+    return this.meta(threadId, id)?.name || fallback; // older video metadata may be missing
+  }
+
+  /** The lines that tell the agent where the uploaded files of a message are. */
+  videoNote(threadId: string, videos: StoredVideo[]): string {
+    const list = (items: StoredVideo[]) => items.map(v => `- ${JSON.stringify(v.name)}: ${this.find(threadId, v.id)!.path}`).join('\n');
+    const clips = videos.filter(v => isVideoType(v.mimeType));
+    const files = videos.filter(v => !isVideoType(v.mimeType));
+    let note = '';
+    if (clips.length) note += `\n\nThe user attached ${clips.length} video file(s). Use your available tools to inspect the original files; if you cannot inspect them, say so rather than guessing their contents.\n${list(clips)}`;
+    if (files.length) note += `\n\nThe user attached ${files.length} file(s). Read them with your tools before answering; if you cannot open one, say so rather than guessing its contents.\n${list(files)}`;
+    return note;
   }
 
   /**
@@ -166,6 +196,9 @@ export class AttachmentStore {
       const path = join(this.root, threadId, `${id}.${ext}`);
       if (existsSync(path)) return { path, mimeType, size: statSync(path).size };
     }
+    const name = this.meta(threadId, id)?.name;
+    const path = name && name === cleanFileName(name) && join(this.root, threadId, id, name);
+    if (path && existsSync(path)) return { path, mimeType: FILE_TYPE, size: statSync(path).size };
     return null;
   }
 

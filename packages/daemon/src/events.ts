@@ -6,6 +6,8 @@ export type EventType =
   | 'agent.notice'
   | 'handover.updated'
   | 'handover.model'
+  /** The quota reset came and the daemon resent the failed turn by itself. */
+  | 'handover.resume'
   | 'thread.created'
   | 'thread.updated'
   /** Current conversation changed; clients reload history without rewinding the SSE cursor. */
@@ -40,12 +42,19 @@ export type EventType =
   | 'approval.resolved'
   /** Deferred model capabilities changed. Broadcast only, never stored in an event log. */
   | 'agent.modelsChanged'
+  /** An account's plan usage moved. Broadcast only, never stored in an event log. */
+  | 'quota.updated'
   /** Something on the plan page changed. Broadcast only, never stored in an event log. */
   | 'todo.updated'
   /** The scheduled-task list changed. Broadcast only, never stored in an event log. */
   | 'schedules.changed'
   /** An extension was installed, removed, enabled or disabled. Broadcast only, never stored in an event log. */
   | 'extensions.changed';
+
+/** Structured origin for turns started by an internal channel rather than a person. */
+export type TurnPart = { kind: 'person'; text: string } | { kind: 'lark' | 'worker'; count: number };
+/** `mixed`: several arrivals folded into one Router turn, in order; `parts` keeps them apart for display. */
+export interface TurnChannel { kind: 'lark' | 'worker' | 'mixed'; count: number; parts?: TurnPart[] }
 
 export interface StoredEvent {
   threadId: string;
@@ -131,11 +140,15 @@ function mergedToolEvent(run: StoredEvent[]): StoredEvent {
   const last = run[run.length - 1];
   let status: unknown;
   let title: unknown;
+  let kind: unknown;
+  let input: unknown;
   let content: unknown;
   let text: string | undefined;
   for (const ev of run) {
     if (ev.data.status) status = ev.data.status;
     if (ev.data.title) title = ev.data.title;
+    if (ev.data.kind) kind = ev.data.kind;
+    if (ev.data.input !== undefined) input = ev.data.input;
     // The timeline replaces a step's diffs only when an event carries some, and its output text
     // from the last event that carries either; each field is taken from where it was last set.
     if (hasDiffParts(ev.data.content)) content = ev.data.content;
@@ -145,6 +158,8 @@ function mergedToolEvent(run: StoredEvent[]): StoredEvent {
   const data: Record<string, unknown> = { id: last.data.id };
   if (status !== undefined) data.status = status;
   if (title !== undefined) data.title = title;
+  if (kind !== undefined) data.kind = kind;
+  if (input !== undefined) data.input = input;
   if (content !== undefined) data.content = content;
   if (text !== undefined) data.output = text;
   return { ...last, data };

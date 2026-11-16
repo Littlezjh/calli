@@ -17,6 +17,13 @@ export class UserInputs {
   }
 
   request(threadId: string, turnId: string, request: UserInputRequest): Promise<UserInputAnswer> {
+    // A decision already made is said and done in one event: the log carries the request and its
+    // answer together, so a reload shows the record without ever asking about it again.
+    if (request.auto) {
+      const id = randomUUID();
+      this.emit(threadId, turnId, 'input.request', { inputId: id, ...request });
+      return Promise.resolve(request.auto);
+    }
     if (request.id) {
       const existing = [...this.pending.values()].find(p => p.threadId === threadId && p.turnId === turnId && p.request.id === request.id);
       if (existing) return existing.promise;

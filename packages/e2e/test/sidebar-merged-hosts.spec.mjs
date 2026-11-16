@@ -51,14 +51,16 @@ test('the merged list shows every machine, opens a thread on its own machine, an
         await row(page, '开发机上的线程').waitFor({ timeout: 10_000 });
         await row(page, '本机的线程').waitFor();
         // Threads elsewhere are named by their machine; the hub's own are not.
-        assert.match(await row(page, '开发机上的线程').locator('.thread-dir').innerText(), /^devbox · /);
-        assert.doesNotMatch(await row(page, '本机的线程').locator('.thread-dir').innerText(), /·/);
+        const host = row(page, '开发机上的线程').locator('.thread-host');
+        assert.equal(await host.innerText(), 'devbox');
+        assert.equal(await host.evaluate((el) => el.scrollWidth <= el.clientWidth), true, 'the machine name is never cut short');
+        assert.equal(await row(page, '本机的线程').locator('.thread-host').count(), 0, 'the hub\'s own machine carries no mark');
         assert.equal(await row(page, '开发机上的线程').locator('.row-more').count(), 0, 'no menu acting on the wrong machine');
         if (shots) await page.screenshot({ path: join(shots, `merged-${mobile ? 'phone' : 'desktop'}-${colorScheme}.png`), animations: 'disabled' });
 
         // Opening a thread elsewhere goes to that machine, the list still merged.
         await row(page, '开发机上的线程').locator('.thread-item').click();
-        await page.locator('.topbar-sub').filter({ hasText: /devbox/ }).waitFor({ timeout: 15_000 });
+        await page.waitForFunction((id) => localStorage.getItem('calli.host') === id, devboxId, { timeout: 15_000 });
         assert.equal(await page.evaluate(() => localStorage.getItem('calli.host')), devboxId, 'the page is on devbox now');
         if (mobile) await page.locator('.menu-btn').click();
         await page.getByRole('tab', { name: '全部', selected: true }).waitFor();

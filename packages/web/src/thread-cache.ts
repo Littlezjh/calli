@@ -1,4 +1,4 @@
-import type { Thread } from './api';
+import type { AgentInfo, Thread } from './api';
 
 const KEY = 'calli.threads.v1';
 /** Enough to fill the sidebar at once; the live list replaces it a moment later anyway. */
@@ -42,8 +42,43 @@ export function rememberThreads(hostId: string | null, threads: Thread[], at: st
   }
 }
 
+/** What a row needs to show which agent runs a thread: its mark, or its name when it has none. */
+export type AgentMarkInfo = Pick<AgentInfo, 'id' | 'label' | 'icon'>;
+
+const MARKS_KEY = 'calli.agentMarks.v1';
+const marksMemory = new Map<string, AgentMarkInfo[]>();
+
+function storedMarks(): Record<string, AgentMarkInfo[]> {
+  try {
+    const data = JSON.parse(localStorage.getItem(MARKS_KEY) ?? '{}');
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return {};
+    return Object.fromEntries(Object.entries(data).filter(([, v]) => Array.isArray(v) && v.every(a => a && typeof a.id === 'string' && typeof a.label === 'string'))) as Record<string, AgentMarkInfo[]>;
+  } catch {
+    return {};
+  }
+}
+
+/** A machine's agents as last read on this device, so its rows keep their marks while the live list loads. */
+export function cachedAgentMarks(hostId: string | null): AgentMarkInfo[] | null {
+  return marksMemory.get(hostKey(hostId)) ?? storedMarks()[hostKey(hostId)] ?? null;
+}
+
+export function rememberAgentMarks(hostId: string | null, agents: AgentMarkInfo[]): void {
+  const marks = agents.map(({ id, label, icon }) => (icon ? { id, label, icon } : { id, label }));
+  const before = cachedAgentMarks(hostId);
+  marksMemory.set(hostKey(hostId), marks);
+  if (before && JSON.stringify(before) === JSON.stringify(marks)) return;
+  try {
+    const entries = Object.entries({ ...storedMarks(), [hostKey(hostId)]: marks });
+    localStorage.setItem(MARKS_KEY, JSON.stringify(Object.fromEntries(entries.slice(-MAX_HOSTS))));
+  } catch {
+    // Storage full or disabled: this page still keeps them in memory.
+  }
+}
+
 /** Another hub, or signed out: what was read from the last one is not this one's. */
 export function clearThreadCache(): void {
   memory.clear();
-  try { localStorage.removeItem(KEY); } catch { /* Storage may be disabled. */ }
+  marksMemory.clear();
+  try { localStorage.removeItem(KEY); localStorage.removeItem(MARKS_KEY); } catch { /* Storage may be disabled. */ }
 }

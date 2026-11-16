@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { startDaemon, openUi, api, launchBrowser, repoRoot } from '../harness.mjs';
+import { openCollaboration, startDaemon, openUi, api, launchBrowser, repoRoot } from '../harness.mjs';
 
 test('compact works from a collaboration composer on desktop and phone in both themes', async () => {
   const daemon = await startDaemon({ CALLI_AGENTS_JSON: JSON.stringify({ agents: [{
@@ -21,9 +21,10 @@ test('compact works from a collaboration composer on desktop and phone in both t
         await openUi(page, daemon);
         if (mobile) await page.locator('.menu-btn').click();
         await page.locator('.thread-title', { hasText: title }).first().click();
-        await page.getByRole('button', { name: '协作', exact: true }).click();
+        await openCollaboration(page);
+        await page.getByRole('button', { name: '协作设置', exact: true }).click();
         await page.getByRole('button', { name: '启用协作', exact: true }).click();
-        await page.locator('.coord-tool.on').waitFor();
+        await page.locator('.composer-add.on').waitFor();
         await page.locator('.composer textarea').fill('/compact');
         await page.getByRole('button', { name: '发送', exact: true }).click();
         await page.getByText('上下文压缩完成。', { exact: true }).waitFor();

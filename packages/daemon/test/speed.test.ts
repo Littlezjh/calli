@@ -95,8 +95,8 @@ test('Claude discovers Fast per model, preserves cleared intent across unsupport
   const { ClaudeAcpAdapter } = await import('../src/adapters/claude.js');
   const adapter = new ClaudeAcpAdapter([process.execPath, join(here, 'fixtures/fake-acp.mjs')], { FAKE_ACP_SPEED: '1', FAKE_ACP_SPEED_REVOKED: '1' });
   const models = await adapter.models();
-  assert.deepEqual(models.find(m => m.id === 'big')?.speeds?.map(s => s.id), ['default', 'fast']);
-  assert.equal(models.find(m => m.id === 'big')?.speeds?.[1].isFast, true);
+  // Catalogs stay light since the per-model probe was dropped: speeds come from a live session.
+  assert.equal(models.find(m => m.id === 'big')?.speeds, undefined);
   assert.equal(models.find(m => m.id === 'small')?.speeds, undefined);
   const changes: string[] = [];
   const s = await adapter.start({ cwd: here, model: 'big', speed: 'fast', onSpeed: speed => changes.push(speed) });

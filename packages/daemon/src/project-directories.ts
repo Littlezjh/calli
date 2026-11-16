@@ -6,8 +6,11 @@ import { isWithinWorkdirs } from './workdirs.js';
 
 /** Folder names only: browsing candidates never grants access to files or creates a project root. */
 export function listProjectDirectories(workdirs: string[], input?: string, home = homedir()) {
-  if (input && !isAbsolute(input)) throw new HttpError(400, 'give an absolute path');
-  const path = resolve(input || home);
+  // `~` stands for the home directory, as it is typed in a shell.
+  const trimmed = input !== undefined ? input.trim() : undefined;
+  const typed = trimmed === '~' || trimmed === '~/' ? home : trimmed !== undefined && trimmed.startsWith('~/') ? join(home, trimmed.slice(2)) : trimmed;
+  if (typed && !isAbsolute(typed)) throw new HttpError(400, 'give an absolute path');
+  const path = resolve(typed || home);
   const bounds = [home, ...workdirs];
   if (!isWithinWorkdirs(path, bounds)) throw new HttpError(403, 'path is outside project browsing roots');
   try {
@@ -30,6 +33,7 @@ export function listProjectDirectories(workdirs: string[], input?: string, home 
     const target = realpathSync(path);
     return {
       path,
+      home: realpathSync(home),
       parent: parent !== path && isWithinWorkdirs(parent, bounds) ? parent : null,
       directories,
       allowed,

@@ -5,7 +5,7 @@
  * facade; views never see the token or the raw Api.
  */
 import type { ExtensionState, ThreadSummary, WorkProjection } from '@calli/extension-api';
-import type { AgentInfo as HostAgentInfo, ConnectionState, WebHost, WebHostStorage, WebHostUi } from '@calli/extension-api/web';
+import type { AgentInfo as HostAgentInfo, ConnectionState, MachineState, WebHost, WebHostNavigate, WebHostStorage, WebHostUi } from '@calli/extension-api/web';
 import type { AgentInfo } from '../api';
 import type { Api } from '../api';
 import { memoryMessages } from './memory-messages';
@@ -16,6 +16,7 @@ export interface HostInputs {
   extension: ExtensionState | null;
   threads: ThreadSummary[];
   workSources?: WorkProjection[];
+  machines?: MachineState[];
   connection: ConnectionState;
   /** ISO time of the last thread list read from the daemon. */
   observedAt: string | null;
@@ -54,7 +55,7 @@ export function extensionStorage(extensionId: string, store: Pick<Storage, 'getI
 export function createWebHost(
   extensionId: string,
   initial: HostInputs,
-  deps: { api?: Pick<Api, 'memorySources' | 'memoryList' | 'memoryRead'>; openThread: (id: string) => void; setThreadDone?: (id: string, done: boolean) => Promise<void>; ui: (agents: () => AgentInfo[]) => WebHostUi; storage?: WebHostStorage; onError?: (error: unknown) => void },
+  deps: { navigate?: Partial<WebHostNavigate>; askAssistant?: (text: string) => Promise<void>; setThreadStage?: (id: string, stage: 'backlog' | 'doing' | 'blocked' | 'review') => Promise<void>; api?: Pick<Api, 'memorySources' | 'memoryList' | 'memoryRead'> & Partial<Pick<Api, 'autotitleSettings' | 'saveAutotitleSettings' | 'previewAutotitle' | 'organizeAutotitle' | 'models'>>; openThread: (id: string) => void; setThreadDone?: (id: string, done: boolean) => Promise<void>; ui: (agents: () => AgentInfo[]) => WebHostUi; storage?: WebHostStorage; onError?: (error: unknown) => void },
 ): LiveHost {
   let inputs = initial;
   const allowed = (value: HostInputs) => value.extension?.manifest.id === extensionId && hasPermission(value.extension, 'events.summary');
@@ -83,8 +84,19 @@ export function createWebHost(
     return value;
   }
 
+  const autotitleApi = deps.api;
   const host: Omit<WebHost, 'narrow'> = {
     extensionId,
+    // Only the built-in auto-titles extension gets its settings; the hub checks its grant again.
+    ...(extensionId === 'autotitle' && autotitleApi?.autotitleSettings ? {
+      autotitle: {
+        load: () => autotitleApi.autotitleSettings!(),
+        save: (patch) => autotitleApi.saveAutotitleSettings!(patch),
+        preview: (threadId) => autotitleApi.previewAutotitle!(threadId),
+        organize: () => autotitleApi.organizeAutotitle!(),
+        models: async (agentId) => (await autotitleApi.models!(agentId)).map(m => ({ id: m.id, label: m.label })),
+      },
+    } : {}),
     memory: {
       sources: () => memoryRequest(() => deps.api!.memorySources(extensionId)),
       list: (sourceId) => memoryRequest(() => deps.api!.memoryList(extensionId, sourceId)),
@@ -105,11 +117,28 @@ export function createWebHost(
         };
       },
     },
+    machines: () => allowed(inputs) ? inputs.machines ?? [] : [],
+    ...(initial.extension?.manifest.permissions.includes('assistant.ask') ? { assistant: {
+      async ask(text: string) {
+        if (inputs.extension?.manifest.id !== extensionId || !inputs.extension?.installed || !inputs.extension.enabled || !inputs.extension.manifest.permissions.includes('assistant.ask') || !deps.askAssistant) throw new Error('Assistant permission required');
+        await deps.askAssistant(text);
+      },
+      threadLink(id: string) {
+        const thread = visible(inputs).find(t => t.id === id);
+        if (!thread) throw new Error('Thread permission required');
+        const machine = thread.machine ? thread.machine.id : inputs.machines?.[0]?.id ?? null;
+        return `#/thread/${encodeURIComponent(id)}${machine === null ? '' : `?machine=${encodeURIComponent(machine)}`}`;
+      },
+    } } : {}),
     threads: {
       snapshot: () => visible(inputs),
       subscribe(listener) {
         threadListeners.add(listener);
         return () => void threadListeners.delete(listener);
+      },
+      async setStage(threadId, stage) {
+        if (!visible(inputs).some(t => t.id === threadId) || !hasPermission(inputs.extension, 'progress.report') || !deps.setThreadStage) throw new Error('Progress permission required');
+        await deps.setThreadStage(threadId, stage);
       },
       async setDone(threadId, done) {
         if (!visible(inputs).some((t) => t.id === threadId) || !deps.setThreadDone) throw new Error('Thread permission required');
@@ -125,8 +154,13 @@ export function createWebHost(
         return () => void connectionListeners.delete(listener);
       },
     },
-    agents: (): HostAgentInfo[] => inputs.agents.map((a) => ({ id: a.id, label: a.label, available: a.available })),
-    navigate: { openThread: (id) => deps.openThread(id) },
+    agents: (): HostAgentInfo[] => inputs.agents.map((a) => ({ id: a.id, label: a.label, available: a.available, ...(a.capabilities?.permissionModes ? { permissionModes: a.capabilities.permissionModes } : {}) })),
+    navigate: {
+      openThread: id => deps.openThread(id),
+      peekThread: id => (deps.navigate?.peekThread ?? deps.openThread)(id),
+      threadMenu: (id, at) => deps.navigate?.threadMenu?.(id, at),
+      newThread: options => deps.navigate?.newThread?.(options),
+    },
     locale,
     storage: deps.storage ?? extensionStorage(extensionId),
     ui,
@@ -140,7 +174,7 @@ export function createWebHost(
       if (JSON.stringify(workAllowed(before)) !== JSON.stringify(workAllowed(next))) notify(workListeners, workAllowed(next));
       // The page re-reads the list on every event; listeners hear only when a summary changed.
       const key = JSON.stringify(visible(next));
-      if (key !== threadsKey || allowed(next) !== allowed(before)) {
+      if (key !== threadsKey || allowed(next) !== allowed(before) || JSON.stringify(next.machines) !== JSON.stringify(before.machines)) {
         threadsKey = key;
         if (allowed(next)) notify(threadListeners, visible(next));
       }

@@ -86,10 +86,24 @@ export async function startDaemon(env = {}, opts = {}) {
   shim(binDir, 'fake-pi', 'fake-pi.mjs');
   shim(binDir, 'fake-claude', 'fake-acp.mjs');
   shim(binDir, 'fake-agy', 'fake-agy.mjs');
+  shim(binDir, 'fake-doubao', 'fake-doubao.mjs');
+  let doubaoRuntime = '';
+  if (env.CALLI_DOUBAO_STREAM === '1' || env.CALLI_E2E_DOUBAO_RUNTIME === '1') {
+    const { createFakeDoubaoRuntime } = await import('../daemon/test/fixtures/doubao-runtime.mjs');
+    doubaoRuntime = join(dataDir, 'doubao-runtime');
+    createFakeDoubaoRuntime(doubaoRuntime);
+  }
+  // The dsh adapter wants the same fake ACP agent shaped the way DeepSeek Harness answers.
+  writeFileSync(
+    join(binDir, 'fake-dsh'),
+    `#!/bin/sh\nFAKE_ACP_FLAVOR=dsh exec "${process.execPath}" "${join(fixtures, 'fake-acp.mjs')}" "$@"\n`,
+    { mode: 0o755 },
+  );
   // For the tests of other machines: `CALLI_SSH_BIN: 'fake-ssh'` makes directories stand in for them.
   shim(binDir, 'fake-ssh', 'fake-ssh.mjs');
   // An extra CLI for the discovery tests: looks like another copy of agy on PATH.
   if (env.CALLI_E2E_DISCOVER_AGY2 === '1') shim(binDir, 'agy2', 'fake-agy.mjs');
+  if (env.CALLI_E2E_DISCOVER_DOUBAO2 === '1') shim(binDir, 'doubao2', 'fake-doubao.mjs');
 
   const port = await freePort();
   const daemonEnv = {
@@ -97,6 +111,9 @@ export async function startDaemon(env = {}, opts = {}) {
     HOME: homeDir,
     // The fake agents are shims in binDir, so that directory leads the PATH.
     PATH: `${binDir}:${process.env.PATH ?? ''}`,
+    // A test hub's agents are the fakes it was given; the machine's real CLIs and accounts
+    // must not auto-join it, however the fakes were configured (inline or agents.json).
+    CALLI_AUTO_JOIN: 'off',
     CALLI_TOKEN: TOKEN,
     CALLI_HOST: '127.0.0.1',
     CALLI_PORT: String(port),
@@ -107,6 +124,10 @@ export async function startDaemon(env = {}, opts = {}) {
     CALLI_PI_BIN: 'fake-pi',
     CALLI_CLAUDE_ACP_BIN: 'fake-claude',
     CALLI_AGY_BIN: 'fake-agy',
+    CALLI_DSH_BIN: 'fake-dsh',
+    CALLI_DOUBAO_BIN: 'fake-doubao',
+    CALLI_DOUBAO_STREAM: '',
+    CALLI_DOUBAO_RUNTIME: doubaoRuntime,
     PI_CODING_AGENT_DIR: join(dataDir, 'pi-agent'),
     CALLI_AGY_HOME: join(dataDir, 'agy-home'),
     ZCODE_DATA_BASE_DIR: dataDir,
@@ -116,6 +137,11 @@ export async function startDaemon(env = {}, opts = {}) {
     CALLI_SOCKET: join(dataDir, 'daemon.sock'),
     ...env,
   };
+  if (opts.agents !== undefined) {
+    // A seeded file exercises persistent registry writes; inline JSON intentionally stays read-only.
+    writeFileSync(join(dataDir, 'agents.json'), JSON.stringify({ agents: opts.agents }, null, 2) + '\n', { mode: 0o600 });
+    delete daemonEnv.CALLI_AGENTS_JSON;
+  }
   const child = spawn(process.execPath, [join(repoRoot, 'daemon', 'dist', 'index.js')], {
     env: daemonEnv,
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -231,4 +257,19 @@ export function api(daemon, path, init = {}) {
     ...init,
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${daemon.token}`, ...(init.headers ?? {}) },
   });
+}
+
+/** Leave a settings detail and its phone index through the same Back control as the product. */
+export async function closeSettings(page) {
+  for (let i = 0; i < 4 && await page.locator('.settings-page').count(); i++) {
+    await page.locator('.settings-topbar').getByRole('button', { name: '返回', exact: true }).click();
+  }
+  await page.locator('.settings-page').waitFor({ state: 'detached' });
+}
+
+/** Collaboration is a secondary action in the composer's add menu on every screen. */
+export async function openCollaboration(page) {
+  await page.getByRole('button', { name: '添加与模式', exact: true }).click();
+  await page.getByRole('menuitem', { name: '协作', exact: true }).or(page.getByRole('option', { name: '协作', exact: true })).click();
+  await page.getByRole('menu', { name: '协作', exact: true }).waitFor();
 }

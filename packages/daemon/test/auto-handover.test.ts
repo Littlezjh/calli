@@ -31,7 +31,15 @@ async function setup(summaryFail = false, hidden?: string) {
     }));
   }
   adapters.set('offline', new AgyAdapter(['nonexistent-handover-fixture']));
-  const manager = new ThreadManager(store, adapters, [dir], new AttachmentStore(dir), () => [...adapters.keys()].map(id => ({ id, adapter: 'agy', ...(id === hidden ? { hidden: true } : {}) })));
+  // A healthy instance of a different product: it passes every availability and quota check, so
+  // only the same-adapter default can keep an automatic handover from crossing products.
+  writeFileSync(join(dir, 'other.json'), JSON.stringify({ 'Gemini Models': 10 }));
+  adapters.set('other', new AgyAdapter([process.execPath, join(fixtures, 'fake-agy.mjs')], { FAKE_HANDOVER_QUOTA: join(dir, 'other.json') }));
+  // A bridge to a third-party model: the same adapter, healthy, but with no plan to read usage from.
+  writeFileSync(join(dir, 'bridge.json'), '{}');
+  adapters.set('bridge', new AgyAdapter([process.execPath, join(fixtures, 'fake-agy.mjs')], { FAKE_HANDOVER_QUOTA: join(dir, 'bridge.json') }));
+  const kinds: Record<string, string> = { other: 'traex' };
+  const manager = new ThreadManager(store, adapters, [dir], new AttachmentStore(dir), () => [...adapters.keys()].map(id => ({ id, adapter: kinds[id] ?? 'agy', ...(id === hidden ? { hidden: true } : {}) })));
   Object.defineProperty(manager.autoHandover, 'delayMs', { value: 80 });
   const team = new CoordinationManager(store, manager, join(dir, 'calli.sock'));
   const server = createHttpServer({ manager, token: 'test-token', webDir: null, version: 'test' });
@@ -40,7 +48,17 @@ async function setup(summaryFail = false, hidden?: string) {
   const api = (path: string, method = 'GET', body?: unknown) => fetch(base + path, { method, headers: { Authorization: 'Bearer test-token', 'Content-Type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   const thread = await manager.createThread({ agent: 'agy', cwd: dir, model: 'gemini-pro' });
   const config = (targets = [{ agent: 'agy2', model: 'gemini-pro' }]) => manager.autoHandover.configure({ enabled: true, threshold: 90, orders: { agy: targets } });
-  const done = async (id = thread.id) => wait(() => manager.threadView(id).status !== 'running' && !manager.autoHandover.held(id));
+  // A coordination reply can start the next turn right after the current one ends, in the gap
+  // between the status cleanup and the queued turn's own running flag. Settling means the
+  // not-running observation survives a beat. Turns that stay queued without starting are fine:
+  // they do not make a takeover busy.
+  const done = async (id = thread.id) => {
+    for (;;) {
+      await wait(() => manager.threadView(id).status !== 'running' && !manager.autoHandover.held(id));
+      await new Promise(r => setTimeout(r, 50));
+      if (manager.threadView(id).status !== 'running' && !manager.autoHandover.held(id)) return;
+    }
+  };
   return { dir, store, manager, team, thread, api, config, done, adapters,
     async close() { team.dispose(); await manager.shutdown(); await new Promise<void>(r => server.close(() => r())); store.close(); rmSync(dir, { recursive: true, force: true }); } };
 }
@@ -70,7 +88,8 @@ test('settings API validates and persists machine config; thread overrides are s
     assert.equal((await (await h.api('/api/handover-settings')).json()).enabled, false);
     const settings = { enabled: true, threshold: 93, orders: { agy: [{ agent: 'agy2', model: 'gemini-pro' }] } };
     assert.equal((await h.api('/api/handover-settings', 'PUT', settings)).status, 200);
-    assert.deepEqual(h.store.hubSetting('handover.settings', null), settings);
+    assert.deepEqual(h.store.hubSetting('handover.settings', null), { ...settings, resume: false, method: 'resume' });
+    assert.equal((await h.api('/api/handover-settings', 'PUT', { ...settings, resume: 'yes' })).status, 400);
     for (const bad of [{ ...settings, threshold: 100 }, { ...settings, enabled: 'true' }, { ...settings, orders: { agy: [{ agent: 'missing' }] } }]) assert.equal((await h.api('/api/handover-settings', 'PUT', bad)).status, 400);
     assert.equal((await h.api(`/api/threads/${h.thread.id}/auto-handover`, 'PATCH', { enabled: 'false' })).status, 400);
     assert.equal((await h.api(`/api/threads/${h.thread.id}/auto-handover`, 'PATCH', { enabled: false })).status, 200);
@@ -84,6 +103,8 @@ test('fresh near-quota -> agent summary -> countdown -> successor; queued work f
   const h = await setup();
   try {
     h.config();
+    // The summary path: the brief is written even for another account of the same agent.
+    h.manager.autoHandover.configure({ enabled: true, threshold: 90, orders: { agy: [{ agent: 'agy2', model: 'gemini-pro' }] }, method: 'summary' });
     await h.manager.agentQuota('agy'); // The fresh turn must not use this 10% cached value.
     await h.manager.startTurn(h.thread.id, { text: 'quota-near' });
     await h.manager.startTurn(h.thread.id, { text: 'queued followup', queue: true });
@@ -240,6 +261,52 @@ test('no successor stops queued work, and a previously exhausted source is not s
     const other = await h.manager.createThread({ agent: 'agy2', cwd: h.dir, model: 'gemini-pro' });
     h.manager.autoHandover.configure({ enabled: true, threshold: 90, orders: { agy2: [{ agent: 'agy' }, { agent: 'agy', model: 'gemini-pro' }] } });
     assert.deepEqual(await h.manager.autoHandover.targets(other.id), []);
+  } finally { await h.close(); }
+});
+
+test('the default order skips a bridge without a plan; an order that names it still uses it', async () => {
+  const h = await setup();
+  try {
+    h.manager.autoHandover.configure({ enabled: true, threshold: 90, orders: {} });
+    // Every subscription account is used up, so only the bridge is left.
+    for (const id of ['agy2', 'agy3']) writeFileSync(join(h.dir, id + '.json'), JSON.stringify({ 'Gemini Models': 95 }));
+    assert.deepEqual(await h.manager.autoHandover.targets(h.thread.id), []);
+    // A healthy subscription account is found as before.
+    writeFileSync(join(h.dir, 'agy3.json'), JSON.stringify({ 'Gemini Models': 10 }));
+    assert.deepEqual((await h.manager.autoHandover.targets(h.thread.id)).map(t => t.agent), ['agy3']);
+    h.manager.autoHandover.configure({ enabled: true, threshold: 90, orders: { agy: [{ agent: 'bridge' }] } });
+    assert.deepEqual((await h.manager.autoHandover.targets(h.thread.id)).map(t => t.agent), ['bridge']);
+  } finally { await h.close(); }
+});
+
+test('a hub that never saved the setting starts with it on, and a choice made later stays', async () => {
+  const h = await setup();
+  try {
+    assert.equal(h.manager.autoHandover.settings().enabled, false);
+    h.manager.autoHandover.seedDefault();
+    assert.equal(h.manager.autoHandover.settings().enabled, true);
+    h.manager.autoHandover.configure({ enabled: false, threshold: 90, orders: {} });
+    h.manager.autoHandover.seedDefault();
+    assert.equal(h.manager.autoHandover.settings().enabled, false);
+  } finally { await h.close(); }
+});
+
+test('the default order hands over within the same product only', async () => {
+  const h = await setup();
+  try {
+    h.manager.autoHandover.configure({ enabled: true, threshold: 90, orders: {} });
+    writeFileSync(join(h.dir, 'agy2.json'), JSON.stringify({ 'Gemini Models': 95 }));
+    writeFileSync(join(h.dir, 'agy3.json'), JSON.stringify({ 'Gemini Models': 95 }));
+    await h.manager.startTurn(h.thread.id, { text: 'quota-exhausted' }); await h.done();
+    assert.equal(h.manager.autoHandover.view(h.thread.id).state, 'stopped');
+    assert.equal(h.manager.listThreads().length, 1);
+    // An explicitly listed cross-product target is still honored as configured.
+    const second = await h.manager.createThread({ agent: 'agy2', cwd: h.dir, model: 'gemini-pro' });
+    h.manager.autoHandover.configure({ enabled: true, threshold: 90, orders: { agy2: [{ agent: 'other' }] } });
+    await h.manager.startTurn(second.id, { text: 'quota-exhausted' }); await h.done(second.id);
+    const next = h.manager.listThreads().find(t => t.handover?.sourceId === second.id);
+    assert.equal(next?.agent, 'other');
+    await h.done(next!.id);
   } finally { await h.close(); }
 });
 

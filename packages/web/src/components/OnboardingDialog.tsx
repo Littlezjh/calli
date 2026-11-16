@@ -1,8 +1,9 @@
 import { useEffect, useState, useMemo } from 'react';
-import type { AgentInfo, Api } from '../api';
+import type { AgentInfo, Api, StreamBridgeCapability, SupportedAgent } from '../api';
 import { DialogSurface } from './Dialog';
 import { AgentMark, IconCheck, IconClose } from './icons';
 import { t } from '../i18n';
+import { StreamBridgeOption } from './StreamBridgeOption';
 
 export interface OnboardingDialogProps {
   api: Api;
@@ -24,6 +25,7 @@ interface InstalledItem {
   command?: string;
   email?: string;
   env?: Record<string, string>;
+  streamBridge?: StreamBridgeCapability;
 }
 
 interface UninstalledItem {
@@ -52,10 +54,10 @@ export function OnboardingDialog({
   const [discoveredAccounts, setDiscoveredAccounts] = useState<
     Array<{ adapter: string; email: string; env: Record<string, string>; id: string; label: string }>
   >([]);
-  const [supportedList, setSupportedList] = useState<
-    Array<{ adapter: string; label: string; icon?: string; installGuide?: string }>
-  >([]);
+  const [supportedList, setSupportedList] = useState<SupportedAgent[]>([]);
+  const [streamBridges, setStreamBridges] = useState<Record<string, boolean>>({});
 
+  const [connectedKeys, setConnectedKeys] = useState<Set<string>>(new Set());
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
 
   // Load discovery data whenever entering the 'results' step
@@ -84,6 +86,8 @@ export function OnboardingDialog({
         defaultSelected.add(`acc:${acc.id}`);
       }
       setSelectedKeys(defaultSelected);
+      setStreamBridges({});
+      setConnectedKeys(new Set());
       setLoading(false);
     }).catch((e) => {
       if (cancelled) return;
@@ -115,6 +119,7 @@ export function OnboardingDialog({
         hint: cli.command,
         icon: cli.icon ?? sup?.icon,
         command: cli.command,
+        streamBridge: sup?.capabilities?.streamBridge,
       });
     }
     for (const acc of discoveredAccounts) {
@@ -129,6 +134,7 @@ export function OnboardingDialog({
         icon: sup?.icon,
         email: acc.email,
         env: acc.env,
+        streamBridge: sup?.capabilities?.streamBridge,
       });
     }
     return items;
@@ -160,7 +166,7 @@ export function OnboardingDialog({
     setBusy(true);
     setError(null);
     try {
-      const toAdd = installedItems.filter((item) => selectedKeys.has(item.key));
+      const toAdd = installedItems.filter((item) => selectedKeys.has(item.key) && !connectedKeys.has(item.key));
       for (const item of toAdd) {
         if (item.type === 'cli') {
           await api.addAgent({
@@ -168,6 +174,7 @@ export function OnboardingDialog({
             adapter: item.adapter,
             label: item.label,
             command: [item.command!],
+            ...(item.streamBridge ? { streamBridge: streamBridges[item.key] ?? false } : {}),
           });
         } else {
           await api.addAgent({
@@ -176,8 +183,10 @@ export function OnboardingDialog({
             label: item.label,
             env: item.env,
             account: item.email,
+            ...(item.streamBridge ? { streamBridge: streamBridges[item.key] ?? false } : {}),
           });
         }
+        setConnectedKeys(previous => new Set([...previous, item.key]));
       }
       const freshList = await api.agents();
       onConnected(freshList);
@@ -249,27 +258,34 @@ export function OnboardingDialog({
               <div className="onboard-list" role="group" aria-label={t('onboard.installedGroup')}>
                 {installedItems.map((item) => {
                   const isChecked = selectedKeys.has(item.key);
+                  const connected = connectedKeys.has(item.key);
                   return (
-                    <button
-                      key={item.key}
-                      type="button"
-                      role="checkbox"
-                      aria-checked={isChecked}
-                      disabled={busy}
-                      className={`onboard-row onboard-row-installed${isChecked ? ' checked' : ''}`}
-                      onClick={() => toggleSelect(item.key, !isChecked)}
-                    >
-                      <span className={`onboard-checkbox${isChecked ? ' checked' : ''}`} aria-hidden="true">
-                        {isChecked && <IconCheck size={12} />}
-                      </span>
-                      <span className="onboard-item-icon">
-                        {item.icon ? <AgentMark path={item.icon} size={18} /> : null}
-                      </span>
-                      <span className="onboard-item-body">
-                        <span className="onboard-item-name">{item.label}</span>
-                        <span className="onboard-item-hint">{item.hint}</span>
-                      </span>
-                    </button>
+                    <div key={item.key} className="onboard-entry">
+                      <button
+                        type="button"
+                        role="checkbox"
+                        aria-checked={isChecked}
+                        disabled={busy || connected}
+                        className={`onboard-row onboard-row-installed${isChecked ? ' checked' : ''}`}
+                        onClick={() => toggleSelect(item.key, !isChecked)}
+                      >
+                        <span className={`onboard-checkbox${isChecked ? ' checked' : ''}`} aria-hidden="true">
+                          {isChecked && <IconCheck size={12} />}
+                        </span>
+                        <span className="onboard-item-icon">
+                          {item.icon ? <AgentMark path={item.icon} size={18} /> : null}
+                        </span>
+                        <span className="onboard-item-body">
+                          <span className="onboard-item-name">{item.label}</span>
+                          <span className="onboard-item-hint">{item.hint}</span>
+                        </span>
+                        {connected && <span className="onboard-badge">{t('onboard.connected')}</span>}
+                      </button>
+                      {item.streamBridge && <div className="onboard-entry-options">
+                        <StreamBridgeOption capability={item.streamBridge} value={streamBridges[item.key] ?? false} disabled={busy || connected || !isChecked} compact
+                          onChange={enabled => setStreamBridges(previous => ({ ...previous, [item.key]: enabled }))} />
+                      </div>}
+                    </div>
                   );
                 })}
               </div>

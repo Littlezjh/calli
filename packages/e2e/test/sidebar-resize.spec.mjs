@@ -14,7 +14,7 @@ test('desktop sidebar drag resizes, persists, and stays off the phone layout', a
 
     const sidebar = page.locator('.sidebar');
     const handle = page.locator('.sidebar-resize-handle');
-    assert.equal(await handle.getAttribute('aria-valuenow'), '288');
+    assert.equal(await handle.getAttribute('aria-valuenow'), '300', 'undragged, the list takes a quarter of the window');
     const before = await handle.boundingBox();
     assert.ok(before);
     await page.mouse.move(before.x + before.width / 2, before.y + before.height / 2);
@@ -22,12 +22,12 @@ test('desktop sidebar drag resizes, persists, and stays off the phone layout', a
     await page.mouse.move(before.x + before.width / 2 + 140, before.y + before.height / 2);
     await page.mouse.up();
 
-    assert.equal(Math.round((await sidebar.boundingBox()).width), 428);
-    assert.equal(await handle.getAttribute('aria-valuenow'), '428');
-    assert.equal(await page.evaluate(() => localStorage.getItem('calli.sidebar.width')), '428');
+    assert.equal(Math.round((await sidebar.boundingBox()).width), 440);
+    assert.equal(await handle.getAttribute('aria-valuenow'), '440');
+    assert.equal(await page.evaluate(() => localStorage.getItem('calli.sidebar.width')), '440');
 
     await page.reload();
-    assert.equal(Math.round((await sidebar.boundingBox()).width), 428, 'the dragged width survives a reload');
+    assert.equal(Math.round((await sidebar.boundingBox()).width), 440, 'the dragged width survives a reload');
     await page.setViewportSize({ width: 390, height: 844 });
     await page.waitForFunction(() => window.matchMedia('(max-width: 899px)').matches && !document.querySelector('.sidebar-resize-handle'));
     assert.equal(await page.locator('.sidebar-resize-handle').count(), 0, 'the phone drawer has no resize handle');

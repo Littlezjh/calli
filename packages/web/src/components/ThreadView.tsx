@@ -1,14 +1,18 @@
-import { hydrateHistoryFiles } from '../timeline';
+import { channelRows, hydrateHistoryFiles } from '../timeline';
 import { ApiError, type Api } from '../api';
 import { hydrateWork, HistoryClient, type HistoryDetail, type HistoryWork, type ResourceKind, type WorkFiles } from '../history';
-import { Children, createContext, Fragment, isValidElement, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { Children, createContext, Fragment, isValidElement, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type KeyboardEvent, type ReactNode } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { trimAutolinkJunk } from '../markdown-links';
+import { placeImages, stripPaths } from '../image-places';
+import { highlightLanguage, languageName } from '../code-language';
 import { enlargeMermaidDiagram, renderMermaidDiagram } from '../mermaid';
 import { copyText } from '../clipboard';
 import { diffLines, numberLines } from '../diff';
 import { pictureUrl, svgPicture } from '../images';
 import { SentVideo } from './VideoPreview';
+import { PlanList, PlanRing, planProgress } from './PlanPanel';
 import { IMAGE_FILE, linkTarget, nameAttachments, relativePath, shortenPaths } from '../paths';
 import {
   buildTimeline,
@@ -16,42 +20,46 @@ import {
   type DetailRef,
   clockLabel,
   compactionLabel,
-  deliveredPreview,
   durationLabel,
+  firstSentence,
+  withoutProgress,
   groupByTurn,
-  imagePathsIn,
+  imagePlaces,
   liveWorkFromEvents,
+  progressState,
   runSummary,
   splitThinking,
   splitNotes,
   splitUserQuote,
-  thinkingPreview,
   stepActive,
+  stepCommand,
   stepTitle,
   stepStatusLabel,
   workSections,
   type ApprovalOption,
   type CoordinationNote,
+  type DeliveredState,
   type FileChange,
   type FileDiff,
   type ImageRef,
   type Item,
   type Note,
-  type PlanEntry,
   type Step,
   type Thought,
   type WorkSection,
 } from '../timeline';
 import { VoiceCloud } from './VoiceOrb';
 import { Lightbox } from './Lightbox';
-import { PlanCopyButton, PlanDownloadButton, PlanReader } from './PlanReader';
-import { IconBell, ActivityIcon, IconAgents, IconCheck, IconChevron, IconClose, IconCompact, IconCopy, IconEdit, IconFile, IconFork, IconHand, IconHandover, IconList, IconQuote, IconWorktree } from './icons';
+import { PlanCopyButton, PlanDownloadButton } from './plan-tools';
+import { IconBell, ActivityIcon, IconArrowRight, IconCheck, IconChevron, IconClose, IconCompact, IconCopy, IconEdit, IconExternal, IconFile, IconFork, IconHand, IconHandover, IconQuote, IconTray, IconWorktree } from './icons';
 import { t } from '../i18n';
 
 // The daemon's confirmation marker is replaced by the localized notice label.
 const PERSONAL_CONFIRMATION_TEXT = '待你确认';
 
 interface Props {
+  /** Where a matter waiting for confirmation is looked at, when not the plans page: her desk's new finds. */
+  onOpenFinds?: () => void;
   beforeItems?: ReactNode;
   chain?: boolean;
   observeOlder?: boolean;
@@ -79,9 +87,14 @@ interface Props {
   onFork?: (turnId: string) => void;
   /**
    * When the last turn failed because the agent's plan ran out: hand the thread to another agent.
-   * `label` names the agent one click goes to; `choose` opens the handover to pick another.
+   * `label` names the quota-aware one-click target when one is available; `choose` opens the handover to pick another.
    */
-  takeover?: { label: string; go: () => void; choose: () => void; busy?: boolean } | null;
+  takeover?: { label?: string; go?: () => void; choose: () => void; busy?: boolean } | null;
+  /**
+   * When the last turn failed because the agent's plan ran out: wait for the quota to reset and
+   * continue with the same agent. `armed` mirrors the daemon's watch; `onArm`/`onCancel` toggle it.
+   */
+  resume?: { armed: boolean; resetsAt?: string | null; onArm: () => void; onCancel: () => void; busy?: boolean; error?: string } | null;
   /** The agent can end a copy at any finished turn, so every answer gets the button, not only the last. */
   forkAnyTurn?: boolean;
   /**
@@ -90,6 +103,14 @@ interface Props {
    * cannot copy a conversation up to just before a message.
    */
   onEdit?: (turnId: string, edit: { text: string; images: string[]; revision: number; requestId: string }) => Promise<void>;
+  /**
+   * A delivery names the member who sent it; this maps that name to the member's own thread, so
+   * the body's footer can offer a way in. `null` when the name is not on the team any more, and
+   * the button stays away.
+   */
+  memberThreadId?: (name: string) => string | null;
+  /** Opens a member's thread, resolved above, as the person's own navigation would. */
+  onOpenMemberThread?: (threadId: string) => void;
   /** The history this view was built from; an edit is sent against it. */
   revision?: number;
 }
@@ -102,7 +123,7 @@ const RECENT_TURNS = 30;
 /** Scrolling up to within this distance of the top unfolds or fetches the earlier turns. */
 const NEAR_TOP_PX = 600;
 
-export function ThreadView({ chain = false, observeOlder = true, beforeItems, olderLabel, olderError, revealTurnId, historyApi, historyThreadId, items: originalItems, roots, loadImage, loadFile, onOpenFile, onPreview, hasOlder, loadingOlder, onLoadOlder, onFork, forkAnyTurn, onEdit, revision = 0, takeover }: Props) {
+export function ThreadView({ onOpenFinds, chain = false, observeOlder = true, beforeItems, olderLabel, olderError, revealTurnId, historyApi, historyThreadId, items: originalItems, roots, loadImage, loadFile, onOpenFile, onPreview, hasOlder, loadingOlder, onLoadOlder, onFork, forkAnyTurn, onEdit, revision = 0, takeover, resume, memberThreadId, onOpenMemberThread }: Props) {
   const [loadedFiles, setLoadedFiles] = useState<{ client?: HistoryClient; files: Map<string, WorkFiles> }>({ files: new Map() });
   const historyClient = useMemo(() => {
     if (!historyApi || !historyThreadId) return undefined;
@@ -136,8 +157,9 @@ export function ThreadView({ chain = false, observeOlder = true, beforeItems, ol
   useEffect(() => release, []);
   const pictures = useMemo(() => ({ openFile: openPicture, show, openText: onOpenFile }), [openPicture, show, onOpenFile]);
   const groups = useMemo(() => groupByTurn(items), [items]);
-  // "Show everything" is remembered per thread; switching threads starts folded again.
-  const threadKey = items[0]?.key ?? '';
+  // "Show everything" is remembered per thread; switching threads starts folded again. Not keyed
+  // on the first item: an earlier page put in front would fold away what is being read.
+  const threadKey = historyThreadId ?? items[0]?.key ?? '';
   const [expandedFor, setExpandedFor] = useState<{ key: string; value: boolean }>({ key: '', value: false });
   const expanded = expandedFor.key === threadKey && expandedFor.value;
   useLayoutEffect(() => {
@@ -241,18 +263,26 @@ export function ThreadView({ chain = false, observeOlder = true, beforeItems, ol
         case 'handover-summary': return <HandoverSummary key={item.key} item={item} />;
         case 'notice': {
           const title = item.confirmation ? item.text.replace(new RegExp(`^${PERSONAL_CONFIRMATION_TEXT}[：:]?`), '') : item.text;
-          return <div key={item.key} className="agent-notice"><IconBell size={14} /><span>{item.confirmation ? (title ? t('personal.confirmTitle', title) : t('personal.confirm')) : <>{t('personal.notice')} {title}</>}{item.confirmation && <> · <a href="#/todos">{t('personal.openPlans')}</a></>}</span></div>;
+          // In her own conversation a matter to confirm is looked at on the desk, among the new finds.
+          const go = onOpenFinds ? <button type="button" className="agent-notice-link" onClick={onOpenFinds}>{t('personal.openFinds')}</button> : <a href="#/todos">{t('personal.openPlans')}</a>;
+          return <div key={item.key} className="agent-notice"><IconBell size={14} /><span>{item.confirmation ? (title ? t('personal.confirmTitle', title) : t('personal.confirm')) : <>{t('personal.notice')} {title}</>}{item.confirmation && <> · {go}</>}</span></div>;
         }
         case 'model-switch': return <div key={item.key} className="context-compaction handover-divider">{t('auto.switched', item.model, item.previous, t(item.reason === 'exhausted' ? 'auto.exhausted' : 'auto.near'))}</div>;
+        case 'quota-resume': return <div key={item.key} className="context-compaction handover-divider">{t('auto.resumed')}</div>;
         case 'user': {
           if (item.handoverCollapsed) return null;
           // Nobody wrote this turn: the agent picked up work on its own, e.g. a finished background task.
+          // A hairline across the thread with the word in the middle, like the fork mark but quiet.
           if (item.background) return (
-            <div key={item.key} className="row turn-note" data-turn={item.turnId}>
-              <span className="work-toggle"><span className="work-label">{t('view.backgroundTurn')}</span></span>
+            <div key={item.key} className="row turn-note" data-turn={item.turnId} role="separator" aria-label={t('view.backgroundTurn')}>
+              <span className="turn-note-label">{t('view.backgroundTurn')}</span>
             </div>
           );
-          if (item.coordination) return <DeliveredNote key={item.key} turnId={item.turnId} note={item.coordination} text={item.text} />;
+          // Nobody said this either: a channel handed over what it read. A quiet line, not a bubble.
+          if (item.channel) return channelRows(item.channel, item.text).map((row, index) => row.kind === 'person'
+            ? <div key={`${item.key}:${index}`} className="row user" data-turn={item.turnId}><div className="bubble">{row.text}</div></div>
+            : <div key={`${item.key}:${index}`} className="row channel-note" data-turn={item.turnId}><IconTray size={13} /><span>{row.text}</span></div>);
+          if (item.coordination) return <DeliveredNote key={item.key} turnId={item.turnId} note={item.coordination} text={item.text} memberThreadId={memberThreadId} onOpenMemberThread={onOpenMemberThread} />;
           // Notes (and the older single quote) ride in the message text; drawn apart here.
           const noted = splitNotes(item.text);
           const { quote, body } = noted.notes.length ? { quote: null, body: noted.body } : splitUserQuote(item.text);
@@ -356,22 +386,37 @@ export function ThreadView({ chain = false, observeOlder = true, beforeItems, ol
               )}
             </div>
           );
-        case 'error':
+        case 'error': {
+          // A plan that ran out is a system line, like the fork mark: centered between hairlines,
+          // no box. The conclusion leads, the agent's raw words shrink to one faint line, and every
+          // way on is a text link.
+          if (item.planExhausted) return (
+            <div key={item.key} className="row exhausted-note" role="alert">
+              <div className="exhausted-line">{t('timeline.error.planExhaustedTitle')}</div>
+              {item.detail && <div className="exhausted-sub" title={item.detail}>{item.detail}</div>}
+              {item === items[items.length - 1] && (takeover || resume) && <div className="exhausted-actions">
+                  {takeover?.go && takeover.label && <button className="exhausted-hand" onClick={takeover.go} disabled={takeover.busy}>
+                    {takeover.busy ? t('view.handingOver') : t('view.handTo', takeover.label)}
+                    <IconArrowRight size={14} />
+                  </button>}
+                  {takeover && <button className="exhausted-quiet" onClick={takeover.choose} disabled={takeover.busy}>{t('view.chooseOtherShort')}</button>}
+                  {resume && !resume.armed && <button className="exhausted-quiet" onClick={resume.onArm} disabled={resume.busy}>{t('view.resumeArm')}</button>}
+                  {resume?.armed && <>
+                    <span role="status">{resume.resetsAt ? t('view.resumeArmedAt', resetClock(resume.resetsAt)) : t('view.resumeArmedAny')}</span>
+                    <button className="exhausted-quiet" onClick={resume.onCancel} disabled={resume.busy}>{t('view.resumeCancel')}</button>
+                  </>}
+                  {resume?.error && <small className="exhausted-error">{resume.error}</small>}
+                </div>}
+            </div>
+          );
           return (
             <div key={item.key} className="row">
               <div className="error-box">
                 {item.message}
-                {item.planExhausted && takeover && item === items[items.length - 1] && (
-                  <div className="error-actions">
-                    <button className="primary" onClick={takeover.go} disabled={takeover.busy}>
-                      <IconHand size={15} /> {takeover.busy ? t('view.handingOver') : t('view.handTo', takeover.label)}
-                    </button>
-                    <button className="ghost" onClick={takeover.choose} disabled={takeover.busy}>{t('view.chooseOther')}</button>
-                  </div>
-                )}
               </div>
             </div>
           );
+        }
         case 'fork':
           return (
             <div key={item.key} className="row fork-mark" role="separator" aria-label={item.branch ? t('view.forkedInWorktree', item.branch) : t('view.forkedHere')}>
@@ -419,6 +464,15 @@ export function ThreadView({ chain = false, observeOlder = true, beforeItems, ol
 }
 
 const HistoryContext = createContext<HistoryClient | undefined>(undefined);
+
+/** A quota reset time as a short local note: "17:00" today, "10/12 17:00" later. Empty when unknown. */
+function resetClock(iso: string | null | undefined, now = new Date()): string {
+  if (!iso) return '';
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return '';
+  const hm = `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
+  return at.toDateString() === now.toDateString() ? hm : `${at.getMonth() + 1}/${at.getDate()} ${hm}`;
+}
 
 function VoiceRecap({ item, render }: { item: Extract<Item, { kind: 'voice-recap' }>; render: (items: Item[]) => ReactNode }) {
   const client = useContext(HistoryContext);
@@ -640,7 +694,7 @@ function editRequestId(): string {
 }
 
 /** The history the page last read; an edit sent against a stale one is refused by the daemon. */
-function CopyButton({ text, label }: { text: string; label: string }) {  const [state, setState] = useState<'idle' | 'done' | 'failed'>('idle');
+function CopyButton({ text, label, size = 15 }: { text: string; label: string; size?: number }) {  const [state, setState] = useState<'idle' | 'done' | 'failed'>('idle');
   useEffect(() => {
     if (state === 'idle') return;
     const timer = setTimeout(() => setState('idle'), 1600);
@@ -654,7 +708,7 @@ function CopyButton({ text, label }: { text: string; label: string }) {  const [
       title={state === 'failed' ? t('view.copyFailed') : state === 'done' ? t('common.copied') : label}
       onClick={async () => setState((await copyText(text)) ? 'done' : 'failed')}
     >
-      {state === 'done' ? <IconCheck size={15} /> : <IconCopy size={15} />}
+      {state === 'done' ? <IconCheck size={size} /> : <IconCopy size={size} />}
     </button>
   );
 }
@@ -676,6 +730,19 @@ function CodeBlock({ children }: { children?: ReactNode }) {
   const className = isValidElement<{ className?: string }>(code) ? (code.props.className ?? '') : '';
   const language = /language-([\w+#.-]+)/.exec(className)?.[1] ?? '';
   const text = plainText(children).replace(/\n$/, '');
+  const label = languageName(language);
+  // Colour comes in once the highlighter has loaded; until then, and for a language it does not
+  // know or a block too long to colour quickly, the code stays plain.
+  const [colored, setColored] = useState<string | null>(null);
+  useEffect(() => {
+    setColored(null);
+    if (!label || text.length > MAX_HIGHLIGHTED_BLOCK) return;
+    let alive = true;
+    void loadHighlighter().then((m) => alive && setColored(m.highlight(text, highlightLanguage(language)))).catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [text, language, label]);
   const picture = useMemo(() => svgPicture(text), [text]);
   // A source the browser cannot draw (not well formed) stays code.
   const [failed, setFailed] = useState<string | null>(null);
@@ -712,9 +779,9 @@ function CodeBlock({ children }: { children?: ReactNode }) {
   const pictures = useContext(Pictures);
   const drawn = (picture !== null && picture !== failed) || diagram !== null;
   return (
-    <div className="code-block">
+    <div className={`code-block${label || drawn ? '' : ' bare'}`}>
       <div className="code-head">
-        <span>{language}</span>
+        {label && <span className="code-lang">{label}</span>}
         <span className="code-actions">
           {drawn && (
             <span className="code-views" role="group" aria-label={t('view.display')}>
@@ -726,7 +793,7 @@ function CodeBlock({ children }: { children?: ReactNode }) {
               </button>
             </span>
           )}
-          <CopyButton text={text} label={t('view.copyCode')} />
+          <CopyButton text={text} label={t('view.copyCode')} size={16} />
         </span>
       </div>
       {drawn && !showCode ? (
@@ -752,6 +819,8 @@ function CodeBlock({ children }: { children?: ReactNode }) {
             <img src={picture ?? undefined} alt={t('view.svg')} onError={() => picture && setFailed(picture)} />
           </button>
         )
+      ) : colored !== null ? (
+        <pre><code className={className} dangerouslySetInnerHTML={{ __html: colored }} /></pre>
       ) : (
         <pre>{children}</pre>
       )}
@@ -759,9 +828,15 @@ function CodeBlock({ children }: { children?: ReactNode }) {
   );
 }
 
+// The highlighter is shared with the file viewer, and fetched the first time either needs it.
+let highlighter: Promise<typeof import('../highlight')> | null = null;
+const loadHighlighter = () => (highlighter ??= import('../highlight'));
+/** Past this, a block in an answer is left plain, so a long paste never holds the thread up. */
+const MAX_HIGHLIGHTED_BLOCK = 20_000;
+
 /**
  * An image in Markdown. One from the web is shown as it is. A local path cannot be loaded by the
- * browser (it is a file on the agent's host), so it is left out here and shown under the message.
+ * browser (it is a file on the agent's host), so it is left out here and shown after its passage.
  */
 function MarkdownImage({ src, alt }: { src?: string; alt?: string }) {
   if (!src || !/^(https?:|data:image\/)/i.test(src)) return null;
@@ -844,8 +919,41 @@ function MarkdownLink({ href, title, children }: { href?: string; title?: string
   );
 }
 
-const MARKDOWN_COMPONENTS = { pre: CodeBlock, img: MarkdownImage, a: MarkdownLink };
-const MARKDOWN_PLUGINS = [remarkGfm];
+/** How a finished answer's own pictures are fetched and opened, for the strips placed in its text. */
+const FileImages = createContext<{ roots: string[]; load: (path: string) => Promise<Blob>; onOpen: (url: string, name?: string) => void } | null>(null);
+
+/** A `div` in an answer is a strip of its pictures, put after the passage that names them. */
+function MarkdownDiv({ node: _node, ...props }: ComponentProps<'div'> & { node?: unknown }) {
+  const images = useContext(FileImages);
+  const paths = stripPaths(props as { className?: string; 'data-paths'?: unknown });
+  if (!paths) return <div {...props} />;
+  if (!images) return null;
+  return (
+    <div className="file-images">
+      {paths.map((path) => <FileImage key={path} path={path} roots={images.roots} load={images.load} onOpen={images.onOpen} />)}
+    </div>
+  );
+}
+
+/**
+ * Inline code that folds at its own separators: a long path in a plan's file table wraps after a
+ * `/` or before its extension, instead of the token being snapped in half wherever the column
+ * happens to run out. Wide columns never wrap, so nothing changes where it fits.
+ */
+function BreakableCode({ children, ...props }: ComponentProps<'code'>) {
+  const text = typeof children === 'string' ? children : null;
+  if (text === null || !/[/.]/.test(text)) return <code {...props}>{children}</code>;
+  // 'src/pages/Products.tsx' → ['src/', 'pages/', 'Products', '.tsx'], joined with break chances.
+  const parts = text.split(/(?<=\/)|(?=\.)/);
+  return (
+    <code {...props}>
+      {parts.map((part, i) => <Fragment key={i}>{i > 0 && <wbr />}{part}</Fragment>)}
+    </code>
+  );
+}
+
+const MARKDOWN_COMPONENTS = { pre: CodeBlock, img: MarkdownImage, a: MarkdownLink, div: MarkdownDiv, code: BreakableCode };
+const MARKDOWN_PLUGINS = [remarkGfm, trimAutolinkJunk];
 /**
  * Markdown drops addresses it does not know, `file://` among them, leaving a link that reloads
  * the page. Every address is kept instead: links and images are drawn by the components above,
@@ -867,21 +975,20 @@ interface AssistantProps {
  */
 const AssistantMessage = memo(function AssistantMessage({ text, done, roots, loadFile, onOpen }: AssistantProps) {
   // Looked for once the message is complete: a path that is still being typed would not be found.
-  const images = useMemo(() => (done ? imagePathsIn(text, roots) : []), [done, text, roots]);
+  const plugins = useMemo(() => {
+    const places = done ? imagePlaces(text, roots) : [];
+    return places.length ? [...MARKDOWN_PLUGINS, placeImages(places)] : MARKDOWN_PLUGINS;
+  }, [done, text, roots]);
+  const images = useMemo(() => ({ roots, load: loadFile, onOpen }), [roots, loadFile, onOpen]);
   return (
     <div className="row assistant">
       <div className="markdown">
-        <Markdown remarkPlugins={MARKDOWN_PLUGINS} components={MARKDOWN_COMPONENTS} urlTransform={keepUrl}>
-          {text}
-        </Markdown>
+        <FileImages.Provider value={images}>
+          <Markdown remarkPlugins={plugins} components={MARKDOWN_COMPONENTS} urlTransform={keepUrl}>
+            {text}
+          </Markdown>
+        </FileImages.Provider>
       </div>
-      {images.length > 0 && (
-        <div className="file-images">
-          {images.map((path) => (
-            <FileImage key={path} path={path} roots={roots} load={loadFile} onOpen={onOpen} />
-          ))}
-        </div>
-      )}
     </div>
   );
 });
@@ -899,31 +1006,54 @@ export function Prose({ text, className = '' }: { text: string; className?: stri
 
 /**
  * What another agent of the team sent into this thread. It is not the user's words, so it is not
- * a bubble: a card folded to who sent it and how it opens, and read as Markdown once opened.
+ * a bubble: one quiet line — who, how it stands, the first of what they said — that folds out in
+ * place to the message itself as Markdown, with a way into the member's own thread.
  */
-const DeliveredNote = memo(function DeliveredNote({ turnId, note, text }: { turnId: string; note: CoordinationNote; text: string }) {
+const DeliveredNote = memo(function DeliveredNote({ turnId, note, text, memberThreadId, onOpenMemberThread }: {
+  turnId: string; note: CoordinationNote; text: string;
+  memberThreadId?: (name: string) => string | null; onOpenMemberThread?: (threadId: string) => void;
+}) {
   const [open, setOpen] = useState(false);
-  const preview = useMemo(() => deliveredPreview(text), [text]);
+  const state: DeliveredState = note.failed ? 'failed' : progressState(text);
+  // The protocol's closing line said what the dot and the word say; the message itself goes without.
+  const body = useMemo(() => withoutProgress(text), [text]);
+  const member = note.from && memberThreadId ? memberThreadId(note.from) : null;
+  const word = state === 'failed' ? t('team.failed')
+    : state === 'progress' ? t('view.deliveredProgress')
+    : state === 'review' ? t('view.deliveredReview')
+    : state === 'need' ? t('view.deliveredNeed')
+    : note.kind === 'task' ? t('view.deliveredTask')
+    : null;
   return (
     <div className={`row delivered${open ? ' open' : ''}`} data-turn={turnId}>
-      <button type="button" className="delivered-head" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
-        <span className="delivered-title">
-          <IconAgents size={15} />
-          <span className="delivered-from">{note.from || t('team.member')}</span>
-          <span className="muted">{note.kind === 'result' ? t('view.deliveredResult') : t('view.deliveredTask')}</span>
-          {note.failed && <span className="delivered-failed">{t('team.failed')}</span>}
-          <IconChevron size={14} open={open} />
-        </span>
-        {!open && preview && <span className="delivered-preview">{preview}</span>}
+      <button type="button" className="delivered-line" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+        <span className={`delivered-dot${state ? ` ${state}` : ''}`} />
+        <span className="delivered-from">{note.from || t('team.member')}</span>
+        {word && <span className={`delivered-status${state ? ` ${state}` : ''}`}>{word}</span>}
+        <span className="delivered-sum">{firstSentence(body) || t('team.noText')}</span>
+        <span className={`delivered-toggle${open ? ' open' : ''}`}><IconChevron size={13} open /></span>
       </button>
-      {open && <Prose className="delivered-body" text={text || t('team.noText')} />}
+      {open && (
+        <div className="delivered-body">
+          <Prose text={body || t('team.noText')} />
+          {member && onOpenMemberThread && (
+            <div className="delivered-foot">
+              <button type="button" className="text-btn" onClick={() => onOpenMemberThread(member)}>
+                <IconExternal size={13} />{t('view.openMember')}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 });
 
-/** An image file the answer points at. Shown only if the daemon confirms it is one; otherwise nothing. */
+/** An image file the answer points at. Shown only if the daemon confirms it is one; the name
+ * stays behind as the record of it when it cannot be read, the words that named it being gone. */
 function FileImage({ path, roots, load, onOpen }: { path: string; roots: string[]; load: (path: string) => Promise<Blob>; onOpen: (url: string, name?: string) => void }) {
   const [url, setUrl] = useState<string | null>(null);
+  const [gone, setGone] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -935,14 +1065,23 @@ function FileImage({ path, roots, load, onOpen }: { path: string; roots: string[
         made = address;
         setUrl(made);
       })
-      .catch(() => undefined); // not an image, not in this thread's directory, or gone
+      .catch(() => {
+        if (alive) setGone(true); // not an image, not in this thread's directory, or gone
+      });
     return () => {
       alive = false;
       if (made) URL.revokeObjectURL(made);
     };
   }, [path, load]);
 
-  if (!url) return null;
+  if (!url) {
+    if (!gone) return null;
+    return (
+      <figure className="file-image missing">
+        <figcaption title={path}>{relativePath(path, roots)} · {t('view.imageFailed')}</figcaption>
+      </figure>
+    );
+  }
   return (
     <figure className="file-image">
       <button type="button" onClick={() => onOpen(url, path)} aria-label={t('view.enlargePath', path)}>
@@ -953,13 +1092,11 @@ function FileImage({ path, roots, load, onOpen }: { path: string; roots: string[
   );
 }
 
-/** How deep a plan card goes before the rest fades away, and over what distance it fades. */
-const PLAN_FADE_PX = 64;
-
 /**
- * A plan in the thread: a small card holding the opening of the plan, fading out where it is cut,
- * and opening to the whole of it. While it is still being written it follows along, pinned to the
- * newest lines with the top fading instead.
+ * A plan in the thread as a document, not a card: a quiet plan label, the plan's own text flowing
+ * on the page beside a rule that dissolves with it, cut with a fade where it runs long and opened
+ * to the whole of it in place. While it is still being written it follows along, pinned to the
+ * newest lines with the top fading instead — the way Codex's Proposed Plan reads in the flow.
  */
 function ProposalCard({ text, streaming = false }: { text: string; streaming?: boolean }) {
   const [open, setOpen] = useState(false);
@@ -969,28 +1106,28 @@ function ProposalCard({ text, streaming = false }: { text: string; streaming?: b
     const el = scrollRef.current;
     if (!el) return;
     if (streaming) el.scrollTop = el.scrollHeight;
-    setOverflow(el.scrollHeight - el.clientHeight > PLAN_FADE_PX / 2);
+    setOverflow(el.scrollHeight - el.clientHeight > 8);
   }, [text, streaming]);
   return (
     <div className="row">
-      <section className={`proposal${streaming ? ' streaming' : ''}${overflow ? ' overflow' : ''}`}>
+      <section className={`proposal${streaming ? ' streaming' : ''}${overflow ? ' overflow' : ''}${open ? ' full' : ''}`}>
         <div className="proposal-head">
-          <span className="proposal-title">
-            <IconList size={16} />
-            {streaming ? t('plan.cardStreaming') : t('plan.cardTitle')}
-          </span>
+          <span className="proposal-label">{streaming ? t('plan.cardStreaming') : t('plan.cardTitle')}</span>
           <span className="proposal-tools">
             <PlanDownloadButton text={text} />
             <PlanCopyButton text={text} />
           </span>
         </div>
-        <button type="button" className="proposal-body" aria-label={t('plan.openFull')} title={t('plan.openFull')} onClick={() => setOpen(true)}>
-          <div className="proposal-scroll" ref={scrollRef}>
-            <Prose text={text} />
-          </div>
-        </button>
+        <div className="proposal-scroll" ref={scrollRef}>
+          <Prose text={text || t('plan.empty')} />
+        </div>
+        {overflow && !streaming && (
+          <button type="button" className="proposal-more" aria-expanded={open} onClick={() => setOpen(v => !v)}>
+            <IconChevron size={13} open={open} />
+            {open ? t('plan.collapse') : t('plan.showAll')}
+          </button>
+        )}
       </section>
-      {open && <PlanReader text={text} onClose={() => setOpen(false)} />}
     </div>
   );
 }
@@ -1018,6 +1155,8 @@ function planTrace(item: Extract<Item, { kind: 'input' }>): Trace {
   const answer = item.answer;
   if (!answer) return null;
   if ('cancelled' in answer) return { icon: 'hand', text: t('trace.planSkipped') };
+  // Full access answered the gate itself; the trace says so rather than claiming the person did.
+  if (item.auto) return { icon: 'check', text: t('trace.planAuto') };
   const q = item.questions[0];
   const said = q ? (answer.answers[q.id] ?? [])[0] ?? '' : '';
   if (q && said === q.options[0]?.value) return { icon: 'check', text: t('trace.planConfirmed') };
@@ -1044,31 +1183,14 @@ function TraceLine({ mark }: { mark: Trace }) {
   );
 }
 
-/** How much of a plan is done, as a ring filling clockwise from the top. */
-function PlanRing({ done }: { done: number }) {
-  const filled = Math.max(0, Math.min(1, done)) * 100;
-  return (
-    <svg className="plan-ring" width={14} height={14} viewBox="0 0 16 16" aria-hidden="true">
-      <circle className="plan-ring-track" cx="8" cy="8" r="6" fill="none" strokeWidth={2.4} />
-      {filled > 0 && (
-        <circle className="plan-ring-fill" cx="8" cy="8" r="6" fill="none" strokeWidth={2.4} strokeLinecap={filled < 100 ? 'round' : 'butt'}
-          pathLength={100} strokeDasharray={`${filled} 100`} transform="rotate(-90 8 8)" />
-      )}
-    </svg>
-  );
-}
-
 /**
- * The agent's own task list for the turn, folded to one quiet line: how far along it is and the
- * step it is on. The whole list opens below it, in the same muted register as the work it steers.
+ * The agent's own task list for an earlier turn, folded to one quiet line: how far along it got.
+ * The whole list opens below it, in the same muted register as the work it steered. The newest
+ * turn's plan is in the top bar instead (see `PlanButton`).
  */
 function PlanCard({ item }: { item: Extract<Item, { kind: 'plan' }> }) {
   const [open, setOpen] = useState(false);
-  const total = item.entries.length;
-  const completed = item.entries.filter((e) => e.status === 'completed').length;
-  // Once the turn is over nothing is "in progress" any more; what was not finished is simply not done.
-  const stateOf = (entry: PlanEntry) => (entry.status === 'completed' ? 'completed' : entry.status === 'in_progress' && !item.done ? 'active' : 'pending');
-  const current = item.done ? undefined : item.entries.find((e) => stateOf(e) === 'active');
+  const { total, completed, current } = planProgress(item);
   return (
     <div className="row plan">
       <button type="button" className="plan-toggle" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
@@ -1077,22 +1199,7 @@ function PlanCard({ item }: { item: Extract<Item, { kind: 'plan' }> }) {
         {current && <span className="plan-current">· {current.content}</span>}
         <IconChevron size={14} open={open} />
       </button>
-      {open && (
-        <ol className="plan-list">
-          {item.entries.map((entry, i) => {
-            const state = stateOf(entry);
-            return (
-              <li key={i} className={`plan-entry ${state}`}>
-                <span className="plan-mark" aria-hidden="true">
-                  {state === 'completed' && <IconCheck size={12} />}
-                </span>
-                <span className="plan-text">{entry.content}</span>
-                <span className="sr-only">{state === 'completed' ? t('view.entryDone') : state === 'active' ? t('view.entryActive') : t('view.entryPending')}</span>
-              </li>
-            );
-          })}
-        </ol>
-      )}
+      {open && <PlanList item={item} />}
     </div>
   );
 }
@@ -1232,9 +1339,11 @@ const WorkNote = memo(function WorkNote({ text }: { text: string }) {
 });
 
 /**
- * One stretch of the agent's thinking, kept small: while it is being thought, a line or two of
- * where it has got to; afterwards a single "Thought · Xs" line. Either opens up to the whole text.
- * A model can think for minutes before it acts, and that must not fill the screen.
+ * One stretch of the agent's thinking, kept small: while it is being thought, a fixed window of
+ * a few lines that follows along inside itself; afterwards a single "Thought · Xs" line. Either
+ * opens up to the whole text. A model can think for minutes before it acts, and that must not
+ * fill the screen — nor may the window's height change as the stream writes, or the page under
+ * it jumps with every sentence; the plan is followed the same way (ProposalCard).
  */
 const ThinkingBlock = memo(function ThinkingBlock({ thought, live, defaultOpen = false }: { thought: Thought; live: boolean; defaultOpen?: boolean }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -1262,15 +1371,36 @@ const ThinkingBlock = memo(function ThinkingBlock({ thought, live, defaultOpen =
           <ResourceMore resource={resource} />
         </div>
       ) : (
-        live && (
-          <div className="thinking-body">
-            <p className="thinking-para thinking-live">{thinkingPreview(paragraphs)}</p>
-          </div>
-        )
+        live && <ThinkingWindow paragraphs={paragraphs} />
       )}
     </div>
   );
 });
+
+/** The thought in progress: a window of fixed height whose newest lines are followed inside it, so
+ *  the page around the block never moves while the stream writes. Where the window cuts into what
+ *  has scrolled by, the top fades, like the plan does while it is written. */
+function ThinkingWindow({ paragraphs }: { paragraphs: string[] }) {
+  const [overflow, setOverflow] = useState(false);
+  const windowRef = useRef<HTMLDivElement | null>(null);
+  useLayoutEffect(() => {
+    const el = windowRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+    setOverflow(el.scrollHeight - el.clientHeight > 8);
+  }, [paragraphs]);
+  return (
+    <div className="thinking-body">
+      <div className={`thinking-live${overflow ? ' overflow' : ''}`} ref={windowRef}>
+        {paragraphs.map((p, i) => (
+          <p key={i} className="thinking-para">
+            {p}
+          </p>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 /** From this many finished calls on, a run is one line that counts them. Fewer are shown as they are. */
 const RUN_FOLD_MIN = 2;
@@ -1345,7 +1475,9 @@ function StepRow({ step: original, roots }: { step: Step; roots: string[] }) {
   const shown = full.text ?? step.output;
   // An edit is best shown as its diff; the raw arguments would repeat the same text as JSON.
   const showInput = step.input !== undefined && step.diffs.length === 0 && JSON.stringify(step.input) !== '{}';
-  const result = step.status === 'completed' ? t('view.succeeded') : step.status === 'failed' ? t('team.failed') : null;
+  // A command reads as the line that was typed, not as the JSON it was sent in.
+  const command = stepCommand(step);
+  const result = step.status === 'completed' ? t('view.succeeded') : step.status === 'failed' ? t('team.failed') : step.status === 'unknown' ? t('view.resultUnknown') : null;
   const hasContent = showInput || step.diffs.length > 0 || Boolean(step.output);
   const hasDetail = Boolean(original.detail) || hasContent || result !== null;
   return (
@@ -1359,7 +1491,7 @@ function StepRow({ step: original, roots }: { step: Step; roots: string[] }) {
         <div className="step-detail">
           <div className="step-detail-content">
             <ResourceStatus resource={resource} />
-            {showInput && <pre>{JSON.stringify(step.input, null, 2)}</pre>}
+            {showInput && (command ? <pre className="step-command">{command}</pre> : <pre>{JSON.stringify(step.input, null, 2)}</pre>)}
             {step.diffs.length > 0 && <DiffView diffs={step.diffs} />}
             {truncated && resource.value?.fullAvailable && full.state !== 'loading' && <button className="text-btn history-more" onClick={loadFullOutput}>{t('view.toolFullOutput')}</button>}
             {truncated && full.state === 'loading' && <div className="history-status" role="status">{t('common.loading')}</div>}

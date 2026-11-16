@@ -101,7 +101,7 @@ test('a comment on a passage is written just above the keyboard, with the passag
   await keyboard(500, 344);
   const field = await box('.selection-menu.commenting');
   assert.ok(field.top >= 344 && field.bottom <= 844 && field.bottom > 844 - 80, `the field sits just above the keyboard (${field.top}–${field.bottom})`);
-  assert.equal(await page.locator('.selection-quote').innerText(), 'hi there');
+  assert.equal(await page.locator('.selection-quote').count(), 0);
 
   await page.locator('.selection-comment').fill('为什么');
 

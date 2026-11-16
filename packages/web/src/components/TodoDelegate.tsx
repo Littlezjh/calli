@@ -10,13 +10,13 @@ import { IconChevron, IconSearch } from './icons';
 export type DelegateRequest = { id?: string; text?: string; cwd?: string };
 
 /** The same three destinations for a draft and an existing plan. */
-export function TodoDelegate({ api, personal, threads, request, busy, draft, onDelegate, onLink }: {
-  api: Api; personal: PersonalSettings | null; threads: Thread[]; request: DelegateRequest; busy: boolean; draft?: boolean;
+export function TodoDelegate({ api, personal, threads, request, busy, draft, panelClassName, onDelegate, onLink }: {
+  api: Api; personal: PersonalSettings | null; threads: Thread[]; request: DelegateRequest; busy: boolean; draft?: boolean; panelClassName?: string;
   onDelegate: (request: DelegateRequest) => void; onLink: (request: DelegateRequest) => void;
 }) {
   const [browse, setBrowse] = useState<string[] | null>(null);
   return <>
-    <Popover label={t('personal.delegate')} placement="below" align="end" triggerClassName={draft ? 'todo-delegate-new' : 'todo-delegate'} disabled={busy} trigger={t('personal.delegate')}>
+    <Popover panelClassName={panelClassName} label={t('personal.delegate')} placement="below" align="end" triggerClassName={draft ? 'todo-delegate-new' : 'todo-delegate'} disabled={busy} trigger={t('personal.delegate')}>
       {close => <Destinations api={api} personal={personal} threads={threads} onPrivate={() => { close(); onDelegate(request); }} onProject={cwd => { close(); onDelegate({ ...request, cwd }); }} onBrowse={roots => { close(); setBrowse(roots); }} onLink={() => { close(); onLink(request); }} />}
     </Popover>
     {browse && <DirectoryPicker api={api} allowedOnly roots={browse} defaultDirectory={personal?.defaultDirectory} selected={browse[0] ?? personal?.directory ?? ''} machine="" onRootsChange={() => {}} onManageRoots={() => {}} onSelect={cwd => { setBrowse(null); onDelegate({ ...request, cwd }); }} onClose={() => setBrowse(null)} />}

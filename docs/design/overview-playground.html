@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="zh" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>概况卡 · Playground</title>
+<style>
+/* Colours copied from packages/web/src/styles.css (paper palette); radius 12 / 8 as decided. */
+:root {
+  --bg: #f8f6f1; --surface: #ffffff; --surface-2: #fbfaf7; --text: #1f1e1c; --muted: #827f77; --faint: #a9a69e;
+  --border: #e5e2da; --border-strong: #d6d2c8; --hover: rgba(31, 30, 28, 0.045); --active: rgba(31, 30, 28, 0.07);
+  --accent: #1f1e1c; --accent-fg: #fff; --positive: #2f7d5b; --warn: #c2410c; --danger: #b42318;
+  --user-bg: #eceae4; --code-bg: #efede7; --picture-bg: #fff;
+  --add-bg: #e6f3eb; --del-bg: #fdecea;
+  --shadow-pop: 0 14px 40px rgba(31, 30, 28, 0.14), 0 2px 6px rgba(31, 30, 28, 0.06);
+  --radius: 12px; --radius-sm: 8px; --radius-lg: 18px;
+  --font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Helvetica Neue', 'Noto Sans CJK SC', sans-serif;
+  --mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
+}
+[data-theme='dark'] {
+  --bg: #1b1a18; --surface: #252422; --surface-2: #201f1d; --text: #ecebe7; --muted: #9a978f; --faint: #6f6c65;
+  --border: #32302c; --border-strong: #423f3a; --hover: rgba(236, 235, 231, 0.06); --active: rgba(236, 235, 231, 0.09);
+  --accent: #ecebe7; --accent-fg: #1b1a18; --positive: #3f9a72; --warn: #f0935a; --danger: #f97066;
+  --user-bg: #2c2b28; --code-bg: #262522; --add-bg: #1d3327; --del-bg: #3b1f1c;
+  --shadow-pop: 0 14px 40px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.3);
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--font); -webkit-font-smoothing: antialiased; }
+button { font: inherit; color: inherit; }
+.ic { width: 15px; height: 15px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+.controls { position: sticky; top: 0; z-index: 50; display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; padding: 12px 20px; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(12px); border-bottom: 1px solid var(--border); }
+.ctl { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+.seg { display: inline-flex; padding: 2px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); }
+.seg button { border: 0; background: none; padding: 4px 10px; border-radius: 999px; font-size: 12px; color: var(--muted); cursor: pointer; white-space: nowrap; }
+.seg button[aria-pressed='true'] { background: var(--accent); color: var(--accent-fg); }
+.pick { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; width: 100%; font-size: 12px; color: var(--muted); }
+.pick code { padding: 3px 8px; border-radius: 999px; background: var(--surface); border: 1px solid var(--border); color: var(--text); font-family: var(--mono); font-size: 11.5px; }
+.pick button { border: 0; background: none; color: var(--muted); text-decoration: underline; cursor: pointer; font-size: 12px; }
+.note { width: 100%; margin: 0; font-size: 12px; color: var(--faint); line-height: 1.6; }
+
+/* The app at desktop size */
+.app { position: relative; display: flex; flex-direction: column; width: 1280px; height: 860px; margin: 20px auto 60px; border: 1px solid var(--border-strong); border-radius: 14px; overflow: hidden; background: var(--bg); }
+.top { display: flex; align-items: center; gap: 4px; height: 52px; padding: 0 14px; flex: none; }
+.top .title { font-size: 15px; font-weight: 600; margin-right: auto; }
+.ibtn { position: relative; display: inline-grid; place-items: center; width: 32px; height: 32px; border: 0; border-radius: 50%; background: none; color: var(--muted); cursor: pointer; }
+.ibtn:hover, .ibtn.on { background: var(--hover); color: var(--text); }
+.badge { position: absolute; top: 3px; right: 1px; min-width: 15px; height: 15px; padding: 0 4px; border-radius: 999px; background: var(--warn); color: #fff; font-size: 10px; font-weight: 600; line-height: 15px; text-align: center; }
+.body { position: relative; flex: 1; min-height: 0; }
+.col { width: 600px; margin: 8px 0 0 260px; display: flex; flex-direction: column; gap: 14px; }
+.user { align-self: flex-end; max-width: 80%; padding: 9px 15px; border-radius: var(--radius-lg); background: var(--user-bg); font-size: 15px; line-height: 1.6; }
+.answer { font-size: 15px; line-height: 1.7; margin: 0; }
+.work { color: var(--muted); font-size: 13px; }
+.composer { position: absolute; left: 260px; bottom: 18px; width: 600px; border: 1px solid var(--border); border-radius: 22px; background: var(--surface); box-shadow: var(--shadow-pop); padding: 14px 16px 44px; color: var(--faint); font-size: 15px; }
+
+/* The overview: a card in the margin, or a panel under a top-bar button */
+.ov { position: absolute; top: 8px; right: 12px; width: 260px; display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); padding: 6px; }
+.ov.scroll { max-height: calc(100% - 140px); overflow-y: auto; }
+.ov.pop { top: 2px; right: 12px; width: 300px; background: var(--surface); box-shadow: var(--shadow-pop); padding: 6px 6px 8px; z-index: 5; }
+.grp + .grp { margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--border); }
+.ov.gap .grp + .grp { border-top: 0; margin-top: 6px; padding-top: 0; }
+.head { display: flex; align-items: center; gap: 7px; width: 100%; min-height: 30px; padding: 0 8px; border: 0; border-radius: var(--radius-sm); background: none; font-size: 12.5px; color: var(--muted); text-align: left; cursor: pointer; }
+.head:hover { background: var(--hover); }
+.head b { color: var(--text); font-size: 13px; font-weight: 600; }
+.ov.pop .head b, .ov.label .head b { color: var(--muted); font-weight: 500; }
+.head .sum { margin-left: auto; display: inline-flex; gap: 6px; align-items: center; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.head .chev { display: inline-grid; color: var(--faint); transition: transform .15s; }
+.head.closed .chev { transform: rotate(-90deg); }
+.row { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 30px; padding: 0 8px; border: 0; border-radius: var(--radius-sm); background: none; font-size: 13px; text-align: left; cursor: pointer; }
+.row:hover { background: var(--hover); }
+.row.two { align-items: flex-start; flex-direction: column; gap: 1px; padding: 6px 8px; }
+.row.two .l1 { display: flex; align-items: center; gap: 8px; width: 100%; }
+.row .sub { padding-left: 24px; font-size: 12px; color: var(--muted); line-height: 1.5; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dir { flex: 0 100 auto; min-width: 3ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); font-size: 12px; }
+.r { margin-left: auto; flex: none; display: inline-flex; gap: 6px; align-items: center; font-size: 12px; color: var(--faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.st.need { color: var(--warn); } .st.failed { color: var(--danger); } .st.run { color: var(--positive); }
+.add { color: var(--positive); } .del { color: var(--danger); }
+.mark { flex: none; display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; font-size: 9px; font-weight: 700; color: #fff; }
+.thumb { flex: none; width: 16px; height: 16px; border-radius: 4px; border: 1px solid var(--border); background: linear-gradient(135deg, #d9cbb3, #8f7d63); }
+.more { display: flex; align-items: center; min-height: 28px; padding: 0 8px 0 32px; border: 0; background: none; font-size: 12.5px; color: var(--muted); cursor: pointer; border-radius: var(--radius-sm); width: 100%; text-align: left; }
+.more:hover { background: var(--hover); color: var(--text); }
+.pics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; padding: 2px 4px 4px; }
+.pics i { aspect-ratio: 1; border-radius: var(--radius-sm); border: 1px solid var(--border); background: linear-gradient(135deg, #e9dfcf, #a8957a); }
+.plan { margin: 0; padding: 2px 8px 4px 32px; list-style: none; font-size: 12.5px; line-height: 1.9; color: var(--muted); }
+.plan .done { color: var(--faint); text-decoration: line-through; } .plan .cur { color: var(--text); font-weight: 600; }
+
+/* Top-bar readings, and where they go when the bar is lean */
+.reading { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 8px; border-radius: 999px; color: var(--faint); font-size: 12.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.foot { display: flex; align-items: center; gap: 6px; margin-top: 4px; padding: 6px 8px 0; border-top: 1px solid var(--border); font-size: 12px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.foot button { margin-left: auto; border: 0; background: none; color: var(--muted); font-size: 12px; cursor: pointer; padding: 2px 4px; border-radius: 6px; }
+.foot button:hover { background: var(--hover); color: var(--text); }
+.menu { position: absolute; top: 2px; right: 12px; z-index: 6; width: 200px; padding: 6px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow-pop); }
+.menu .row { gap: 10px; }
+.menu hr { border: 0; border-top: 1px solid var(--border); margin: 4px 6px; }
+/* Diff dialog */
+.scrim { position: absolute; inset: 0; z-index: 20; display: grid; place-items: center; background: rgba(20, 19, 17, 0.32); }
+.dialog { width: 720px; max-height: 80%; display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-pop); overflow: hidden; }
+.dialog .dh { display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--border); font-size: 14px; }
+.dialog .dh b { font-family: var(--mono); font-size: 13px; }
+.dialog .dh .x { margin-left: auto; }
+.dialog pre { margin: 0; padding: 8px 0; font-family: var(--mono); font-size: 12.5px; line-height: 1.7; overflow: auto; }
+.dialog pre span { display: block; padding: 0 16px; }
+.dialog .a { background: var(--add-bg); } .dialog .d { background: var(--del-bg); }
+.dialog .ln { display: inline-block; width: 34px; color: var(--faint); }
+</style>
+</head>
+<body>
+<div class="controls" id="controls"></div>
+<div id="app"></div>
+<script>
+const OPTIONS = [
+  { key: 'entry', label: '入口', values: [['card', '常驻卡片'], ['pop', '顶栏按钮+弹出面板（Codex）']] },
+  { key: 'data', label: '数据量', values: [['many', '很多'], ['few', '很少']] },
+  { key: 'rows', label: '行', values: [['one', '单行'], ['two', '两行（现在）']] },
+  { key: 'cap', label: '每组先显示', values: [['3', '3'], ['5', '5'], ['all', '全部（现在）']] },
+  { key: 'overflow', label: '放不下时', values: [['fold', '自动收起靠后的组'], ['scroll', '滚动条（现在）']] },
+  { key: 'agents', label: '智能体', values: [['attention', '只露要注意的'], ['all', '按序全排']] },
+  { key: 'images', label: '图片', values: [['merge', '并进输出（Codex）'], ['grid', '单独网格']] },
+  { key: 'diff', label: '点变更', values: [['dialog', '弹窗看 diff（Codex）'], ['jump', '跳到那一轮']] },
+  { key: 'sep', label: '组之间', values: [['line', '细线（Codex）'], ['gap', '留白']] },
+  { key: 'topbar', label: '顶栏', values: [['lean', '精简：概况 · 文件 · ⋯'], ['full', '现在：读数 · 轨迹 · 文件 · 终端 · ⋯']] },
+  { key: 'theme', label: '外观', values: [['light', '亮色'], ['dark', '深色']] },
+];
+const state = { entry: 'pop', data: 'many', rows: 'one', cap: '3', overflow: 'fold', agents: 'attention', images: 'merge', diff: 'dialog', sep: 'line', topbar: 'lean', theme: 'light' };
+try { Object.assign(state, Object.fromEntries(new URLSearchParams(location.hash.slice(1)))); } catch {}
+let popOpen = true, diffOf = null, moreOpen = false;
+// What the person opened or closed by hand wins over the budget.
+const choice = new Map(), expanded = new Set();
+
+const C = ['#d97757', '#10a37f', '#7c5cff', '#2a78d6', '#c2410c', '#3f9a72'];
+const AGENTS_MANY = [
+  ['ccbd-code', 'idle', '尚未派发', ''], ['codex-data', 'need', '需要你', '小应 14 万条的加权对上了，三个字段两边都缺，需要你定'],
+  ['codex-data2', 'idle', '已停止', '三个字段已经写入正式文件'], ['codex-page', 'idle', '已停止', 'v5 承接抽样改成每大类 30%'],
+  ['traex-run2', 'failed', '失败', '并发提到 6 后 429，已回退到 4'], ['traex-run3', 'run', '进行中', 'final-1 已用 systemd-run 重新启动'],
+  ['codex-skill', 'run', '进行中', 'skill 按用户要求暂停'], ['traex-run4', 'idle', '已停止', '小应打标切到每 key 6 路'],
+  ['traex-bjev3', 'idle', '已停止', 'Bjev 请求格式改造 v2style-3'], ['code01', 'review', '待验收', 'V2.1 用户评论已改，待验收'],
+  ['codex-v5', 'review', '待验收', 'v5 报告页已出'], ['traex-run1', 'idle', '已停止', '首轮打标完成'],
+];
+const AGENTS_FEW = AGENTS_MANY.filter((_, i) => [1, 5, 9].includes(i));
+const FILES = ['intent_reports/v3_label_pipeline.py', 'intent_reports/unified/report.html', 'intent_reports/unified/weights.csv', 'docs/manifest.md', 'scripts/run_batch.sh', 'out/summary.json', 'out/diff.md'];
+const CHANGES = [['v3_label_pipeline.py', 'intent_reports', 126, 0, true], ['report.html', 'intent_reports/unified', 88, 12], ['weights.py', 'intent_reports', 34, 9], ['run_batch.sh', 'scripts', 6, 2], ['manifest.md', 'docs', 21, 4], ['api.ts', 'src/server', 18, 7], ['schema.sql', 'db', 9, 0, true], ['label.ts', 'src/lib', 12, 3], ['report.test.ts', 'test', 40, 0, true], ['README.md', '', 5, 1], ['config.yaml', 'deploy', 3, 3], ['Dockerfile', 'deploy', 2, 1], ['util.py', 'intent_reports', 15, 6], ['package.json', '', 1, 1]];
+const IMAGES = Array.from({ length: 9 }, (_, i) => `chart-${i + 1}.png`);
+const PLAN = [['读完现有打标流程', 'done'], ['切到每 key 6 路', 'done'], ['补跑失败条目', 'cur'], ['核对加权总数', ''], ['出周报页', '']];
+
+const icon = {
+  agents: '<svg class="ic" viewBox="0 0 24 24" style="width:14px;height:14px"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 19c.6-3 2.8-4.6 5.5-4.6s4.9 1.6 5.5 4.6M15.5 5.2a3 3 0 0 1 0 5.6M17.5 14.6c1.6.6 2.7 2 3 4.4"/></svg>',
+  file: '<svg class="ic" viewBox="0 0 24 24" style="width:14px;height:14px"><path d="M7 3h7l5 5v13H7zM14 3v5h5"/></svg>',
+  edit: '<svg class="ic" viewBox="0 0 24 24" style="width:14px;height:14px"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg>',
+  image: '<svg class="ic" viewBox="0 0 24 24" style="width:14px;height:14px"><path d="M4 5h16v14H4zM4 16l5-5 4 4 2-2 5 5"/></svg>',
+  plan: '<svg viewBox="0 0 16 16" width="14" height="14"><circle cx="8" cy="8" r="6" fill="none" stroke="var(--border-strong)" stroke-width="2.4"/><circle cx="8" cy="8" r="6" fill="none" stroke="var(--text)" stroke-width="2.4" pathLength="100" stroke-dasharray="40 100" transform="rotate(-90 8 8)"/></svg>',
+  chev: '<svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M6 9l6 6 6-6"/></svg>',
+  panel: '<svg class="ic" viewBox="0 0 24 24"><circle cx="6" cy="7" r="2"/><circle cx="6" cy="17" r="2"/><path d="M11 7h9M11 17h9"/></svg>',
+  out: '<svg class="ic" viewBox="0 0 24 24" style="width:13px;height:13px"><path d="M14 4h6v6M20 4l-8 8M18 14v5H5V6h5"/></svg>',
+  gauge: '<svg class="ic" viewBox="0 0 24 24" style="width:14px;height:14px"><path d="M4 16a8 8 0 1 1 16 0M12 16l4-5"/></svg>',
+  db: '<svg class="ic" viewBox="0 0 24 24" style="width:14px;height:14px"><ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v12c0 1.7 3.1 3 7 3s7-1.3 7-3V6M5 12c0 1.7 3.1 3 7 3s7-1.3 7-3"/></svg>',
+  trace: '<svg class="ic" viewBox="0 0 24 24"><path d="M5 4v16M9 8h10M9 12h6M9 16h8"/></svg>',
+  files: '<svg class="ic" viewBox="0 0 24 24"><path d="M4 7h6l2 2h8v10H4zM8 4h6"/></svg>',
+  term: '<svg class="ic" viewBox="0 0 24 24"><path d="M5 7l5 5-5 5M12 18h7"/></svg>',
+  fork: '<svg class="ic" viewBox="0 0 24 24"><circle cx="6" cy="5" r="2"/><circle cx="18" cy="5" r="2"/><circle cx="12" cy="19" r="2"/><path d="M6 7v2a3 3 0 0 0 3 3h6a3 3 0 0 0 3-3V7M12 12v5"/></svg>',
+  archive: '<svg class="ic" viewBox="0 0 24 24"><path d="M4 5h16v4H4zM6 9v10h12V9M10 13h4"/></svg>',
+  x: '<svg class="ic" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+  more: '<svg class="ic" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg>',
+};
+const RANK = { need: 0, failed: 1, run: 2, review: 3, idle: 4 };
+
+/* Each group as rows: a header and its items, so the whole can be fitted to the room it has. */
+function groups() {
+  const many = state.data === 'many';
+  const agents = (many ? AGENTS_MANY : AGENTS_FEW).map((a, i) => ({ a, i })).sort((x, y) => RANK[x.a[1]] - RANK[y.a[1]] || x.i - y.i).map(x => x.a);
+  const changes = many ? CHANGES : CHANGES.slice(0, 3);
+  const files = many ? FILES : FILES.slice(0, 2);
+  const images = many ? IMAGES : IMAGES.slice(0, 2);
+  const need = agents.filter(a => a[1] === 'need').length, failed = agents.filter(a => a[1] === 'failed').length, run = agents.filter(a => a[1] === 'run').length;
+  const out = [];
+  // Agents: what needs the user, what failed and what runs are the ones to see; the rest wait behind "more".
+  const keyAgents = state.agents === 'attention' ? agents.filter(a => a[1] !== 'idle' && a[1] !== 'review') : agents;
+  out.push({ id: 'agents', icon: icon.agents, label: state.entry === 'pop' ? '子智能体' : '智能体', priority: 0,
+    sum: need ? `<span class="st need">${need} 需要你</span>` : failed ? `<span class="st failed">${failed} 失败</span>` : run ? `${run} 运行中` : `${agents.length} 个`,
+    items: agents, shownFirst: state.agents === 'attention' ? Math.max(keyAgents.length, 1) : null, kind: 'agent' });
+  out.push({ id: 'plan', icon: icon.plan, label: '计划', sum: '2/5', items: PLAN, kind: 'plan', priority: 1 });
+  out.push({ id: 'changes', icon: icon.edit, label: '变更', priority: 2, sum: `${changes.length}<span style="color:var(--faint)">·</span><span class="add">+${changes.reduce((n, c) => n + c[2], 0)}</span><span class="del">−${changes.reduce((n, c) => n + c[3], 0)}</span>`, items: changes, kind: 'change' });
+  if (state.images === 'merge') {
+    out.push({ id: 'outputs', icon: icon.file, label: '输出内容', priority: 3, sum: String(files.length + images.length), items: [...images.slice(0, 3).map(n => ['img', n]), ...files.map(f => ['file', f]), ...images.slice(3).map(n => ['img', n])], kind: 'output' });
+  } else {
+    out.push({ id: 'images', icon: icon.image, label: '图片', priority: 3, sum: String(images.length), items: images, kind: 'pics' });
+    out.push({ id: 'files', icon: icon.file, label: '文件', priority: 4, sum: String(files.length), items: files, kind: 'file' });
+  }
+  return out;
+}
+
+function capOf(g) {
+  if (g.kind === 'plan') return g.items.length;
+  if (g.kind === 'pics') return state.cap === 'all' ? g.items.length : 4;
+  if (g.shownFirst) return state.cap === 'all' ? g.items.length : Math.min(Math.max(g.shownFirst, +state.cap || 99), g.items.length);
+  return state.cap === 'all' ? g.items.length : +state.cap;
+}
+
+/* How many 30px lines a group takes when open with `n` items shown. */
+const linesOf = (g, n) => 1 + (g.kind === 'pics' ? Math.ceil(n / 4) * 2 : n * (state.rows === 'two' && g.kind === 'agent' ? 2 : 1)) + (n < g.items.length ? 1 : 0);
+
+function render() {
+  document.documentElement.dataset.theme = state.theme;
+  document.getElementById('controls').innerHTML = OPTIONS.map(o => `<div class="ctl"><span>${o.label}</span><div class="seg">${o.values.map(([v, l]) => `<button data-key="${o.key}" data-value="${v}" aria-pressed="${state[o.key] === v}">${l}</button>`).join('')}</div></div>`).join('')
+    + `<div class="pick">你的选择：<code>${code()}</code><button id="copy">复制</button></div>`
+    + `<p class="note">点组标题可以收起/展开，点「再显示 N 个」展开全部；"自动收起"按高度预算从最后一组开始收成标题行，永远不出滚动条。点变更行看 diff 弹窗示意。</p>`;
+
+  const gs = groups();
+  // The room the overview has, in 30px lines: the card stops above the composer; the panel at ~70% of the window.
+  const budget = state.entry === 'pop' ? 20 : 22;
+  const open = new Map(gs.map(g => [g.id, choice.get(g.id) ?? true]));
+  if (state.overflow === 'fold') {
+    let total = gs.reduce((n, g) => n + (open.get(g.id) ? linesOf(g, expanded.has(g.id) ? g.items.length : Math.min(capOf(g), g.items.length)) : 1), 0);
+    // Fold from the last group up; what needs the user (the agents) is never folded by the budget.
+    for (const g of [...gs].sort((a, b) => b.priority - a.priority)) {
+      if (total <= budget || g.id === 'agents' || !open.get(g.id) || choice.has(g.id) || expanded.has(g.id)) continue;
+      total -= linesOf(g, Math.min(capOf(g), g.items.length)) - 1;
+      open.set(g.id, false);
+    }
+  }
+  const cls = `ov${state.entry === 'pop' ? ' pop' : ''}${state.overflow === 'scroll' ? ' scroll' : ''}${state.sep === 'gap' ? ' gap' : ''}${state.entry === 'pop' ? ' label' : ''}`;
+  // A lean bar hands its readings to the overview: one faint line at the foot, with the trace behind it.
+  const foot = state.topbar === 'lean' ? `<div class="foot">39 轮 · 约 1740 tok/s · 40.2M tok · 缓存 97%<button>轨迹 ›</button></div>` : '';
+  const panel = gs.map(g => group(g, open.get(g.id))).join('') + foot;
+  const showPanel = state.entry === 'card' || popOpen;
+  const many = state.data === 'many';
+  const badge = many ? '<span class="badge">1</span>' : '';
+
+  document.getElementById('app').innerHTML = `<div class="app">
+    <div class="top"><span class="title">小应打标 v3 收尾</span>
+      ${state.topbar === 'full' ? `<span class="reading">${icon.gauge} 39 轮 · 约 1740 tok/s</span><span class="reading">${icon.db} 40.2M tok · 缓存 97.1%</span>` : ''}
+      ${state.entry === 'pop' ? `<button class="ibtn${popOpen ? ' on' : ''}" data-pop title="概况">${icon.panel}${badge}</button>` : ''}
+      ${state.topbar === 'full' ? `<span class="ibtn">${icon.trace}</span>` : ''}
+      <span class="ibtn">${icon.files}</span>
+      ${state.topbar === 'full' ? `<span class="ibtn">${icon.term}</span>` : ''}
+      <button class="ibtn${moreOpen ? ' on' : ''}" data-more-menu>${icon.more}</button></div>
+    <div class="body">
+      <div class="col">
+        <div class="user">把打标切到每 key 6 路，失败的补跑，最后出周报页。</div>
+        <div class="work">用时 41 分 · 63 步 ›</div>
+        <p class="answer">已经切到每 key 6 路并补跑。codex-data 那边有三个字段两边数据都缺，需要你定口径；traex-run2 并发提到 6 后被限流，已回退。</p>
+      </div>
+      <div class="composer">继续这个线程</div>
+      ${showPanel ? `<aside class="${cls}">${panel}</aside>` : ''}
+      ${moreOpen ? `<div class="menu"><button class="row">${icon.term}打开终端</button>${state.topbar === 'lean' ? `<button class="row">${icon.trace}轨迹</button>` : ''}<button class="row">${icon.edit}重命名</button><button class="row">${icon.fork}分叉</button><hr><button class="row">${icon.archive}归档</button></div>` : ''}
+      ${diffOf !== null ? diffDialog(diffOf) : ''}
+    </div></div>`;
+  fit();
+  location.replace('#' + new URLSearchParams(state).toString());
+}
+
+function group(g, open) {
+  const head = `<button class="head${open ? '' : ' closed'}" data-fold="${g.id}" data-open="${open}"><span class="chev">${icon.chev}</span>${g.icon}<b>${g.label}</b><span class="sum">${g.sum}</span></button>`;
+  if (!open) return `<section class="grp">${head}</section>`;
+  const all = expanded.has(g.id);
+  const n = all ? g.items.length : Math.min(capOf(g), g.items.length);
+  const items = g.items.slice(0, n);
+  let body = '';
+  if (g.kind === 'plan') body = `<ol class="plan">${items.map(([t, s]) => `<li class="${s}">${t}</li>`).join('')}</ol>`;
+  if (g.kind === 'pics') body = `<div class="pics">${items.map(() => '<i></i>').join('')}</div>`;
+  if (g.kind === 'agent') body = items.map(([name, st, word, sub], i) => {
+    const mark = `<span class="mark" style="background:${C[i % C.length]}">${name[0].toUpperCase()}</span>`;
+    const w = `<span class="r st ${st}">${word}</span>`;
+    return state.rows === 'two' ? `<button class="row two"><span class="l1">${mark}<span class="name">${name}</span>${w}</span>${sub ? `<span class="sub">${sub}</span>` : ''}</button>`
+      : `<button class="row" title="${sub}">${mark}<span class="name">${name}</span>${w}</button>`;
+  }).join('');
+  if (g.kind === 'change') body = items.map(([f, d, a, r, created], i) => `<button class="row" data-diff="${i}"><span class="name">${f}</span>${d ? `<span class="dir">${d}</span>` : ''}<span class="r">${created ? '新建 ' : ''}<span class="add">+${a}</span>${r ? `<span class="del">−${r}</span>` : ''}</span></button>`).join('');
+  if (g.kind === 'file') body = items.map(f => fileRow(f)).join('');
+  if (g.kind === 'output') body = items.map(([k, v]) => k === 'img' ? `<button class="row"><span class="thumb"></span><span class="name">${v}</span><span class="dir">out</span></button>` : fileRow(v)).join('');
+  const rest = g.items.length - n;
+  const more = rest > 0 ? `<button class="more" data-more="${g.id}">再显示 ${rest} 个</button>` : all && g.items.length > capOf(g) ? `<button class="more" data-more="${g.id}">收起</button>` : '';
+  return `<section class="grp">${head}${body}${more}</section>`;
+}
+function fileRow(path) {
+  const at = path.lastIndexOf('/');
+  return `<button class="row">${icon.file}<span class="name">${path.slice(at + 1)}</span>${at > 0 ? `<span class="dir">${path.slice(0, at)}</span>` : ''}</button>`;
+}
+function diffDialog(i) {
+  const c = CHANGES[i];
+  if (state.diff === 'jump') return '';
+  return `<div class="scrim" data-close><div class="dialog"><div class="dh"><b>${c[1] ? c[1] + '/' : ''}${c[0]}</b><span class="add">+${c[2]}</span>${c[3] ? `<span class="del">−${c[3]}</span>` : ''}<span style="color:var(--faint);font-size:12.5px">最后改于第 7 轮 · 共 2 轮</span><button class="ibtn x" data-close>${icon.x}</button></div>
+    <pre><span><span class="ln">41</span>def label_batch(rows, key):</span><span class="d"><span class="ln">42</span>-    pool = Pool(4)</span><span class="a"><span class="ln">42</span>+    pool = Pool(6)  # 6 per key</span><span><span class="ln">43</span>    out = []</span><span class="a"><span class="ln">44</span>+    failed = []</span><span><span class="ln">45</span>    for r in pool.imap(call, rows):</span><span class="a"><span class="ln">46</span>+        if r.error: failed.append(r); continue</span><span><span class="ln">47</span>        out.append(r)</span><span class="a"><span class="ln">48</span>+    retry(failed)</span><span><span class="ln">49</span>    return out</span></pre></div></div>`;
+}
+function code() {
+  const pick = k => OPTIONS.find(o => o.key === k).values.find(v => v[0] === state[k])[1];
+  return ['entry', 'topbar', 'rows', 'cap', 'overflow', 'agents', 'images', 'diff', 'sep'].map(k => `${OPTIONS.find(o => o.key === k).label}:${pick(k)}`).join(' · ');
+}
+function fit() { const app = document.querySelector('.app'); if (app) app.style.zoom = String(Math.min(1, (window.innerWidth - 16) / 1282)); }
+window.addEventListener('resize', fit);
+document.addEventListener('click', e => {
+  const t = e.target.closest('button, [data-close]');
+  if (!t) return;
+  if (t.dataset.key) { state[t.dataset.key] = t.dataset.value; choice.clear(); expanded.clear(); render(); return; }
+  if (t.id === 'copy') { navigator.clipboard?.writeText(code()); return; }
+  if ('pop' in t.dataset) { popOpen = !popOpen; moreOpen = false; render(); return; }
+  if ('moreMenu' in t.dataset) { moreOpen = !moreOpen; if (moreOpen) popOpen = false; render(); return; }
+  if (t.dataset.fold) { choice.set(t.dataset.fold, t.dataset.open !== 'true'); render(); return; }
+  if (t.dataset.more) { expanded.has(t.dataset.more) ? expanded.delete(t.dataset.more) : expanded.add(t.dataset.more); choice.set(t.dataset.more, true); render(); return; }
+  if (t.dataset.diff) { diffOf = +t.dataset.diff; render(); return; }
+  if ('close' in t.dataset && (e.target === t || t.classList.contains('x'))) { diffOf = null; render(); }
+});
+render();
+</script>
+</body>
+</html>

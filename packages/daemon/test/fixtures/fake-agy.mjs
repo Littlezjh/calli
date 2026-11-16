@@ -3,7 +3,7 @@ if (process.argv.includes('--version')) { process.stdout.write('fixture 1.2.3\n'
 // A stand-in for the Antigravity CLI in headless stream-json mode, for tests.
 // Prompt text drives behaviour: "tool" runs a command, "command" needs a permission that headless
 // mode cannot ask for, "slow" waits until interrupted, "crash" exits.
-import { readFileSync, writeFileSync, symlinkSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, symlinkSync } from 'node:fs';
 import { agyUsage } from './live-usage.mjs';
 import { coordinationFixture } from './coordination.mjs';
 import { join } from 'node:path';
@@ -27,8 +27,12 @@ if (promptIndex >= 0 && args[promptIndex + 1] !== undefined) {
     process.stdout.write('make-video\tTurn a brief into a video\nreview\tReview the current change\n');
   } else if (text.startsWith('/usage') || text.startsWith('/quota')) {
     if (process.env.FAKE_HANDOVER_QUOTA) {
+      // Each scope is the used percent, or { used, resetsAt } when a test needs the reset time.
       const used = JSON.parse(readFileSync(process.env.FAKE_HANDOVER_QUOTA, 'utf8'));
-      for (const [scope, percent] of Object.entries(used)) process.stdout.write(`${scope}\tWeekly Limit Remaining\t${100 - percent}%\t2099-01-01T00:00:00Z\n`);
+      for (const [scope, value] of Object.entries(used)) {
+        const v = typeof value === 'number' ? { used: value } : value;
+        process.stdout.write(`${scope}\tWeekly Limit Remaining\t${100 - v.used}%\t${v.resetsAt ?? '2099-01-01T00:00:00Z'}\n`);
+      }
       process.exit(0);
     }
     process.stdout.write('Fast models\tWeekly Limit Remaining\t97%\t2026-10-16T11:59:18Z\nSlow | models\tFive Hour Limit Remaining\t40%\t2026-10-10T12:14:28Z\n');
@@ -49,7 +53,7 @@ if (!args.includes('-p=') || flag('--input-format') !== 'stream-json' || flag('-
   process.exit(2);
 }
 
-const conversation = flag('--conversation') ?? 'agy-conv-1';
+const conversation = flag('--conversation') ?? (process.env.FAKE_HANDOVER_EXHAUST_ONCE ? `agy-conv-${process.pid}` : 'agy-conv-1');
 const model = flag('--model') ?? 'default';
 const fullAccess = args.includes('--dangerously-skip-permissions');
 const mode = fullAccess ? 'always-proceed' : (flag('--mode') ?? 'request-review');
@@ -107,7 +111,26 @@ function runTurn(text) {
     return;
   }
   const body = text.split(/<calli-(?:coordination|team|tools|todo)>/)[0].trim();
-  if (model !== 'claude-sonnet' && (body === 'quota-exhausted' || body.startsWith('[协作消息') && body.endsWith('quota-exhausted'))) return result({ status: 'ERROR', error: 'You have exhausted your quota on this model.' });
+  const exhaustTrigger = model !== 'claude-sonnet' && (body === 'quota-exhausted' || body.startsWith('[协作消息') && body.endsWith('quota-exhausted'));
+  // FAKE_HANDOVER_EXHAUST_ONCE names a marker file of conversation ids: the quota error happens
+  // once per conversation, so a test can watch the daemon retry the same ask after the "reset".
+  // FAKE_HANDOVER_EXHAUST_DELAY_MS stalls the failure so a follow-up can queue behind it.
+  const exhaustFail = () => result({ status: 'ERROR', error: 'You have exhausted your quota on this model.' });
+  const exhaustDelay = Number(process.env.FAKE_HANDOVER_EXHAUST_DELAY_MS ?? 0);
+  const exhaustNow = () => { if (exhaustDelay) setTimeout(exhaustFail, exhaustDelay); else exhaustFail(); };
+  if (exhaustTrigger && process.env.FAKE_HANDOVER_EXHAUST_ONCE) {
+    const marker = process.env.FAKE_HANDOVER_EXHAUST_ONCE;
+    const seen = existsSync(marker) ? readFileSync(marker, 'utf8') : '';
+    if (seen.includes(conversation)) {
+      step({ step_index: stepIndex++, state: 'DONE', step_type: 'agent_response', text_delta: `print:${body}` });
+      result({ status: 'SUCCESS', response: `print:${body}`, num_turns: 1 });
+      return;
+    }
+    writeFileSync(marker, seen + conversation + '\n');
+    exhaustNow();
+    return;
+  }
+  if (exhaustTrigger) { exhaustNow(); return; }
   if ((body === 'quota-near' || body.startsWith('[协作消息') && body.endsWith('quota-near')) && process.env.FAKE_HANDOVER_QUOTA) writeFileSync(process.env.FAKE_HANDOVER_QUOTA, JSON.stringify({ 'Gemini Models': 95, 'Claude Models': 20 }));
   if (text.startsWith('请写一份交接摘要') && process.env.FAKE_HANDOVER_SUMMARY_FAIL) return result({ status: 'ERROR', error: 'summary failed' });
   const coordinated = coordinationFixture(text);

@@ -4,7 +4,7 @@
  */
 import { diffStats } from './diff';
 import { IMAGE_FILE, relativePath } from './paths';
-import type { VideoRef } from './api';
+import type { TurnChannel, TurnPart, VideoRef } from './api';
 import { formatDate, formatList, t } from './i18n';
 import { withVoiceItems, type VoiceTranscript } from './voice-timeline';
 
@@ -72,6 +72,19 @@ export interface Usage {
   cost?: { amount: number; currency: string };
 }
 
+/** One model request's token accounting, as the agent reported it (the daemon's UsageSample, mirrored). */
+export interface UsageSample {
+  /** request: one model call; update: a native counter delta that stands for the latest call. */
+  scope: 'request' | 'update';
+  model?: string;
+  input?: number;
+  output?: number;
+  total?: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+  reasoning?: number;
+}
+
 export interface ApprovalOption {
   optionId: string;
   name: string;
@@ -122,24 +135,116 @@ export function deliveredPreview(text: string): string {
   return text
     .split('\n')
     .map((line) => line.replace(/^\s*(#{1,6}|[-*+>]|\d+\.)\s+/, '').replace(/[*_`]/g, '').trim())
-    .filter((line) => line && !line.startsWith('|') && !/^[-=]+$/.test(line))
+    // The report's own bookkeeping — tables, rules, the [进度] line — is not its words.
+    .filter((line) => line && !line.startsWith('|') && !/^[-=]+$/.test(line) && !line.startsWith('[进度]'))
     .slice(0, 3)
     .join(' ')
     .slice(0, 200);
+}
+
+/** The state a member ends its report with, in the team protocol the last line carries. */
+export type DeliveredState = 'progress' | 'review' | 'need' | 'failed' | null;
+
+/**
+ * The `[进度] 进行中|待验收|需要你：…` line the team's report protocol puts at the very end. Only
+ * the last line that says anything counts, so words quoted in the middle of a report stay words.
+ */
+export function progressState(text: string): Exclude<DeliveredState, 'failed'> {
+  const lines = text.split('\n');
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i].trim();
+    if (!line) continue;
+    const m = /^\[进度\]\s*(进行中|待验收|需要你)(?:\s*[：:]|$)/.exec(line);
+    return m ? (m[1] === '进行中' ? 'progress' : m[1] === '待验收' ? 'review' : 'need') : null;
+  }
+  return null;
+}
+
+/** A line of Markdown as the plain words it says: links keep their text, marks and quotes go. */
+const plainWords = (line: string) => line
+  .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
+  .replace(/^\s*(#{1,6}|[-*+>]|\d+\.)\s+/, '')
+  .replace(/[*_`]/g, '')
+  .trim();
+
+/**
+ * What a delivered message opens with, as one plain line for the row it folds into: the first
+ * sentence of its body, the report protocol's `[进度]` line left out. Empty when nothing says.
+ */
+export function firstSentence(text: string): string {
+  const lines = text.split('\n').map(plainWords);
+  const usable = lines.filter((line) => line && !line.startsWith('|') && !/^[-=]+$/.test(line) && !line.startsWith('[进度]'));
+  if (!usable.length) return '';
+  let out = '';
+  // A sentence that hands over with a colon is not done saying what it means: the next line's
+  // opening is spliced on, list marks and all the rest already gone, until one of them lands.
+  for (const line of usable) {
+    const cut = line.search(/[。！？]/);
+    const piece = cut >= 0 ? line.slice(0, cut + 1) : line;
+    out = out ? `${out} ${piece}` : piece;
+    if (!/[：:]$/.test(out)) break;
+  }
+  return out.slice(0, 200);
+}
+
+/**
+ * The body without the report protocol's `[进度]` line: the row's dot and word already say what it
+ * said, so the person reading the message itself does not read the bookkeeping twice.
+ */
+export function withoutProgress(text: string): string {
+  return text
+    .split('\n')
+    .filter((line) => !/^\s*[*_`>-]*\s*\[进度\]\s*(进行中|待验收|需要你)(?:\s*[：:\-—]|$)/.test(line))
+    .join('\n')
+    .trim();
+}
+
+export type { TurnChannel, TurnPart };
+
+function turnPart(raw: unknown): TurnPart | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const { kind, text, count } = raw as Record<string, unknown>;
+  if (kind === 'person') return typeof text === 'string' ? { kind, text } : null;
+  if (kind === 'lark' || kind === 'worker') return { kind, count: typeof count === 'number' && Number.isFinite(count) ? count : 0 };
+  return null;
+}
+
+export function turnChannel(raw: unknown): TurnChannel | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const { kind, count, parts: rawParts } = raw as Record<string, unknown>;
+  if (typeof kind !== 'string' || !kind) return null;
+  const parts = Array.isArray(rawParts) ? rawParts.map(turnPart).filter((part): part is TurnPart => part !== null) : [];
+  // A batch that cannot say what it holds is shown as a plain message, so a person's words never turn into a quiet line.
+  if (kind === 'mixed' && !parts.length) return null;
+  return { kind, count: typeof count === 'number' && Number.isFinite(count) ? count : 0, ...(parts.length ? { parts } : {}) };
+}
+
+/** The quiet line for what a channel brought; null for a channel this client has no words for. */
+export function channelLabel(kind: string, count: number): string | null {
+  if (kind === 'lark') return t('view.channelLark', count);
+  if (kind === 'worker') return t('view.channelWorker', count);
+  return null;
+}
+
+/** What a channel turn shows, in order: a person's words stay words, the rest are quiet lines. */
+export function channelRows(channel: TurnChannel, text: string): Array<{ kind: 'person' | 'note'; text: string }> {
+  if (channel.parts) return channel.parts.map(part => part.kind === 'person' ? { kind: 'person', text: part.text } : { kind: 'note', text: channelLabel(part.kind, part.count) ?? '' });
+  return [{ kind: 'note', text: channelLabel(channel.kind, channel.count) ?? text }];
 }
 
 export type Item =
   | { kind: 'handover-summary'; key: string; turnId: string; target: string; done: boolean; version: number }
   | { kind: 'notice'; key: string; turnId: string; text: string; confirmation: boolean }
   | { kind: 'model-switch'; key: string; turnId: string; model: string; previous: string; reason: string }
+  | { kind: 'quota-resume'; key: string; turnId: string | null; resetsAt?: string }
   | { kind: 'proposal'; key: string; turnId: string; id: string; text: string; done: boolean }
   /**
    * A question or plan approval the agent asked. `ended` on a cancelled answer means the turn ran
    * out under it (stopped, failed), not that the user chose to leave it unanswered.
    */
-  | { kind: 'input'; key: string; turnId: string; inputId: string; title: string; inputKind?: string; plan?: string; questions: import('./api').UserQuestion[]; answer: import('./api').UserInputAnswer | { cancelled: true; ended: true } | null }
+  | { kind: 'input'; key: string; turnId: string; inputId: string; title: string; inputKind?: string; plan?: string; questions: import('./api').UserQuestion[]; answer: import('./api').UserInputAnswer | { cancelled: true; ended: true } | null; auto?: boolean }
   | { kind: 'voice-recap'; key: string; turnId: null; sessionId: string; seconds: number; count: number }
-  | { kind: 'user'; voice?: boolean; background?: boolean; streaming?: boolean; handoverCollapsed?: boolean; workMode?: string; key: string; turnId: string; text: string; images: ImageRef[]; videos?: VideoRef[]; fromTerminal?: boolean; scheduled?: boolean; coordination?: CoordinationNote }
+  | { kind: 'user'; voice?: boolean; background?: boolean; streaming?: boolean; handoverCollapsed?: boolean; workMode?: string; key: string; turnId: string; text: string; images: ImageRef[]; videos?: VideoRef[]; fromTerminal?: boolean; scheduled?: boolean; coordination?: CoordinationNote; channel?: TurnChannel }
   /** The turn's answer: the text after everything the agent did. */
   | { kind: 'assistant'; key: string; turnId: string; text: string; done: boolean }
   /**
@@ -190,7 +295,7 @@ export type Item =
   /** The row under a finished answer. `text` is what "copy" copies; `at` is when the turn ended, where the hub saw it end. */
   | { kind: 'actions'; key: string; turnId: string; text: string; at?: string }
   /** `planExhausted`: the agent's account ran out of usage, so another agent can be asked to take over. */
-  | { kind: 'error'; key: string; turnId: string | null; message: string; planExhausted?: boolean }
+  | { kind: 'error'; key: string; turnId: string | null; message: string; planExhausted?: boolean; /** The raw agent text of a plan-exhausted failure, shown as the quiet card's second line. */ detail?: string }
   /** Where a fork begins: above it is the conversation it was copied from, below it its own. `branch` when it got a worktree. */
   | { kind: 'fork'; key: string; turnId: null; branch?: string };
 
@@ -216,6 +321,8 @@ export interface Timeline {
   awaitingApproval: boolean;
   /** The latest context usage the agent reported, if it reports any. */
   usage: Usage | null;
+  /** The latest per-request token sample the agent reported, if it reports any. */
+  lastSample: UsageSample | null;
 }
 
 /**
@@ -241,11 +348,18 @@ export interface Note {
   /** The thread-relative path the passage was picked out of, when it is a file's text. Parsed by
    * the agent as the 文件： line, so the note can be found in the file without line numbers. */
   file?: string;
+  /** The earlier conversation of a handover chain the passage was picked out of. The agent cannot
+   * see that one, so the note says where to read it; the person sees the note as any other. */
+  source?: NoteSource;
 }
+
+export interface NoteSource { threadId: string; turnId: string }
 
 const NOTE_HEAD = /^\[注释 (\d+)\]$/;
 const NOTE_FILE = '文件：';
 const NOTE_COMMENT = '评论：';
+const NOTE_SOURCE_LINE = /^来源：交接前的会话，原文和上下文用 calli history (\S+) --turn (\S+) 读$/;
+const sourceLine = (source: NoteSource) => `来源：交接前的会话，原文和上下文用 calli history ${source.threadId} --turn ${source.turnId} 读`;
 
 /**
  * A message with numbered notes in front, in plain text any agent reads and can refer back to
@@ -253,6 +367,7 @@ const NOTE_COMMENT = '评论：';
  *
  *   [注释 1]
  *   文件：writing/题目.md
+ *   来源：交接前的会话，原文和上下文用 calli history THREAD --turn TURN 读
  *   > the passage
  *   评论：what the user says about it
  *
@@ -266,7 +381,7 @@ export function withNotes(notes: Note[], body: string): string {
       .map((line) => `> ${line}`.trimEnd())
       .join('\n');
     const comment = note.comment.trim().replace(/\s*\n\s*/g, ' ');
-    return [`[注释 ${i + 1}]`, ...(note.file ? [NOTE_FILE + note.file] : []), quoted, ...(comment ? [NOTE_COMMENT + comment] : [])].join('\n');
+    return [`[注释 ${i + 1}]`, ...(note.file ? [NOTE_FILE + note.file] : []), ...(note.source ? [sourceLine(note.source)] : []), quoted, ...(comment ? [NOTE_COMMENT + comment] : [])].join('\n');
   });
   const rest = body.trim();
   return [...blocks, ...(rest ? [rest] : [])].join('\n\n');
@@ -284,11 +399,13 @@ export function splitNotes(text: string): { notes: Note[]; body: string } {
     i += 1;
     let file: string | undefined;
     if (i < lines.length && lines[i].startsWith(NOTE_FILE)) file = lines[i++].slice(NOTE_FILE.length).trim() || undefined;
+    const found = i < lines.length ? NOTE_SOURCE_LINE.exec(lines[i]) : null;
+    if (found) i += 1;
     const quoted: string[] = [];
     while (i < lines.length && lines[i].startsWith('>')) quoted.push(lines[i++].replace(/^>\s?/, ''));
     let comment = '';
     if (i < lines.length && lines[i].startsWith(NOTE_COMMENT)) comment = lines[i++].slice(NOTE_COMMENT.length).trim();
-    notes.push({ quote: quoted.join('\n').trim(), comment, ...(file ? { file } : {}) });
+    notes.push({ quote: quoted.join('\n').trim(), comment, ...(file ? { file } : {}), ...(found ? { source: { threadId: found[1], turnId: found[2] } } : {}) });
     end = i;
   }
   if (notes.length === 0) return { notes, body: text };
@@ -357,6 +474,9 @@ function applyToolData(step: Step, data: Record<string, any>): void {
   if (data.files) step.files = data.files;
   if (data.status) step.status = String(data.status);
   if (data.title) step.title = String(data.title);
+  // A call that surfaced while its input still streamed is named by a later event.
+  if (data.kind) step.kind = String(data.kind);
+  if (data.input && typeof data.input === 'object' && Object.keys(data.input).length) step.input = data.input;
   const diffs = diffsOf(data.content);
   if (diffs.length) { step.diffs = diffs; step.files = undefined; }
   const text = outputText(data.output) || textOfContent(data.content);
@@ -375,6 +495,7 @@ export function buildTimeline(events: StoredEvent[], speech: readonly VoiceTrans
   let lastSeq = 0;
   let running = false;
   let usage: Usage | null = null;
+  let lastSample: UsageSample | null = null;
   let waiting: Extract<Item, { kind: 'waiting' }> | null = null;
 
   type Work = Extract<Item, { kind: 'work' }>;
@@ -472,6 +593,7 @@ export function buildTimeline(events: StoredEvent[], speech: readonly VoiceTrans
     }
     if (ev.type === 'agent.notice') { items.push({ kind: 'notice', key, turnId: turn, text: String(ev.data.text ?? ''), confirmation: Boolean(ev.data.confirmation) }); continue; }
     if (ev.type === 'handover.model') { items.push({ kind: 'model-switch', key, turnId: turn, model: String(ev.data.model ?? ''), previous: String(ev.data.previous ?? ''), reason: String(ev.data.reason ?? 'near') }); continue; }
+    if (ev.type === 'handover.resume') { items.push({ kind: 'quota-resume', key, turnId: turn, ...(ev.data.resetsAt ? { resetsAt: String(ev.data.resetsAt) } : {}) }); continue; }
     // Keep complete events received after a historical snapshot. They also hydrate deferred
     // entries when expanded, including updates for tools whose starts predate this connection.
     if (ev.type === 'tool.update' || ev.type === 'tool.end') {
@@ -513,6 +635,7 @@ export function buildTimeline(events: StoredEvent[], speech: readonly VoiceTrans
           ...(ev.data.scheduled ? { scheduled: true } : {}),
           ...(ev.data.source === 'background' ? { background: true } : {}),
           ...(delivered ? { coordination: delivered.note } : {}),
+          ...(turnChannel(ev.data.channel) ? { channel: turnChannel(ev.data.channel)! } : {}),
         });
         break;
       }
@@ -565,6 +688,31 @@ export function buildTimeline(events: StoredEvent[], speech: readonly VoiceTrans
           }
         }
         break;
+
+      case 'usage.sample': {
+        // The composition of the latest model request. Request samples are one call each; update
+        // samples are native counter deltas that stand for the latest call. Turn samples summarize
+        // a whole turn and never pose as one request, so they are left out.
+        if (ev.data.scope !== 'request' && ev.data.scope !== 'update') break;
+        const count = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : undefined);
+        const input = count(ev.data.input);
+        const output = count(ev.data.output);
+        const cacheRead = count(ev.data.cacheRead);
+        const cacheWrite = count(ev.data.cacheWrite);
+        const reasoning = count(ev.data.reasoning);
+        if (input === undefined && output === undefined && cacheRead === undefined && cacheWrite === undefined && reasoning === undefined) break;
+        lastSample = {
+          scope: ev.data.scope,
+          ...(typeof ev.data.model === 'string' && ev.data.model ? { model: ev.data.model } : {}),
+          ...(input !== undefined ? { input } : {}),
+          ...(output !== undefined ? { output } : {}),
+          ...(count(ev.data.total) !== undefined ? { total: count(ev.data.total)! } : {}),
+          ...(cacheRead !== undefined ? { cacheRead } : {}),
+          ...(cacheWrite !== undefined ? { cacheWrite } : {}),
+          ...(reasoning !== undefined ? { reasoning } : {}),
+        };
+        break;
+      }
 
       case 'turn.phase':
         if (waiting && waiting.turnId === turn) {
@@ -690,7 +838,9 @@ export function buildTimeline(events: StoredEvent[], speech: readonly VoiceTrans
         // The question interrupts the turn's flow: work that goes on after it lands below it.
         open.work = null;
         open.answer = null;
-        items.push({ kind: 'input', key, turnId: turn, inputId: String(ev.data.inputId), title: ev.data.title, inputKind: ev.data.kind, plan: ev.data.plan, questions: ev.data.questions ?? [], answer: null });
+        // An answered-in-advance request (full access approves a plan itself) arrives with the
+        // decision attached: recorded, never asked.
+        items.push({ kind: 'input', key, turnId: turn, inputId: String(ev.data.inputId), title: ev.data.title, inputKind: ev.data.kind, plan: ev.data.plan, questions: ev.data.questions ?? [], answer: (ev.data.auto as import('./api').UserInputAnswer | undefined) ?? null, ...(ev.data.auto ? { auto: true } : {}) });
         break;
       case 'input.resolved':
         for (const it of items) if (it.kind === 'input' && it.inputId === ev.data.inputId) {
@@ -753,7 +903,7 @@ export function buildTimeline(events: StoredEvent[], speech: readonly VoiceTrans
 
       case 'turn.error':
         closeTurn(ev.ts);
-        items.push({ kind: 'error', key, turnId: turn, message: errorText(ev.data), ...(ev.data.code === 'plan_exhausted' ? { planExhausted: true } : {}) });
+        items.push({ kind: 'error', key, turnId: turn, message: errorText(ev.data), ...(ev.data.code === 'plan_exhausted' ? { planExhausted: true, detail: String(ev.data.message ?? '').replace(/^Internal error:\s*/, '') } : {}) });
         running = false;
         break;
 
@@ -775,7 +925,14 @@ export function buildTimeline(events: StoredEvent[], speech: readonly VoiceTrans
   if (running && waiting && !items.some(it => it.turnId === waiting!.turnId && it.kind !== 'user')) items.push(waiting);
   const withSummaries = addTurnSummaries(items, finished, stopped);
   const awaitingApproval = running && items.some((it) => (it.kind === 'approval' && it.decision === null) || (it.kind === 'input' && it.answer === null));
-  return { items: withVoiceItems(withSummaries, events, speech), lastSeq, running, awaitingApproval, usage };
+  return {
+    items: withVoiceItems(withSummaries, events, speech),
+    lastSeq,
+    running,
+    awaitingApproval,
+    usage,
+    lastSample,
+  };
 }
 
 const compactTokens = (n: number) => (n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));
@@ -794,9 +951,14 @@ const MAX_IMAGE_PATHS = 6;
  * Web addresses are left alone. Whether a file really exists and is an image is for the daemon to say.
  */
 export function imagePathsIn(text: string, roots: string[] = []): string[] {
-  const found: string[] = [];
+  return imagePlaces(text, roots).map((place) => place.path);
+}
+
+/** The same files, each with where in the text it is first named, so its picture can follow that passage. */
+export function imagePlaces(text: string, roots: string[] = []): Array<{ path: string; at: number }> {
+  const found: Array<{ path: string; at: number }> = [];
   const seen = new Set<string>();
-  const add = (raw: string, encoded = false) => {
+  const add = (raw: string, at: number, encoded = false) => {
     let path = raw.replace(/^file:\/\//, '');
     if (encoded || path !== raw) {
       try {
@@ -810,17 +972,19 @@ export function imagePathsIn(text: string, roots: string[] = []): string[] {
     const key = relativePath(path, roots).replace(/^(?:\.\/)+/, '');
     if (!IMAGE_FILE.test(path) || seen.has(key) || found.length >= MAX_IMAGE_PATHS) return;
     seen.add(key);
-    found.push(path);
+    found.push({ path, at });
   };
-  const rest = text.replace(/!?\[[^\]\n]*\]\(\s*(?:<([^>\n]+)>|((?:\\.|[^\\\s()]|\([^()\s]*\))+))(?:\s+"[^"\n]*")?\s*\)/g, (_match, angle: string | undefined, plain: string) => {
-    add((angle ?? plain).replace(/\\([\\()[\]<> ])/g, '$1'), true);
-    return '';
+  // Links are blanked out rather than cut, so what follows keeps its place in the text; the blank
+  // is no space, so a word on either side still does not count as standing alone.
+  const rest = text.replace(/!?\[[^\]\n]*\]\(\s*(?:<([^>\n]+)>|((?:\\.|[^\\\s()]|\([^()\s]*\))+))(?:\s+"[^"\n]*")?\s*\)/g, (match: string, angle: string | undefined, plain: string, at: number) => {
+    add((angle ?? plain).replace(/\\([\\()[\]<> ])/g, '$1'), at, true);
+    return '\u0000'.repeat(match.length);
   });
   // A path stands on its own: after a space, a quote, a bracket or CJK punctuation, never mid-word or inside a URL.
   for (const m of rest.matchAll(/(?<=^|[\s`'"(（：，。])((?:file:\/\/)?[\p{L}\p{N}_@%+.~\-/]+\.(?:png|jpe?g|gif|webp|svg))(?=$|[\s`'")）：，。,;；!?]|[.:](?:\s|$))/gimu)) {
-    add(m[1]);
+    add(m[1], m.index!);
   }
-  return found;
+  return found.sort((a, b) => a.at - b.at);
 }
 
 /** Add file counts discovered on an explicit work expansion without changing the view layout. */
@@ -959,16 +1123,28 @@ const hasVerb = (kind: string): kind is (typeof STEP_VERBS)[number] => (STEP_VER
 /** `cd <dir> && …` at the start of a command: where it ran, which the row's detail still shows. */
 const LEADING_CD = /^cd\s+(?:"[^"]*"|'[^']*'|\S+)\s*(?:&&|;)\s*(?=\S)/;
 
-/** The step's one line, verb first: "Ran npm test". A command is named by what it runs, not by the directory it first steps into. */
+/** The fixed title Claude Code's bridge gives the plan-exit tool call, whatever was planned. */
+const EXITED_PLAN_TITLE = 'Exited Plan Mode';
+
+/** The step's one line, verb first: "Ran npm test". A command is named by what it runs, not by the
+ *  directory it first steps into; the bridge's fixed plan-exit title says itself in the thread's
+ *  own language instead of the one Claude Code ships in. */
 export function stepTitle(step: Step): string {
+  if (step.title === EXITED_PLAN_TITLE) return t('step.exitedPlanMode');
   const title = step.kind === 'execute' ? step.title.replace(LEADING_CD, '') : step.title;
   return hasVerb(step.kind) ? t(`step.${step.kind}`, title) : title;
+}
+
+/** The command a step ran, when its input names one. */
+export function stepCommand(step: Pick<Step, 'kind' | 'input'>): string | null {
+  const command = (step.input as { command?: unknown } | undefined)?.command;
+  return step.kind === 'execute' && typeof command === 'string' && command.trim() ? command : null;
 }
 
 /** A row shows timing; failure belongs to the tool's expanded detail, not the conversation. */
 export function stepStatusLabel(step: Step): string {
   if (stepActive(step)) return t('step.running');
-  return stepDurationLabel(step.startedAt, step.endedAt) || (step.status === 'failed' ? t('step.ended') : t('step.done'));
+  return stepDurationLabel(step.startedAt, step.endedAt) || (step.status === 'completed' ? t('step.done') : t('step.ended'));
 }
 
 /** A call that has started and not come back yet. */
@@ -1096,22 +1272,6 @@ export function splitThinking(text: string): string[] {
     out.push(...sentences.filter(Boolean));
   }
   return out;
-}
-
-/** How much of the thinking in progress is shown under "Thinking". */
-const THINKING_PREVIEW_CHARS = 140;
-
-/**
- * The latest of a thinking stream in progress: the end of its last paragraph, cut to a few lines.
- * It is the end that is shown, because that is where the stream is being written.
- */
-export function thinkingPreview(paragraphs: string[]): string {
-  const last = paragraphs.at(-1) ?? '';
-  if (last.length <= THINKING_PREVIEW_CHARS) return last;
-  const tail = last.slice(-THINKING_PREVIEW_CHARS);
-  // Start at a word where there is one to start at; CJK text has no spaces and is cut as it is.
-  const space = tail.indexOf(' ');
-  return `…${space >= 0 && space < 24 ? tail.slice(space + 1) : tail}`;
 }
 
 /** Items of one turn, in order. A turn starts at its user item; stray items share the '' group. */

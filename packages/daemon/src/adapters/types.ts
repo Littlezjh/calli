@@ -27,6 +27,12 @@ export interface UserInputRequest {
   kind?: 'question' | 'plan';
   plan?: string;
   questions: UserQuestion[];
+  /**
+   * Nothing is really being asked: the decision this carries has already been made on the user's
+   * behalf by their settings (full access approves a plan gate itself). The request is recorded in
+   * the thread like any other — the plan stays readable — but no sheet ever waits for a person.
+   */
+  auto?: UserInputAnswer;
 }
 export type UserInputAnswer = { answers: Record<string, string[]> } | { cancelled: true };
 
@@ -190,6 +196,14 @@ export interface ModelOption {
   description?: string;
   /** How busy this model is right now; above 100 means overloaded. */
   loadPercent?: number;
+  /** Total queued requests when reported. Null means unavailable, not zero; absent means no queue metadata. */
+  queueSize?: number | null;
+  /** Observed request position, not total queue size. Zero means observed nonqueued; null means unknown/stale. */
+  queuePosition?: number | null;
+  /** Queue observation time in epoch milliseconds; absent when no valid observation exists. */
+  queueObservedAt?: number;
+  /** The upstream load query failed; distinguish a failed read from unreported metadata. */
+  loadError?: boolean;
   /**
    * Thinking effort levels this model accepts. An empty list means the model has no effort setting.
    * Left out when the agent does not say, in which case the agent-wide list applies.
@@ -254,6 +268,8 @@ export interface DiscoveredAccount {
 }
 
 export interface StartOptions {
+  /** Internal metadata probes must not take the shortcuts used to create a real conversation. */
+  probe?: boolean;
   /** Native capability requested for an isolated Calli tool job, absent on ordinary threads. */
   borrowedTool?: string;
   workMode?: WorkMode;
@@ -266,6 +282,8 @@ export interface StartOptions {
   cwd: string;
   /** Agent-side session id to resume, if the thread already has one. */
   resumeId?: string;
+  /** A lazily created native conversation announced its id during a real prompt. */
+  onSessionId?: (id: string) => void;
   /** Permission level for this session. Adapters without permission modes ignore it. */
   permissionMode?: PermissionMode;
   model?: string;
@@ -278,6 +296,13 @@ export interface MemoryReader {
   root(): Promise<string>;
   list(): Promise<MemoryIndex>;
   read(id: string): Promise<MemoryDocument>;
+}
+
+/** Compatibility information for an opt-in bridge that patches a private runtime copy. */
+export interface StreamBridgeCapability {
+  version: string;
+  platform: string;
+  temporaryMegabytes: number;
 }
 
 export interface AgentAdapter {
@@ -298,6 +323,10 @@ export interface AgentAdapter {
     coordination?: boolean;
     /** Changing model preserves the native conversation, including through a resumed process. */
     modelSwitch?: boolean;
+    /** False when the native CLI has no model catalog; keep its defaults without a picker. */
+    modelCatalog?: boolean;
+    /** User-controlled experimental streaming bridge, not a native protocol capability. */
+    streamBridge?: StreamBridgeCapability;
     resume: boolean;
     approvals: boolean;
     /** Permission levels this agent supports. Empty means the UI shows no permission picker. */
@@ -343,6 +372,10 @@ export interface AgentAdapter {
      */
     realtimeVoice?: boolean;
   };
+  /** Effective setting, including this instance's environment and an inherited hub default. */
+  readonly streamBridgeEnabled?: boolean;
+  /** Validate opt-in compatibility and return only the adapter-owned setting environment. */
+  streamBridgeEnvironment?(enabled: boolean): Promise<Record<string, string>>;
   memoryReader?(): MemoryReader;
   /** Whether the agent can be started on this host. */
   available(): Promise<boolean>;
@@ -352,6 +385,9 @@ export interface AgentAdapter {
   models(refresh?: boolean): Promise<ModelOption[]>;
   /** A background catalog or capability probe changed the last published list. */
   onModelsChanged?: (models: ModelOption[]) => void;
+  /** Plan usage observed in-band as the agent answers (Claude Code's rate_limit_event): free and
+   *  fresher than any probe, so it feeds the between-turn quota decisions and the cache it reads. */
+  onQuotaObserved?: (quota: PlanQuota) => void;
   /** Resolve deferred image capabilities before accepting an image attachment. */
   modelForImages?(model: string | null): Promise<ModelOption | undefined>;
   /** Read-only runtime identity; no prompt, login or config write. */
@@ -375,6 +411,13 @@ export interface AgentAdapter {
     /** Account-scoped command, to run in the thread's working directory. */
     resumeCommand?: string;
   }>;
+  /**
+   * Copies a session file of another instance of the same agent (another account) into this
+   * instance's own store, under a new id, and returns that id. The copy resumes here with the whole
+   * conversation; the original is left as it was. Agents that cannot resume a conversation
+   * another account wrote leave this out.
+   */
+  importSession?(sourcePath: string): Promise<string>;
   /** Removes the agent's own record of a session. Present only when capabilities.deleteSession is true. */
   deleteSession?(agentSessionId: string, cwd: string): Promise<void>;
   /**
@@ -465,4 +508,23 @@ export function sessionEnvironment(base: Record<string, string>, context?: Recor
   };
   if (context?.CALLI_BIN_DIR) env.PATH = `${context.CALLI_BIN_DIR}${process.platform === 'win32' ? ';' : ':'}${base.PATH ?? process.env.PATH ?? ''}`;
   return env;
+}
+
+/**
+ * Names the session store an instance's conversations live in: instances of one adapter whose
+ * store-picking env matches (or sets none) share their sessions, so the local-session scan asks
+ * one of them and a session never appears under two instances. Which env picks the store is an
+ * agent difference, so it lives here with the adapters.
+ */
+export function sessionStoreKey(instance: { adapter: string; env?: Record<string, string> }): string {
+  switch (instance.adapter) {
+    case 'claude':
+      return `claude:${instance.env?.CLAUDE_CONFIG_DIR ?? ''}`;
+    case 'codex':
+      return `codex:${instance.env?.CODEX_HOME ?? ''}`;
+    case 'traex':
+      return `traex:${instance.env?.CALLI_TRAEX_HOME ?? instance.env?.CODEX_HOME ?? ''}`;
+    default:
+      return instance.adapter;
+  }
 }

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import type { Section, Thread } from '../src/api.js';
-import { buildActivity, buildMerged, buildSidebar, clampSidebarWidth, handoverGroups, markTerms, navOverflow, savedSidebarWidth, searchTerms, SIDEBAR_DEFAULT_WIDTH, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH, taggedAgents, threadAttention, type HostSource } from '../src/sidebar.js';
+import type { ExternalSession, Section, Thread } from '../src/api.js';
+import { boardStage, buildActivity, buildMerged, buildSidebar, clampSidebarWidth, externalThreadRow, handoverGroups, markTerms, navOverflow, defaultSidebarWidth, savedSidebarWidth, searchTerms, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH, taggedAgents, threadAttention, withExternalSessions, type HostSource } from '../src/sidebar.js';
 import { threadMark } from '../src/notices.js';
 
 let clock = 0;
@@ -45,10 +45,17 @@ test('the desktop sidebar width is rounded, bounded and restored safely', () => 
   assert.equal(clampSidebarWidth(180), SIDEBAR_MIN_WIDTH);
   assert.equal(clampSidebarWidth(360.6), 361);
   assert.equal(clampSidebarWidth(900), SIDEBAR_MAX_WIDTH);
-  assert.equal(savedSidebarWidth(null), SIDEBAR_DEFAULT_WIDTH);
-  assert.equal(savedSidebarWidth('not-a-width'), SIDEBAR_DEFAULT_WIDTH);
+  assert.equal(savedSidebarWidth(null), null, 'nothing dragged: the width follows the window');
+  assert.equal(savedSidebarWidth('not-a-width'), null);
   assert.equal(savedSidebarWidth('420'), 420);
   assert.equal(savedSidebarWidth('999'), SIDEBAR_MAX_WIDTH);
+});
+
+test('until it is dragged, the sidebar takes a quarter of the window, between 288 and 360', () => {
+  assert.equal(defaultSidebarWidth(1024), 288);
+  assert.equal(defaultSidebarWidth(1280), 320);
+  assert.equal(defaultSidebarWidth(1440), 360);
+  assert.equal(defaultSidebarWidth(2560), 360);
 });
 
 test('each thread appears once: pinned first, then its section, then its project', () => {
@@ -144,6 +151,31 @@ test('by activity: what wants attention or is at work comes first, the rest by t
   assert.deepEqual(found.groups.map((g) => [g.label, ids(g.threads)]), [['优先级', ['unread-new', 'unread-old']]]);
   assert.equal(found.count, 2);
   assert.deepEqual(buildActivity([], '', now, null), { groups: [], count: 0 });
+});
+
+test('by activity: a handover chain stays together under its most pressing member, and folds into one row', () => {
+  const now = new Date(2026, 9, 12, 15, 0);
+  const at = (daysAgo: number, hour = 12) => new Date(2026, 9, 12 - daysAgo, hour).toISOString();
+  const link = (sourceId: string) => ({ sourceId, title: sourceId, agent: 'claude', mode: 'continue' as const });
+  const list = [
+    // The original ran out a day ago and sits idle; its successor is at work.
+    thread('orig', { updatedAt: at(1, 9), createdAt: at(3) }),
+    thread('next', { status: 'running', updatedAt: at(0, 14), createdAt: at(1, 9), handover: link('orig') }),
+    thread('waiting', { status: 'running', waiting: true, updatedAt: at(0, 9) }),
+    // A chain with nothing pending moves as one, by the day any of it last moved.
+    thread('old-a', { updatedAt: at(5), createdAt: at(9) }),
+    thread('old-b', { updatedAt: at(0, 1), createdAt: at(5), handover: link('old-a') }),
+    thread('alone', { updatedAt: at(0, 13) }),
+  ];
+  const model = buildActivity(list, '', now, null);
+  assert.deepEqual(model.groups.map((g) => [g.label, ids(g.threads)]), [
+    ['优先级', ['waiting', 'next', 'orig']],
+    ['今天', ['alone', 'old-b', 'old-a']],
+  ]);
+  assert.equal(model.count, list.length);
+  // Rendered as the rows of one list, each chain is a single entry in the order it was given.
+  assert.deepEqual(handoverGroups(model.groups[0].threads, true).map((g) => [g.latest.id, ids(g.members)]), [['waiting', ['waiting']], ['next', ['next', 'orig']]]);
+  assert.deepEqual(handoverGroups(model.groups[1].threads, true).map((g) => ids(g.members)), [['alone'], ['old-b', 'old-a']]);
 });
 
 test('pages beyond the first two sit behind the "more" button unless on screen or still live', () => {
@@ -277,4 +309,41 @@ test('the merged list puts every machine in one activity order, names where each
   assert.equal(model.count, 5, 'the member is under its lead, not a row of its own');
   assert.deepEqual(model.notes.map((n) => `${n.hostId}:${n.state}`), ['gpu:offline', 'new:loading'], 'a remembered list being refreshed needs no note');
   assert.deepEqual(buildMerged(sources, 'there', now, null).groups.flatMap((g) => g.items.map((i) => i.thread.id)), ['there']);
+});
+
+test("a machine's sessions mix into the list by their time, as threads of their directory", () => {
+  const session = (sessionId: string, cwd: string, at: string | null): ExternalSession =>
+    ({ agent: 'claude', sessionId, cwd, title: `terminal ${sessionId}`, updatedAt: at });
+  const newest = thread('n', { cwd: '/work/code', updatedAt: '2026-03-03T10:00:00Z' });
+  const oldest = thread('o', { cwd: '/work/code', updatedAt: '2026-03-01T10:00:00Z' });
+  const merged = withExternalSessions([newest, oldest], [
+    session('mid', '/work/code', '2026-03-02T10:00:00Z'),
+    session('other-dir', '/work/other', '2026-03-04T10:00:00Z'),
+    session('nodate', '/work/code', null),
+  ]);
+  // By time, whatever kind of row it is; undated sessions go last, as the daemon orders them.
+  assert.deepEqual(ids(merged), ['ext:claude:other-dir', 'n', 'ext:claude:mid', 'o', 'ext:claude:nodate']);
+  const model = buildSidebar(merged, [], '');
+  assert.deepEqual(model.projects.map((p) => [p.name, ids(p.threads)]), [['other', ['ext:claude:other-dir']], ['code', ['n', 'ext:claude:mid', 'o', 'ext:claude:nodate']]]);
+  // The row carries what a click needs to import it.
+  assert.equal(externalThreadRow(session('mid', '/w', null)).external?.sessionId, 'mid');
+  // Threads alone come through unchanged.
+  const alone = [newest];
+  assert.equal(withExternalSessions(alone, []), alone);
+});
+
+test('the row menu places a thread in the board column the board would', () => {
+  const at = '2026-11-10T00:00:00.000Z';
+  assert.equal(boardStage(thread('idle')), 'review');
+  assert.equal(boardStage(thread('read', { unread: true })), 'review');
+  assert.equal(boardStage(thread('reported', { report: { stage: 'doing', note: '', at } })), 'doing');
+  assert.equal(boardStage(thread('running', { status: 'running', report: { stage: 'review', note: '', at } })), 'doing');
+  assert.equal(boardStage(thread('waiting', { status: 'running', waiting: true })), 'blocked');
+  assert.equal(boardStage(thread('failed', { status: 'error', unread: true })), 'blocked');
+  assert.equal(boardStage(thread('done', { doneAt: at, waiting: true })), 'done');
+  assert.equal(boardStage(thread('later', { report: { stage: 'backlog', note: '', at, by: 'user' } })), 'backlog');
+  assert.equal(boardStage(thread('later-unread', { unread: true, report: { stage: 'backlog', note: '', at, by: 'user' } })), 'backlog');
+  assert.equal(boardStage(thread('later-run', { status: 'running', report: { stage: 'backlog', note: '', at, by: 'user' } })), 'doing');
+  assert.equal(boardStage(thread('later-wait', { waiting: true, report: { stage: 'backlog', note: '', at, by: 'user' } })), 'blocked');
+  assert.equal(boardStage(thread('later-done', { doneAt: at, report: { stage: 'backlog', note: '', at, by: 'user' } })), 'done');
 });

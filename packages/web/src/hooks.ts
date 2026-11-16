@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type TouchEvent } from 'react';
 import { APPEARANCE_KEY, parseAppearance, resolveTheme, type Appearance, type Theme } from './appearance';
+import { noteEdgeSwipe } from './appHistory';
 
 function useMediaQuery(query: string): boolean {
   const [matches, setMatches] = useState(() => typeof window !== 'undefined' && window.matchMedia(query).matches);
@@ -33,6 +34,11 @@ export function useIsCompact(): boolean {
   return !useMediaQuery('(min-width: 900px)');
 }
 
+/** True when the window is at least `width` CSS pixels wide. */
+export function useMinWidth(width: number): boolean {
+  return useMediaQuery(`(min-width: ${width}px)`);
+}
+
 /** How close to the left edge a swipe has to start to open the thread list. */
 const EDGE_PX = 28;
 /** How far sideways a finger travels before the swipe counts. */
@@ -52,7 +58,7 @@ export function useListSwipe(enabled: boolean, open: boolean, setOpen: (open: bo
       start = null;
       const t = e.touches[0];
       const el = e.target instanceof Element ? e.target : null;
-      if (e.touches.length !== 1 || !el?.closest('.main, .sidebar') || el.closest('.pop-panel, .pop-scrim, .command-menu, .lightbox')) return;
+      if (e.touches.length !== 1 || !el?.closest('.main, .sidebar') || el.closest('.settings-page, .overview-details-page, .pop-panel, .pop-scrim, .command-menu, .lightbox')) return;
       if (open || t.clientX <= EDGE_PX) start = { x: t.clientX, y: t.clientY };
     };
     const onMove = (e: globalThis.TouchEvent) => {
@@ -62,6 +68,8 @@ export function useListSwipe(enabled: boolean, open: boolean, setOpen: (open: bo
       if (Math.abs(t.clientY - start.y) > SWIPE_DRIFT_PX) start = null;
       else if (open ? dx < -SWIPE_PX : dx > SWIPE_PX) {
         start = null;
+        // On iOS the same finger also is the history's back; that must not move the list twice.
+        noteEdgeSwipe();
         setOpen(!open);
       }
     };
@@ -162,20 +170,24 @@ export function useStoredSet(key: string): [Set<string>, (value: string) => void
   return [set, toggle];
 }
 
-/** A switch kept in localStorage, for a choice about how this device shows things. */
-export function useStoredFlag(key: string): [boolean, (on: boolean) => void] {
+/**
+ * A switch kept in localStorage, for a choice about how this device shows things. `initial` is what
+ * a device that has never made the choice gets; both answers are written, so changing the default
+ * later never overrides someone who already chose.
+ */
+export function useStoredFlag(key: string, initial = false): [boolean, (on: boolean) => void] {
   const [on, setOn] = useState(() => {
     try {
-      return localStorage.getItem(key) === '1';
+      const saved = localStorage.getItem(key);
+      return saved === null ? initial : saved === '1';
     } catch {
-      return false;
+      return initial;
     }
   });
   const save = (next: boolean) => {
     setOn(next);
     try {
-      if (next) localStorage.setItem(key, '1');
-      else localStorage.removeItem(key);
+      localStorage.setItem(key, next ? '1' : '0');
     } catch {
       // Storage unavailable: the choice lasts until the page reloads.
     }

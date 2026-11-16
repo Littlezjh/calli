@@ -4,7 +4,8 @@ import { PlanReply } from './plan-reply.js';
 import { sessionEnvironment } from './types.js';
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
+import { access, copyFile, cp, mkdir, readdir } from 'node:fs/promises';
 import type { EmittedEvent } from '../events.js';
 import { imagePathNote } from '../attachments.js';
 import { commandExists } from '../util.js';
@@ -452,6 +453,22 @@ class AgySession implements AgentSession {
   }
 }
 
+/**
+ * Copies a directory's files from one listing of it: a live conversation rotates its newest chunk
+ * away while it is being read, and one entry gone is no reason to lose the rest, let alone to hang
+ * a recursive copy on a folder that keeps changing under it.
+ */
+export async function copyDirectorySnapshot(from: string, to: string): Promise<void> {
+  const entries = await readdir(from, { withFileTypes: true });
+  await mkdir(to, { recursive: true });
+  for (const entry of entries) {
+    if (entry.isDirectory()) await copyDirectorySnapshot(join(from, entry.name), join(to, entry.name));
+    else await copyFile(join(from, entry.name), join(to, entry.name)).catch((err) => {
+      if (err?.code !== 'ENOENT') throw err; // rotated away between the listing and the read
+    });
+  }
+}
+
 export const AGY_METADATA = {
   adapter: 'agy' as const,
   label: 'Antigravity',
@@ -595,6 +612,31 @@ export class AgyAdapter implements AgentAdapter {
       ? await findSessionFile(join(configDir, 'brain', safeId, '.system_generated', 'logs'), safeId, 0, (name) => name === 'transcript.jsonl')
       : null;
     return { configDir, sessionPath };
+  }
+
+  /**
+   * Another account's conversation, copied into this account's folders under the same id: its
+   * database, its brain folder and its annotations. The id is written inside the database, so it
+   * cannot be renamed; a conversation this account already has is not overwritten.
+   */
+  async importSession(sourcePath: string): Promise<string> {
+    const brain = dirname(dirname(dirname(sourcePath)));
+    const id = basename(brain);
+    const from = dirname(dirname(brain));
+    const to = configDirectory(this.env, 'CALLI_AGY_HOME', ['.gemini', 'antigravity-cli'], process.cwd());
+    const db = join('conversations', `${id}.db`);
+    if (await access(join(to, db)).then(() => true, () => false)) throw new Error(`this account already has conversation ${id}`);
+    for (const dir of ['conversations', 'brain', 'annotations']) await mkdir(join(to, dir), { recursive: true });
+    for (const suffix of ['', '-wal', '-shm']) {
+      await copyFile(join(from, db + suffix), join(to, db + suffix)).catch((err) => {
+        if (suffix === '' || err?.code !== 'ENOENT') throw err;
+      });
+    }
+    await copyDirectorySnapshot(brain, join(to, 'brain', id));
+    await cp(join(from, 'annotations', `${id}.pbtxt`), join(to, 'annotations', `${id}.pbtxt`), { errorOnExist: true, force: false }).catch((err) => {
+      if (err?.code !== 'ENOENT') throw err;
+    });
+    return id;
   }
 
   skillDirs(): SkillDir[] {

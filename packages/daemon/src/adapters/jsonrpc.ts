@@ -125,12 +125,15 @@ export class JsonRpcPeer {
   private async handleIncomingRequest(id: number | string, method: string, params: unknown): Promise<void> {
     try {
       const result = await this.handlers.onRequest(method, params, id);
+      // A pending human request may settle after its agent process has already exited.
+      if (this.closed) return;
       if (result === undefined) {
         this.write({ jsonrpc: '2.0', id, error: { code: -32601, message: `Method not supported: ${method}` } });
       } else {
         this.write({ jsonrpc: '2.0', id, result });
       }
     } catch (err) {
+      if (this.closed) return;
       const message = err instanceof Error ? err.message : String(err);
       this.write({ jsonrpc: '2.0', id, error: { code: -32603, message } });
     }

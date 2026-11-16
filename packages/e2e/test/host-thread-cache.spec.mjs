@@ -33,17 +33,22 @@ test('switching machines shows the remembered list at once and never an empty on
         // Every empty-list line the sidebar ever draws, however briefly.
         await page.addInitScript(() => {
           window.__emptyLines = [];
+          window.__agentNames = [];
           new MutationObserver(() => {
             for (const el of document.querySelectorAll('.sidebar .group-empty.top')) window.__emptyLines.push(el.textContent);
+            // An agent's name in place of its mark: what rows showed while the agents were not read yet.
+            for (const el of document.querySelectorAll('.sidebar .agent-tag')) window.__agentNames.push(el.textContent);
           }).observe(document, { subtree: true, childList: true, characterData: true });
         });
         const seen = async () => { const lines = await page.evaluate(() => window.__emptyLines.splice(0)); return lines; };
+        const names = () => page.evaluate(() => window.__agentNames.splice(0));
         await openUi(page, hub);
         if (mobile) await page.locator('.menu-btn').click();
         const title = text => page.locator('.sidebar .thread-title', { hasText: new RegExp(`^${text}$`) });
         const tab = name => page.getByRole('tab', { name });
         await title('本机的线程').waitFor({ timeout: 10_000 });
         await seen();
+        await names();
 
         // The first visit to devbox: nothing remembered, so it reads, and says so rather than "no threads".
         await tab('devbox').click();
@@ -56,6 +61,8 @@ test('switching machines shows the remembered list at once and never an empty on
           await tab(name).click();
           await title(thread).waitFor({ timeout: 10_000 });
           assert.deepEqual(await seen(), [], `switching to ${name} drew an empty list first`);
+          await page.locator('.sidebar .thread-row .agent-mark').first().waitFor({ timeout: 10_000 });
+          assert.deepEqual(await names(), [], `switching to ${name} showed agent names before their marks`);
         }
 
         // A reload remembers too.

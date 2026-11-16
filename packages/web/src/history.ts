@@ -1,11 +1,109 @@
 import { Api, AuthError } from './api';
 import type { DetailRef, StoredEvent, Item } from './timeline';
 
-export interface HistoryPage { turnIds?: string[]; events: StoredEvent[]; snapshotSeq: number; nextCursor: number | null; hasOlder: boolean }
+export interface HistoryPage { turnIds?: string[]; events: StoredEvent[]; snapshotSeq: number; nextCursor: number | null; hasOlder: boolean; hasNewer?: boolean }
 export interface HistoryDetail { version: number; text?: string; input?: unknown; output?: string; content?: unknown; nextCursor: number | null; toolId?: string | null; outputTruncated?: boolean; outputOmitted?: number; fullAvailable?: boolean }
 export type WorkFiles = NonNullable<Extract<Item, { kind: 'work' }>['files']>;
 export interface HistoryWork { files?: WorkFiles; version: number; events: StoredEvent[]; nextCursor: number | null }
 export type ResourceKind = 'work' | 'detail' | 'file';
+
+const PAGE_CACHE_LIMIT = 16;
+const PAGE_CACHE_MAX_BYTES = 8 * 1024 * 1024;
+const PAGE_CACHE_ENTRY_MAX_BYTES = 2 * 1024 * 1024;
+const PAGE_CACHE_TTL_MS = 10 * 60 * 1000;
+interface CachedPage { page: HistoryPage; bytes: number; at: number }
+interface PageCache { pages: Map<string, CachedPage>; bytes: number }
+const pageCaches = new WeakMap<Api, PageCache>();
+
+const pageCacheKey = (id: string, before?: number, after?: number, chain = false) =>
+  `${id}\u0000${chain ? 1 : 0}\u0000${before ?? ''}\u0000${after ?? ''}`;
+
+function pageCache(api: Api): PageCache {
+  let cache = pageCaches.get(api);
+  if (!cache) {
+    cache = { pages: new Map(), bytes: 0 };
+    pageCaches.set(api, cache);
+  }
+  return cache;
+}
+
+function pageBytes(page: HistoryPage): number {
+  return JSON.stringify(page).length * 2;
+}
+
+function trimPageCache(cache: PageCache) {
+  while (cache.pages.size > PAGE_CACHE_LIMIT || cache.bytes > PAGE_CACHE_MAX_BYTES) {
+    const key = cache.pages.keys().next().value;
+    if (key === undefined) break;
+    cache.bytes -= cache.pages.get(key)?.bytes ?? 0;
+    cache.pages.delete(key);
+  }
+}
+
+function readCachedPage(api: Api, id: string, before?: number, after?: number, chain = false): HistoryPage | undefined {
+  const cache = pageCaches.get(api);
+  const key = pageCacheKey(id, before, after, chain);
+  const hit = cache?.pages.get(key);
+  if (!cache || !hit) return undefined;
+  if (Date.now() - hit.at > PAGE_CACHE_TTL_MS) {
+    cache.bytes -= hit.bytes;
+    cache.pages.delete(key);
+    return undefined;
+  }
+  cache.pages.delete(key);
+  cache.pages.set(key, { ...hit, at: Date.now() });
+  return hit.page;
+}
+
+function rememberPage(api: Api, id: string, page: HistoryPage, before?: number, after?: number, chain = false) {
+  const bytes = pageBytes(page);
+  if (bytes > PAGE_CACHE_ENTRY_MAX_BYTES) return;
+  const cache = pageCache(api);
+  const key = pageCacheKey(id, before, after, chain);
+  cache.bytes -= cache.pages.get(key)?.bytes ?? 0;
+  cache.pages.set(key, { page, bytes, at: Date.now() });
+  cache.bytes += bytes;
+  trimPageCache(cache);
+}
+
+function forgetThreadPages(api: Api, id: string) {
+  const cache = pageCaches.get(api);
+  if (!cache) return;
+  for (const [key, entry] of cache.pages) {
+    if (!key.startsWith(`${id}\u0000`)) continue;
+    cache.bytes -= entry.bytes;
+    cache.pages.delete(key);
+  }
+}
+
+function updateCachedLivePage(api: Api, id: string, batch: StoredEvent[], after?: number, chain = false) {
+  if (!batch.length) return;
+  if (batch.some(ev => ev.type === 'thread.historyChanged')) {
+    forgetThreadPages(api, id);
+    return;
+  }
+  const cache = pageCaches.get(api);
+  const key = pageCacheKey(id, undefined, after, chain);
+  const hit = cache?.pages.get(key);
+  if (!cache || !hit) return;
+  const page = {
+    ...hit.page,
+    events: mergeHistory(hit.page.events, batch),
+    snapshotSeq: batch.reduce((latest, ev) => Math.max(latest, ev.seq), hit.page.snapshotSeq),
+  };
+  // Live updates arrive in short batches. Estimate growth from the batch so streaming stays cheap;
+  // full sizing is still done when a page is first fetched.
+  const bytes = hit.bytes + JSON.stringify(batch).length * 2;
+  cache.bytes -= hit.bytes;
+  if (bytes > PAGE_CACHE_ENTRY_MAX_BYTES) {
+    cache.pages.delete(key);
+    return;
+  }
+  cache.pages.delete(key);
+  cache.pages.set(key, { page, bytes, at: Date.now() });
+  cache.bytes += bytes;
+  trimPageCache(cache);
+}
 
 /** Replace only the turns covered by a reconnect snapshot; keep previously paged history. */
 export function mergeHistory(previous: StoredEvent[], updates: StoredEvent[]): StoredEvent[] {
@@ -36,13 +134,52 @@ export function mergeHistory(previous: StoredEvent[], updates: StoredEvent[]): S
   return out;
 }
 
+/**
+ * Puts an earlier page in front of what is loaded. A page lists each turn's answer after its work,
+ * so seqs are not in order; merging it event by event as if they were dropped every answer.
+ */
+export function prependHistory(older: StoredEvent[], loaded: StoredEvent[]): StoredEvent[] {
+  const seen = new Set(loaded.map(event => event.seq));
+  return [...older.filter(event => !seen.has(event.seq)), ...loaded];
+}
+
 export async function historyPage(api: Api, id: string, before?: number, after?: number, chain = false): Promise<HistoryPage> {
+  const cached = readCachedPage(api, id, before, after, chain);
+  if (cached) return cached;
   if (api.demo) {
     const events = before ? await api.eventsBefore(id, before) : await api.eventsTail(id);
     const nextCursor = (events[0]?.seq ?? 0) > 1 ? events[0].seq : null;
-    return { events, nextCursor, hasOlder: nextCursor !== null, snapshotSeq: events.at(-1)?.seq ?? 0 };
+    const page = { events, nextCursor, hasOlder: nextCursor !== null, snapshotSeq: events.at(-1)?.seq ?? 0 };
+    rememberPage(api, id, page, before, after, chain);
+    return page;
   }
-  return api.historyPage(id, before, after, chain);
+  const page = await api.historyPage(id, before, after, chain);
+  rememberPage(api, id, page, before, after, chain);
+  return page;
+}
+
+/** A decision response may arrive without its SSE event. Read a fresh, bounded summary, not raw history. */
+export async function refreshHistoryPage(api: Api, id: string, chain = false): Promise<HistoryPage> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 10_000);
+  try {
+    const page = await api.historyPage(id, undefined, undefined, chain, controller.signal);
+    forgetThreadPages(api, id);
+    rememberPage(api, id, page, undefined, undefined, chain);
+    return page;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Refresh only the summary's covered turns; preserve older pages and events newer than the read. */
+export function mergeHistoryPage(previous: StoredEvent[], page: HistoryPage): StoredEvent[] {
+  const threadId = page.events[0]?.threadId;
+  if (!threadId) return previous;
+  return mergeHistory(previous, [{
+    threadId, turnId: null, type: 'history.reset', ts: '', seq: page.snapshotSeq,
+    data: { turns: [...new Set(page.events.map(event => event.turnId).filter(Boolean))], events: page.events },
+  }]);
 }
 
 /** All conversation surfaces share snapshot/stream ordering and batched delivery. */
@@ -61,7 +198,10 @@ export async function watchHistory(api: Api, id: string, signal: AbortSignal, ca
   const flush = () => {
     clearTimeout(timer); timer = undefined;
     const batch = buffer; buffer = [];
-    if (!signal.aborted && batch.length) callbacks.events(batch);
+    if (!signal.aborted && batch.length) {
+      updateCachedLivePage(api, id, batch, callbacks.minimumSeq, callbacks.chain);
+      callbacks.events(batch);
+    }
   };
   try {
     while (!signal.aborted) {

@@ -5,7 +5,8 @@ import { promisify } from 'node:util';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { PersonalReview, type ReviewState } from '../src/personal-review.js';
+import { PersonalReview, watchFacts, type ReviewState } from '../src/personal-review.js';
+import type { ProactiveRun } from '../src/proactive.js';
 import { Store } from '../src/store.js';
 import { ThreadManager } from '../src/threads.js';
 import { Workdirs } from '../src/workdirs.js';
@@ -344,4 +345,84 @@ test('four review launches consume the daily allowance and a fifth waits until t
     t.mock.timers.setTime(at(8, 0, 13)); await h.scheduler.reviews();
     await wait(() => !h.review.status().active); assert.equal(h.review.status().runsToday, 1);
   } finally { await h.close(); }
+});
+
+const WATCH_NOW = Date.parse('2030-03-12T12:00:00.000Z');
+const hoursAgo = (hours: number) => new Date(WATCH_NOW - hours * 3_600_000).toISOString();
+const calm = { threads: [], noteUpdatedAt: null, turnEnds: [], runs: [] };
+
+test('watch: a thread running over two hours is listed; a shorter or idle one is not', () => {
+  const thread = (status: string, hours: number) => ({ id: 't', status, since: hoursAgo(hours) });
+  assert.deepEqual(watchFacts({ ...calm, threads: [thread('running', 2.5)] }, WATCH_NOW), [{ kind: 'long-running', threadId: 't', since: hoursAgo(2.5) }]);
+  assert.deepEqual(watchFacts({ ...calm, threads: [thread('running', 2)] }, WATCH_NOW), [], 'exactly two hours is not over');
+  assert.deepEqual(watchFacts({ ...calm, threads: [thread('idle', 9), thread('error', 9)] }, WATCH_NOW), []);
+  assert.deepEqual(watchFacts({ ...calm, threads: [{ id: 't', status: 'running', since: null }] }, WATCH_NOW), []);
+});
+
+test('watch: three rounds ending after the note last changed are listed, in any order', () => {
+  const turnEnds = [hoursAgo(1), hoursAgo(5), hoursAgo(3), hoursAgo(2)];
+  assert.deepEqual(watchFacts({ ...calm, turnEnds, noteUpdatedAt: hoursAgo(4) }, WATCH_NOW), [{ kind: 'note-unchanged', rounds: 3, noteUpdatedAt: hoursAgo(4), sinceRoundEndedAt: hoursAgo(3) }]);
+  assert.deepEqual(watchFacts({ ...calm, turnEnds, noteUpdatedAt: hoursAgo(2.5) }, WATCH_NOW), [], 'changed after the oldest of the last three');
+  assert.deepEqual(watchFacts({ ...calm, turnEnds: turnEnds.slice(0, 2), noteUpdatedAt: hoursAgo(9) }, WATCH_NOW), [], 'two rounds are not enough');
+  assert.equal(watchFacts({ ...calm, turnEnds }, WATCH_NOW)[0].kind, 'note-unchanged', 'a note never written has not changed');
+});
+
+test('watch: consecutive proactive failures count per repo; a success resets, unfinished runs do not', () => {
+  const run = (repo: string | undefined, status: ProactiveRun['status']) => ({ repo, status });
+  assert.deepEqual(watchFacts({ ...calm, runs: [run('a', 'failed'), run('a', 'failed')] }, WATCH_NOW), [{ kind: 'repeated-failure', repo: 'a', failures: 2 }]);
+  assert.deepEqual(watchFacts({ ...calm, runs: [run('a', 'failed'), run('b', 'failed')] }, WATCH_NOW), [], 'different repos');
+  assert.deepEqual(watchFacts({ ...calm, runs: [run('a', 'failed'), run('a', 'failed'), run('a', 'ready')] }, WATCH_NOW), [], 'the latest one worked');
+  assert.deepEqual(watchFacts({ ...calm, runs: [run('a', 'failed'), run('a', 'ready'), run('a', 'failed')] }, WATCH_NOW), [], 'not consecutive');
+  assert.equal(watchFacts({ ...calm, runs: [run('a', 'failed'), run('a', 'observed'), run('a', 'failed')] }, WATCH_NOW).length, 1, 'an observed run tried nothing');
+  assert.deepEqual(watchFacts({ ...calm, runs: [run(undefined, 'failed'), run(undefined, 'failed')] }, WATCH_NOW), [], 'preparation has no repo');
+});
+
+test('the review prompt carries watch facts only for suspicious matters, read from work threads', t => {
+  const h = stateFixture(); t.after(() => h.close());
+  const summary = (at = Date.now()) => JSON.parse(h.review.prompt(at).split('未完成事项摘要：\n').at(-1)!) as Array<{ id: string; watch?: Array<{ kind: string }> }>;
+  const watchOf = (id: string, at?: number) => summary(at).find(todo => todo.id === id)!.watch?.map(fact => fact.kind);
+  const thread = (id: string) => { h.store.createThread({ id, agent: 'pi', cwd: h.dir, title: id, permissionMode: 'default', model: null, effort: null }); return id; };
+  const rounds = (id: string, count: number, end: Record<string, unknown> = { stopReason: 'end_turn' }, type: 'turn.done' | 'turn.error' = 'turn.done', started: Record<string, unknown> = {}) => {
+    for (let i = 0; i < count; i++) { const turn = `${id}-${i}`; h.store.appendEvent(id, turn, 'turn.started', { text: 'work', ...started }); h.store.appendEvent(id, turn, type, end); }
+  };
+  const link = (todo: string, id: string) => h.store.linkTodoThread(todo, id);
+
+  h.store.createTodo('normal', 'normal', null); link('normal', thread('quiet')); rounds('quiet', 2);
+  h.store.createTodo('idle', 'idle', null); link('idle', thread('spinning')); rounds('spinning', 3);
+  h.store.createTodo('long', 'long', null); link('long', thread('stuck'));
+  h.store.updateThread('stuck', { status: 'running', hubTurnAt: new Date().toISOString() });
+  h.store.createTodo('flaky', 'flaky', null);
+  h.store.saveHubSetting('personalProactiveRuns', [
+    { id: 'a', matterId: 'flaky', kind: 'sandbox', repo: '/repo', threadId: '', startedAt: hoursAgo(2), status: 'failed' },
+    { id: 'b', matterId: 'flaky', kind: 'sandbox', repo: '/repo', threadId: '', startedAt: hoursAgo(1), status: 'failed' },
+    { id: 'c', matterId: 'normal', kind: 'sandbox', repo: '/repo', threadId: '', startedAt: hoursAgo(1), status: 'failed' },
+  ]);
+
+  const later = Date.now() + 3 * 3_600_000;
+  assert.equal(watchOf('normal', later), undefined, 'a normal matter has no watch field');
+  assert.deepEqual(watchOf('idle', later), ['note-unchanged']);
+  assert.deepEqual(watchOf('long', later), ['long-running']);
+  assert.equal(watchOf('long'), undefined, 'just started');
+  assert.deepEqual(watchOf('flaky', later), ['repeated-failure']);
+  const prompt = h.review.prompt(later);
+  assert.ok(prompt.includes('带 watch 字段的事项列出了可疑事实（长时间运行、多轮无进展、连续失败）；逐个判断是否空转或跑偏，值得人介入的写进 notify 并点名，正常的不提。'));
+  for (const sample of ['"watch": [', '"kind": "note-unchanged"', '"kind": "long-running"', '"kind": "repeated-failure"', '"repo": "/repo"']) assert.ok(prompt.includes(sample), sample);
+
+  h.store.writeTodoNote('idle', 'moved on', null, h.store.getTodo('idle')!.rev);
+  assert.equal(watchOf('idle', later), undefined, 'a note written after those rounds clears it');
+
+  // Stopped or cut-off turns are not rounds of work.
+  h.store.createTodo('stopped', 'stopped', null); link('stopped', thread('halted')); rounds('halted', 3, { stopReason: 'cancelled' });
+  h.store.createTodo('restarted', 'restarted', null); link('restarted', thread('cut')); rounds('cut', 3, { message: 'x', code: 'interrupted' }, 'turn.error');
+  assert.equal(watchOf('stopped', later), undefined);
+  assert.equal(watchOf('restarted', later), undefined);
+  h.store.createTodo('broken', 'broken', null); link('broken', thread('erring')); rounds('erring', 3, { message: 'x' }, 'turn.error');
+  assert.deepEqual(watchOf('broken', later), ['note-unchanged'], 'failed rounds are still rounds');
+
+  // Neither the Router, a review, a summary nor an archived thread is a worker.
+  const notWork = (name: string, prepare: (id: string) => void) => { h.store.createTodo(name, name, null); const id = thread(`${name}-thread`); link(name, id); prepare(id); assert.equal(watchOf(name, later), undefined, name); };
+  notWork('router', id => { rounds(id, 3, undefined, 'turn.done', { hiddenPrompt: true, text: 'hi\n\n<calli-personal-router>\nrules' }); h.store.updateThread(id, { status: 'running', hubTurnAt: new Date().toISOString() }); });
+  notWork('review', id => rounds(id, 3, undefined, 'turn.done', { review: true }));
+  notWork('summary', id => { rounds(id, 3); h.store.saveSummaryRun('s1', id, 1); });
+  notWork('archived', id => { rounds(id, 3); h.store.updateThread(id, { archivedAt: new Date().toISOString() }); });
 });

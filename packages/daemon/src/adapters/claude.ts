@@ -1,10 +1,14 @@
 import { execFile } from 'node:child_process';
 import { copyClaudeAccount, startClaudeLogin } from './claude-account.js';
 import { claudeLiveUsage } from './session-usage.js';
+import { readTraexModelStatus } from './traex.js';
+import { ferryModelKey, readFerryQueueObservations } from './ferry.js';
 import type { UsageSample } from '../telemetry.js';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { homedir, tmpdir } from 'node:os';
+import { basename, dirname, join } from 'node:path';
 import { AcpAdapter, AcpSession, airForkPoint } from './acp.js';
 import { CLAUDE_ICON } from './icons.js';
 import { titlePlan } from './plans.js';
@@ -12,7 +16,7 @@ import type { JsonRpcPeer } from './jsonrpc.js';
 import { installJsonMcpServer, jsonMcpServers, removeJsonMcpServer } from '../mcp-format.js';
 import { configDirectory, findSessionFile, quoteArg } from './session-location.js';
 import { claudeSystemPromptLine, scanJsonl } from './system-prompt.js';
-import type { DiscoveredAccount, McpServerInfo, ModelOption, PermissionMode, PlanQuota, QuotaWindow, SkillDir, SlashCommand, SystemPrompt } from './types.js';
+import type { DiscoveredAccount, McpServerInfo, ModelOption, PermissionMode, PlanQuota, QuotaWindow, SkillDir, SlashCommand, StartOptions, SystemPrompt } from './types.js';
 
 /**
  * Claude Code, through the ACP bridge this repo ships with (`@agentclientprotocol/claude-agent-acp`).
@@ -20,8 +24,9 @@ import type { DiscoveredAccount, McpServerInfo, ModelOption, PermissionMode, Pla
  * - its permission modes: "auto" (Claude decides which actions are risky) is the closest match for
  *   auto_edit, acceptEdits is the fallback when the account or adapter version does not offer it;
  * - it answers /cost and /stats in a session without announcing them;
- * - the model list says nothing about which models this account can use, so each model is selected
- *   once in a throw-away session to check.
+ * - model catalogs are read without selecting each model; access and effort settings are checked
+ *   when a session applies its settings;
+ * - opt-in gateway discovery reads the gateway's own catalog and capabilities without inference.
  */
 
 /**
@@ -41,6 +46,74 @@ const CLAUDE_INTERRUPT_NOTE = /^\[Request interrupted by user( for tool use)?\]$
 /** Effort levels Claude accepts through the `effort` config option. */
 const CLAUDE_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 
+interface GatewayCatalogModel {
+  id: string;
+  display_name?: string;
+  capabilities?: {
+    effort?: Record<string, boolean | { supported?: boolean }>;
+    image_input?: { supported?: boolean };
+  };
+}
+
+const CLAUDE_GATEWAY_ROUTING_GROUP = /^auto\//;
+
+/** The gateway's key curates the catalog; the picker only hides routing groups, which duplicate the direct models by name. */
+function showClaudeGatewayModel(model: GatewayCatalogModel): boolean {
+  return !CLAUDE_GATEWAY_ROUTING_GROUP.test(model.id);
+}
+
+/** The same opt-in discovery endpoint Claude Code uses for a configured gateway. */
+async function gatewayModels(url: string, headers: Record<string, string>, env: NodeJS.ProcessEnv, defaultModel?: string): Promise<ModelOption[]> {
+  const endpoint = new URL(url.replace(/\/$/, '') + (/\/v1\/?$/.test(url) ? '/models' : '/v1/models'));
+  const signal = AbortSignal.timeout(10000);
+  const models: ModelOption[] = [];
+  const cursors = new Set<string>();
+  for (;;) {
+    const response = await fetch(endpoint, { headers, signal });
+    if (!response.ok) throw new Error(`Gateway model discovery failed (HTTP ${response.status})`);
+    const page = await response.json() as { data?: GatewayCatalogModel[]; has_more?: boolean; last_id?: string };
+    if (!Array.isArray(page.data)) throw new Error('Gateway model discovery returned an invalid catalog');
+    for (const model of page.data) {
+      if (typeof model.id !== 'string' || !model.id) throw new Error('Gateway model discovery returned an invalid model ID');
+      if (!showClaudeGatewayModel(model)) continue;
+      const effort = model.capabilities?.effort;
+      const image = model.capabilities?.image_input?.supported;
+      models.push({
+        id: model.id, label: model.id,
+        ...(model.id === defaultModel ? { isDefault: true } : {}),
+        ...(effort ? { efforts: CLAUDE_EFFORTS.filter(level => typeof effort[level] === 'object' && effort[level].supported === true) } : {}),
+        ...(typeof image === 'boolean' ? { images: image } : {}),
+      });
+    }
+    if (!page.has_more) break;
+    if (!page.last_id || cursors.has(page.last_id)) throw new Error('Gateway model discovery returned an invalid pagination cursor');
+    cursors.add(page.last_id);
+    endpoint.searchParams.set('after_id', page.last_id);
+  }
+  // Local TRAE metadata must never be applied to a remote or unrelated gateway's models.
+  if (['localhost', '127.0.0.1', '[::1]'].includes(endpoint.hostname) && models.some(model => model.label.startsWith('Ferry '))) {
+    // Optional reads are independent: a missing CLI must not hide a valid queue observation.
+    const [status, queues] = await Promise.all([
+      readTraexModelStatus([env.CALLI_TRAEX_BIN || 'traex'], env).catch(() => null),
+      readFerryQueueObservations(env),
+    ]);
+    for (const model of models) {
+      if (!model.label.startsWith('Ferry ')) continue;
+      // Standard and Max share the upstream config; punctuation differs between their public IDs.
+      const key = ferryModelKey(model.id);
+      const live = status?.find(row => ferryModelKey(row.configName ?? row.name) === key);
+      if (live?.loadPercent !== undefined) model.loadPercent = live.loadPercent;
+      if (status === null) model.loadError = true;
+      // Ferry reports request positions, not total queue size. Never substitute one for the other.
+      model.queueSize = null;
+      const queue = queues.get(key);
+      model.queuePosition = queue?.position ?? null;
+      if (queue) model.queueObservedAt = queue.at;
+    }
+  }
+  return models;
+}
+
 /**
  * Commands Claude answers in an ACP session without announcing them (checked by sending each one).
  * Most other terminal-only commands, such as /status and /help, answer "isn't available in this
@@ -50,6 +123,7 @@ const UNLISTED_COMMANDS: SlashCommand[] = [
   { name: 'goal', description: '设置原生目标并持续执行；不带参数查看，clear 清除', hint: '[目标 | clear]', kind: 'command' },
   { name: 'cost', description: 'Show plan usage limits and what is using them' },
   { name: 'stats', description: 'Show plan usage limits and what is using them' },
+  { name: 'context', description: 'Show the context window breakdown the agent computed itself' },
 ];
 
 /** The agent's list plus the commands it answers but does not list, without duplicates. */
@@ -91,7 +165,7 @@ export function parseClaudeUsage(text: string, now = new Date()): QuotaWindow[] 
     if (!m) continue;
     out.push({
       label: m[1] === 'session' ? '5H' : '7D',
-      ...(m[1] !== 'session' ? { scope: '全部模型' } : {}),
+      // Both windows cover the account; "all models" is not a separate model pool.
       usedPercent: Number(m[2]),
       ...(m[3] ? { resetsAt: claudeResetAt(m[3], now) } : {}),
     });
@@ -107,6 +181,9 @@ export const CLAUDE_METADATA = {
 };
 
 export class ClaudeAcpAdapter extends AcpAdapter {
+  private gatewayProbe: Promise<ModelOption[]> | null = null;
+  private gatewayKey = '';
+  private gatewayCommandProbe: Promise<void> | null = null;
   protected override liveUsage(id: string, cwd: string, emit: (sample: UsageSample) => void) {
     return claudeLiveUsage(id, cwd, this.env, emit);
   }
@@ -153,6 +230,50 @@ export class ClaudeAcpAdapter extends AcpAdapter {
 
   protected readonly modeIds = CLAUDE_MODE_IDS;
 
+  override models(refresh = false): Promise<ModelOption[]> {
+    const configDir = configDirectory(this.env, 'CLAUDE_CONFIG_DIR', ['.claude'], process.cwd());
+    let settings: { env?: Record<string, string>; model?: string } = {};
+    try {
+      settings = JSON.parse(readFileSync(join(configDir, 'settings.json'), 'utf8'));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return Promise.reject(error);
+    }
+    // Claude applies settings.env after the process environment. Respect account isolation too.
+    const env = { ...process.env, ...this.env, ...settings.env };
+    const url = env.ANTHROPIC_BASE_URL;
+    if (env.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY !== '1' || !url) {
+      const changed = !!this.gatewayKey;
+      this.gatewayKey = '';
+      this.gatewayProbe = null;
+      return super.models(refresh || changed);
+    }
+    const headers: Record<string, string> = { 'anthropic-version': '2023-06-01' };
+    if (env.ANTHROPIC_AUTH_TOKEN) headers.Authorization = `Bearer ${env.ANTHROPIC_AUTH_TOKEN}`;
+    else if (env.ANTHROPIC_API_KEY) headers['x-api-key'] = env.ANTHROPIC_API_KEY;
+    const defaultModel = env.ANTHROPIC_MODEL || settings.model;
+    const key = JSON.stringify([url, headers, defaultModel]);
+    if (refresh || key !== this.gatewayKey) this.gatewayProbe = null;
+    this.gatewayKey = key;
+    if (!this.gatewayProbe) {
+      // The gateway's catalog is authoritative: no model switch, inference or quota checks.
+      // A failed discovery remains an error, and the next request retries instead of caching it.
+      const probe = gatewayModels(url, headers, env, defaultModel).catch(error => {
+        if (this.gatewayProbe === probe) this.gatewayProbe = null;
+        throw error;
+      });
+      this.gatewayProbe = probe;
+    }
+    return this.gatewayProbe;
+  }
+
+  protected initialSessionOptions(opts: StartOptions) {
+    if (opts.probe) return {};
+    const options = { ...(opts.model ? { model: opts.model } : {}), ...(opts.effort ? { effort: opts.effort } : {}) };
+    return Object.keys(options).length
+      ? { meta: { claudeCode: { options } }, model: !!opts.model, effort: !!opts.effort }
+      : {};
+  }
+
   protected configureSession(session: AcpSession, peer: JsonRpcPeer): void {
     const prompt = session.prompt.bind(session);
     session.prompt = async (input, hooks) => {
@@ -170,27 +291,19 @@ export class ClaudeAcpAdapter extends AcpAdapter {
     };
   }
 
-  /**
-   * Selects each model in turn to learn which effort levels it offers and to drop models this
-   * account cannot use. The session comes from the shared probe, which sends no prompt.
-   */
-  protected refineModels(models: ModelOption[], session: AcpSession): Promise<ModelOption[]> {
-    return (async () => {
-      const usable: ModelOption[] = [];
-      for (const model of models) {
-        const settings = await session.probeModel(model.id);
-        if (settings === null) {
-          console.error(`[claude-acp] model ${model.id} cannot be selected on this account; hiding it`);
-          continue;
-        }
-        usable.push({ ...model, ...settings });
-      }
-      return usable;
-    })();
-  }
-
   protected extraCommands(listed: SlashCommand[]): SlashCommand[] {
     return withUnlistedCommands(listed);
+  }
+
+  override async commands(cwd?: string): Promise<SlashCommand[]> {
+    const listed = await super.commands(cwd);
+    if (!this.gatewayKey || listed.length) return listed;
+    // Gateway discovery skips ACP startup; still discover the CLI's own slash commands on demand.
+    this.gatewayCommandProbe ??= this.open({ cwd: tmpdir() }, true)
+      .then(async ({ session }) => { await session.close(); })
+      .finally(() => { this.gatewayCommandProbe = null; });
+    await this.gatewayCommandProbe;
+    return super.commands(cwd);
   }
 
   resumeCommand(agentSessionId: string): string {
@@ -225,6 +338,22 @@ export class ClaudeAcpAdapter extends AcpAdapter {
       sessionPath,
       ...(agentSessionId ? { resumeCommand: `env CLAUDE_CONFIG_DIR=${quoteArg(configDir)} ${quoteArg(this.env.CALLI_CLAUDE_BIN || claudeCli())} --resume ${quoteArg(agentSessionId)}` } : {}),
     };
+  }
+
+  /**
+   * Another account's transcript, copied into this account's `projects/` under a new id: Claude
+   * Code resumes any transcript in its config directory, whichever account wrote it. Only the
+   * `sessionId` field of each line is renamed, so paths into the original's folder (large tool
+   * results saved beside it) still resolve.
+   */
+  async importSession(sourcePath: string): Promise<string> {
+    const oldId = basename(sourcePath, '.jsonl');
+    const id = randomUUID();
+    const dir = join(configDirectory(this.env, 'CLAUDE_CONFIG_DIR', ['.claude'], process.cwd()), 'projects', basename(dirname(sourcePath)));
+    const text = await readFile(sourcePath, 'utf8');
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, `${id}.jsonl`), text.split(`"sessionId":"${oldId}"`).join(`"sessionId":"${id}"`), { flag: 'wx', mode: 0o600 });
+    return id;
   }
 
   /** The system prompt the conversation runs with, from the transcript's own snapshot of it. */
@@ -270,12 +399,15 @@ export class ClaudeAcpAdapter extends AcpAdapter {
     if (!removeJsonMcpServer(this.mcpJsonPath(), name)) throw new Error(`claude 没有名为 ${name} 的 MCP 服务`);
   }
 
-  /** One `claude -p "/usage"` run. A local command, so no session is written and no turn spent. */
+  /**
+   * One `claude -p "/usage"` run. A local command that spends no turn, but Claude Code 2.x still
+   * writes a one-line session for it (one per refresh, per account), so persistence is switched off.
+   */
   async fetchQuota(): Promise<PlanQuota> {
     const configDir = configDirectory(this.env, 'CLAUDE_CONFIG_DIR', ['.claude'], process.cwd());
     const planning = claudePlan(configDir, this.env);
     const stdout = await new Promise<string>((resolve, reject) => {
-      execFile(claudeCli(), ['-p', '/usage'], { timeout: 30_000, maxBuffer: 1024 * 1024, env: { ...process.env, ...this.env } }, (err, out) => {
+      execFile(claudeCli(), ['-p', '/usage', '--no-session-persistence'], { timeout: 30_000, maxBuffer: 1024 * 1024, env: { ...process.env, ...this.env } }, (err, out) => {
         if (!err) return resolve(out);
         const reason = String(err.message).split('\n').pop() ?? '';
         reject(new Error(`claude /usage failed: ${reason.slice(0, 200)}`));

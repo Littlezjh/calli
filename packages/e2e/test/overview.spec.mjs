@@ -40,10 +40,10 @@ test('the settings menu opens the overview, a turn shows up the day it was asked
     // Not a row of the list: it lives in the settings menu, with the skills and MCP pages.
     assert.equal(await page.locator('.side-link', { hasText: '概览' }).count(), 0);
     await page.getByRole('button', { name: '配置', exact: true }).click();
-    await page.getByRole('menuitem', { name: '概览', exact: true }).click();
+    await page.locator('.settings-nav').getByRole('button', { name: '概览', exact: true }).click();
     await page.locator('.activity-page').waitFor({ timeout: 10_000 });
-    assert.match(await page.evaluate(() => window.location.hash), /#\/activity$/);
-    assert.equal((await page.locator('.topbar-title').innerText()).trim(), '概览', 'the top bar names the page, not 新线程');
+    assert.match(await page.evaluate(() => window.location.hash), /#\/settings\/activity$/);
+    assert.equal((await page.locator('.settings-topbar h1').innerText()).trim(), '配置', 'the top bar names the page, not 新线程');
 
     // Today's section: the ask, the conversation under its name, and the tools the fake pi called.
     const day = page.locator('.activity-day', { has: page.locator('.activity-day-head h2', { hasText: '今天' }) });
@@ -78,22 +78,35 @@ test('the settings menu opens the overview, a turn shows up the day it was asked
     await page.locator('.composer').waitFor({ timeout: 10_000 });
     assert.equal(await page.evaluate(() => window.location.hash), '');
     await page.getByRole('button', { name: '配置', exact: true }).click();
-    await page.getByRole('menuitem', { name: '概览', exact: true }).click();
+    await page.locator('.settings-nav').getByRole('button', { name: '概览', exact: true }).click();
     await page.locator('.activity-page').waitFor({ timeout: 10_000 });
   } finally { await page.close(); }
 });
 
 test('an agent that keeps no prompt in its session file says so instead of guessing', async () => {
+  // agy advertises no system-prompt capability, so its conversation has no button to read one from.
+  const made = await (await fetch(`${daemon.base}/api/threads`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${daemon.token}` },
+    body: JSON.stringify({ agent: 'agy', cwd: daemon.workdir, title: '无提示词的会话' }),
+  })).json();
+  await fetch(`${daemon.base}/api/threads/${made.id}/turns`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${daemon.token}` },
+    body: JSON.stringify({ text: 'overview e2e: 没有系统提示词' }),
+  });
+  for (let i = 0; i < 100; i++) {
+    const t = await (await fetch(`${daemon.base}/api/threads/${made.id}`, { headers: { Authorization: `Bearer ${daemon.token}` } })).json();
+    if (t.status !== 'running') break;
+    await new Promise((r) => setTimeout(r, 100));
+  }
   const page = await (await browser.newContext({ viewport: { width: 1400, height: 900 } })).newPage();
   try {
     await openUi(page, daemon);
     await page.evaluate(() => window.location.assign('#/activity'));
     await page.locator('.activity-page').waitFor({ timeout: 10_000 });
-    // The fake pi writes no session file, so its conversation has no button to read one from.
-    const groups = await page.locator('.activity-thread').all();
-    for (const group of groups) {
-      const agent = await group.locator('.activity-thread-agent').textContent();
-      if (agent.includes('pi')) assert.equal(await group.locator('.activity-sys-btn').count(), 0, 'no button where there is nothing to read');
-    }
+    const group = page.locator('.activity-thread').filter({ hasText: '无提示词的会话' });
+    await group.waitFor({ timeout: 10_000 });
+    assert.equal(await group.locator('.activity-sys-btn').count(), 0, 'no button where there is nothing to read');
   } finally { await page.close(); }
 });

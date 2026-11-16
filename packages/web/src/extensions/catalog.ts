@@ -8,11 +8,13 @@ import type { WebExtensionModule } from '@calli/extension-api/web';
 import memoryManifest from '@calli/ext-memory/manifest.json';
 import boardManifest from '@calli/ext-board/manifest.json';
 import voiceManifest from '@calli/ext-voice/manifest.json';
+import autotitleManifest from '@calli/ext-autotitle/manifest.json';
 
 export const BUILTIN_MODULES: Record<string, () => Promise<{ default: WebExtensionModule }>> = {
   board: () => import('@calli/ext-board'),
   memory: () => import('@calli/ext-memory'),
   voice: () => import('@calli/ext-voice'),
+  autotitle: () => import('@calli/ext-autotitle'),
 };
 
 /** The same extensions' manifests, for the demo: it has no daemon to read the catalog from. */
@@ -20,4 +22,5 @@ export const BUILTIN_MANIFESTS: ExtensionManifest[] = [
   boardManifest as ExtensionManifest,
   memoryManifest as ExtensionManifest,
   voiceManifest as ExtensionManifest,
+  autotitleManifest as ExtensionManifest,
 ];

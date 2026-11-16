@@ -9,9 +9,8 @@ import '@xterm/xterm/css/xterm.css';
 import type { Api, TerminalFrame, TerminalInfo } from '../api';
 import { copyText } from '../clipboard';
 import { folderName } from '../paths';
-import type { ToastState } from './Toast';
 import { useIsTouch } from '../hooks';
-import { IconArrowDown, IconArrowLeft, IconArrowRight, IconArrowUp, IconClose, IconSend, IconTerminal } from './icons';
+import { IconArrowDown, IconArrowLeft, IconArrowRight, IconArrowUp, IconCheck, IconClose, IconSend, IconTerminal } from './icons';
 import { t } from '../i18n';
 
 interface Props {
@@ -20,7 +19,6 @@ interface Props {
   cwd: string;
   /** Attach to this terminal (a login just started); null attaches to the newest live one. */
   terminalId?: string | null;
-  toast: (t: ToastState | null) => void;
   onClose: () => void;
   onError: (e: unknown) => void;
 }
@@ -75,7 +73,7 @@ function keys(appCursor: boolean): Array<[string, string, JSX.Element?]> {
   ];
 }
 
-export function TerminalPanel({ api, cwd, terminalId, toast, onClose, onError }: Props) {
+export function TerminalPanel({ api, cwd, terminalId, onClose, onError }: Props) {
   // Bumped by Reopen and Retry: the whole terminal (xterm and stream) is rebuilt from scratch.
   const [nonce, setNonce] = useState(0);
   const [phase, setPhase] = useState<'connecting' | 'running' | 'ended' | 'failed'>('connecting');
@@ -241,6 +239,17 @@ export function TerminalPanel({ api, cwd, terminalId, toast, onClose, onError }:
     setNonce((n) => n + 1);
   };
 
+  // The directory button itself says the copy worked: a check where the path was, then the path back.
+  const [copiedDir, setCopiedDir] = useState(false);
+  const copyDir = () => {
+    if (!info) return;
+    void copyText(info.cwd).then((ok) => {
+      if (!ok) return onError(t('term.copyFailed'));
+      setCopiedDir(true);
+      window.setTimeout(() => setCopiedDir(false), 1500);
+    });
+  };
+
   return (
     <div className="dialog-scrim term-scrim">
       <div className="panel term-panel" role="dialog" aria-modal="true" aria-label={t('term.title')}>
@@ -250,11 +259,8 @@ export function TerminalPanel({ api, cwd, terminalId, toast, onClose, onError }:
               <IconTerminal size={20} /> {t('term.title')}
             </h2>
             {info && (
-              <button
-                className="term-cwd"
-                title={info.cwd}
-                onClick={() => void copyText(info.cwd).then((ok) => toast({ message: ok ? t('term.copiedDir') : t('term.copyFailed') }))}
-              >
+              <button className="term-cwd" title={info.cwd} onClick={copyDir}>
+                {copiedDir && <IconCheck size={14} />}
                 {folderName(info.cwd)}
               </button>
             )}

@@ -2,10 +2,10 @@
 // page says when it drops. The machines are directories and ssh is the fake one from the fixtures.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { startDaemon, openUi, api, launchBrowser } from '../harness.mjs';
+import { startDaemon, openUi, api, launchBrowser, closeSettings, openCollaboration } from '../harness.mjs';
 
 const SOCKET_IN_HOME = '.local/state/calli/daemon.sock';
 
@@ -48,8 +48,10 @@ after(async () => {
 
 async function openMachines(p = page) {
   await p.getByRole('button', { name: '配置' }).click();
-  await p.getByRole('menuitem', { name: '机器' }).click();
-  return p.getByRole('dialog', { name: '机器' });
+  await p.locator('.settings-nav').getByRole('button', { name: '机器' }).click();
+  const region = p.getByRole('region', { name: '机器' });
+  if (await region.getByRole('button', { name: '添加机器', exact: true }).getAttribute('aria-expanded') === 'false') await region.getByRole('button', { name: '添加机器', exact: true }).click();
+  return region;
 }
 
 test('with no other machine, the list has no switcher', async () => {
@@ -75,12 +77,12 @@ test('a machine is added by its name in the ssh config; one ssh cannot get into 
   await row.getByText('在线').waitFor({ timeout: 15_000 });
   assert.equal(await failure.count(), 0, 'the earlier failure is cleared');
   assert.deepEqual(await panel.locator('.host-candidate .host-target').allInnerTexts(), ['buildbox'], 'no longer offered');
-  await panel.getByRole('button', { name: '关闭' }).click();
+  await closeSettings(page);
 
   // Now there is a choice to make, so the list says which machine it is of.
   const tabs = page.getByRole('tablist', { name: '机器' }).getByRole('tab');
-  assert.deepEqual(await tabs.allInnerTexts(), ['本机', 'devbox']);
-  assert.equal(await tabs.nth(0).getAttribute('aria-selected'), 'true');
+  assert.deepEqual(await tabs.allInnerTexts(), ['全部', '本机', 'devbox']);
+  assert.equal(await tabs.getByText('本机', { exact: true }).locator('..').getAttribute('aria-selected'), 'true');
 });
 
 test('switching shows that machine, and a thread started there runs there', async () => {
@@ -96,7 +98,9 @@ test('switching shows that machine, and a thread started there runs there', asyn
   await page.keyboard.type('hello from the hub');
   await page.keyboard.press('Enter');
   await page.getByText('hi there hello from the hub').waitFor({ timeout: 15_000 });
-  assert.match(await page.locator('.topbar-sub').innerText(), /· devbox$/);
+  await page.getByRole('button', { name: '线程所在位置', exact: true }).click();
+  await page.locator('.place-row', { hasText: 'devbox' }).waitFor();
+  await page.keyboard.press('Escape');
 
   const there = await (await api(node, '/api/threads')).json();
   assert.ok(there.some((t) => t.preview?.includes('hello from the hub') || t.title.includes('hello from the hub')), 'the thread is on the other machine');
@@ -152,7 +156,8 @@ test('images sent through the hub are stored and displayed on the other machine'
 });
 
 test('a terminal opened through the hub runs in the other machine directory', async () => {
-  await page.getByLabel('打开终端').click();
+  await page.getByLabel('这个线程的更多操作').click();
+  await page.getByRole('menuitem', { name: '打开终端', exact: true }).click();
   await page.locator('.term-panel').waitFor();
   await page.locator('.term-body').click();
   await page.keyboard.type('pwd');
@@ -201,7 +206,7 @@ test('handover creates and persists a draft only on the selected remote machine'
   await page.locator('.sidebar .thread-title',{hasText:'本机的线程'}).waitFor();
   assert.equal(await page.locator('.composer textarea').inputValue(),'');
   await page.getByRole('tab',{name:'devbox'}).click();
-  await page.locator('.sidebar .thread-item',{hasText:'开发机上的线程（接手）'}).click();
+  await page.locator('.sidebar .handover-group .thread-item',{hasText:'开发机上的线程'}).click();
   assert.equal(await page.locator('.composer textarea').inputValue(),summary);
 });
 
@@ -232,9 +237,61 @@ test('removing the machine on screen goes back to the hub, and the switcher goes
   await panel.locator('.host-row', { hasText: 'devbox' }).getByRole('button', { name: '移除' }).click();
   const confirm = page.getByRole('dialog', { name: '移除 devbox？' });
   await confirm.getByRole('button', { name: '移除' }).click();
+  await page.waitForFunction(() => !document.querySelector('.host-switch'));
+  await page.getByRole('region', { name: '机器' }).waitFor();
+  if (await panel.getByRole('button', { name: '添加机器', exact: true }).getAttribute('aria-expanded') === 'false') await panel.getByRole('button', { name: '添加机器', exact: true }).click();
   await panel.getByRole('button', { name: '添加 devbox' }).waitFor({ timeout: 10_000 });
-  await panel.getByRole('button', { name: '关闭' }).click();
+  await closeSettings(page);
   await page.getByText('本机的线程').waitFor({ timeout: 10_000 });
   assert.equal(await page.locator('.host-switch').count(), 0);
   assert.deepEqual(await (await api(hub, '/api/hosts')).json(), []);
+});
+
+test('a remote member leaves a result file, and the page downloads it', async () => {
+  // This runs last, after the test above took the machine away; it comes back for this check.
+  const added = await api(hub, '/api/hosts', { method: 'POST', body: JSON.stringify({ target: 'devbox' }) });
+  if (!added.ok) assert.equal((await api(hub, '/api/hosts')).status, 200, await added.clone().text());
+  const root = await (await api(hub, '/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'pi', cwd: hub.workdir, title: '远程交接验收' }) })).json();
+  assert.equal((await api(hub, `/api/threads/${root.id}/coordination`, { method: 'POST', body: '{}' })).status, 200);
+  const directive = Buffer.from(JSON.stringify({
+    args: ['spawn', '--agent', 'pi@devbox', '--name', 'far', '--cwd', node.workdir, '--message-file', '-', '--request-id', 'far-file'],
+    text: 'CALLI_RESULT_FILE 请整理报告',
+  })).toString('base64');
+  assert.equal((await api(hub, `/api/threads/${root.id}/turns`, { method: 'POST', body: JSON.stringify({ text: `CALLI_COMMAND:${directive}` }) })).status, 202);
+  let view;
+  for (let n = 0; n < 400; n++) {
+    view = await (await api(hub, `/api/threads/${root.id}/coordination`)).json();
+    if (view.messages?.some(m => m.kind === 'result' && m.resultFile)) break;
+    await new Promise(r => setTimeout(r, 50));
+  }
+  const result = view.messages?.find(m => m.kind === 'result' && m.resultFile);
+  assert.ok(result, 'the result names the file the member left');
+  const exchange = `/tmp/calli-exchange/${root.id}`;
+  try {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, acceptDownloads: true });
+    const page = await context.newPage();
+    try {
+      await openUi(page, hub);
+      await page.locator('.thread-row', { hasText: '远程交接验收' }).click();
+      await openCollaboration(page);
+      await page.getByRole('button', { name: '协作设置', exact: true }).click();
+      await page.getByRole('button', { name: '查看智能体', exact: true }).click();
+      const panel = page.getByRole('region', { name: '智能体面板' });
+      await panel.getByRole('tab', { name: /消息/ }).click();
+      if (!(await panel.locator('.talk-thread').count())) {
+        const replies = panel.locator('.talk-replies');
+        if (await replies.count()) await replies.first().click();
+      }
+      const file = panel.locator('.talk-file');
+      await file.waitFor({ timeout: 10_000 });
+      assert.match(await file.innerText(), /结果文件 · result\.md/);
+      const [download] = await Promise.all([page.waitForEvent('download'), file.click()]);
+      assert.equal(download.suggestedFilename(), 'result.md');
+      assert.match(readFileSync(await download.path(), 'utf8'), /from the fixture/);
+    } finally {
+      await context.close();
+    }
+  } finally {
+    rmSync(exchange, { recursive: true, force: true });
+  }
 });

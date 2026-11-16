@@ -5,8 +5,8 @@ if (process.argv.includes('--version')) { process.stdout.write('fixture 1.2.3\n'
 // file, "approve" asks for a command approval, "deny" offers a plain decline, "slow" waits until
 // interrupted, "crash" exits. Settings ride with turn/start the way the adapter sends them.
 import { coordinationFixture } from './coordination.mjs';
-import { appendFileSync, readFileSync, cpSync, existsSync, mkdirSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { appendFileSync, readFileSync, writeFileSync, cpSync, existsSync, mkdirSync } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
 
 // Optional on-disk generated memory, read by the adapter without an RPC or a new turn.
@@ -22,6 +22,24 @@ const rl = createInterface({ input: process.stdin });
 const out = (obj) => process.stdout.write(JSON.stringify(obj) + '\n');
 
 let threadId = process.env.FAKE_CODEX_THREAD ?? 'codex-thread-1';
+// A rollout file under this account's CODEX_HOME, the way the real CLI keeps one, so the copy-in
+// flow has something on disk to read: session meta first, one line per turn after it.
+const rolloutPath = () => {
+  if (!process.env.CODEX_HOME) return null;
+  const day = new Date().toISOString().slice(0, 10).split('-');
+  return join(process.env.CODEX_HOME, 'sessions', day[0], day[1], day[2], `rollout-fixture-${threadId}.jsonl`);
+};
+const ensureRollout = () => {
+  const path = rolloutPath();
+  if (!path || existsSync(path)) return;
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, JSON.stringify({ timestamp: new Date().toISOString(), type: 'session_meta', payload: { id: threadId, cwd: '/tmp/one' } }) + '\n');
+};
+const appendRollout = (text) => {
+  ensureRollout();
+  const path = rolloutPath();
+  if (path) appendFileSync(path, JSON.stringify({ timestamp: new Date().toISOString(), type: 'event_msg', payload: { type: 'user_message', message: text } }) + '\n');
+};
 let nextTurnSeq = 1;
 let billedTokens = 900000;
 let nextServerRequestId = 1000;
@@ -34,13 +52,15 @@ let currentWorkMode = 'default';
 const awaitingInput = new Map();
 const planResult = (turnId) => {
   notify('item/plan/delta', { turnId, itemId: 'proposal', delta: '## 实施计划\n\n正在整理…' });
-  notify('item/completed', { turnId, item: { type: 'plan', id: 'proposal', text: '## 实施计划\n\n1. 阅读现有实现\n2. 完成改动并验证\n\n保留当前会话和权限设置。' } });
+  notify('item/completed', { turnId, item: { type: 'plan', id: 'proposal', text: '## 实施计划\n\n1. 阅读现有实现，列出所有调用点\n2. 完成改动并验证\n3. 跑一遍接口测试，记录结果\n4. 补齐两处文案的中英文\n5. 更新 README 的说明段落\n6. 回归一遍登录与支付两条主链路\n7. 清理迁移期间留下的临时开关\n8. 把已知限制写进迁移说明的末尾\n9. 检查一遍日志里的新告警\n10. 交给下一个人验收\n\n保留当前会话和权限设置。' } });
 };
 let currentModel = 'gpt-big';
 let currentEffort = 'high';
 let currentSpeed = null;
 let currentSandbox = 'read-only';
 let currentApproval = 'on-request';
+let currentApprovalsReviewer = 'user';
+let activeApprovalsReviewer = null;
 let currentWebSearch = null;
 let dynamicTools = [];
 const awaitingTool = new Map();
@@ -51,6 +71,7 @@ const runGoal = (generation, round = 1) => {
   if (generation !== goalGeneration || goal?.status !== 'active') return;
   const turnId = `goal-${nextTurnSeq++}`;
   activeTurn = turnId;
+  activeApprovalsReviewer = currentApprovalsReviewer;
   notify('turn/started', { turn: { id: turnId, status: 'inProgress' } });
   if (goal.objective.includes('crash')) return process.exit(2);
   if (goal.objective.includes('slow')) return;
@@ -141,6 +162,7 @@ const applyTurnOverrides = (p) => {
   if (typeof p.model === 'string') currentModel = p.model;
   if (typeof p.effort === 'string') currentEffort = p.effort;
   if (typeof p.approvalPolicy === 'string') currentApproval = p.approvalPolicy;
+  if (typeof p.approvalsReviewer === 'string') currentApprovalsReviewer = p.approvalsReviewer;
   if (p.sandboxPolicy?.type) currentSandbox = p.sandboxPolicy.type;
 };
 
@@ -153,6 +175,7 @@ const say = (text) => {
 
 /** The scripted part of one turn. `done` finishes it. */
 const runTurn = (text, turnId, done) => {
+  const approvalsReviewer = activeTurn === turnId ? activeApprovalsReviewer ?? currentApprovalsReviewer : currentApprovalsReviewer;
   const userItem = { type: 'userMessage', id: `user-${nextTurnSeq}`, content: [{ type: 'text', text }] };
   notify('item/started', { item: userItem, turnId });
   notify('item/completed', { item: userItem, turnId });
@@ -320,12 +343,31 @@ const runTurn = (text, turnId, done) => {
     notify('turn/plan/updated', { turnId, plan: [{ step: 'Read the code', status: 'completed' }, { step: 'Write the fix', status: 'inProgress' }] });
   }
   if (text.includes('model?')) {
-    say(`model:${currentModel};effort:${currentEffort};sandbox:${sandboxName()};approval:${currentApproval}`);
+    say(`model:${currentModel};effort:${currentEffort};sandbox:${sandboxName()};approval:${currentApproval};reviewer:${approvalsReviewer}`);
     return done();
+  }
+  if ((text.includes('approve') || text.includes('deny')) && currentApproval !== 'never' && approvalsReviewer === 'auto_review') {
+    const id = 'exec-2';
+    const reviewId = `review-${nextServerRequestId++}`;
+    const denied = text.includes('deny');
+    const command = 'rm -rf /tmp/one/build';
+    const action = { type: 'command', source: 'shell', command, cwd: '/tmp/one' };
+    notify('item/started', { turnId, item: { type: 'commandExecution', id, command, cwd: '/tmp/one', status: 'inProgress' } });
+    notify('item/autoApprovalReview/started', { turnId, reviewId, startedAtMs: 1, targetItemId: id,
+      review: { status: 'inProgress', riskLevel: null, userAuthorization: null, rationale: null }, action });
+    notify('item/autoApprovalReview/completed', { turnId, reviewId, startedAtMs: 1, completedAtMs: 2,
+      targetItemId: id, decisionSource: 'agent', review: { status: denied ? 'denied' : 'approved',
+        riskLevel: denied ? 'critical' : 'low', userAuthorization: 'high', rationale: denied ? 'too risky' : 'authorized' }, action });
+    notify('item/completed', { turnId, item: { type: 'commandExecution', id, command, cwd: '/tmp/one',
+      status: denied ? 'failed' : 'completed', exitCode: denied ? 1 : 0, aggregatedOutput: denied ? 'auto-review denied' : 'gone', durationMs: 5 } });
+    say(`auto-review:${denied ? 'denied' : 'approved'}`);
+    done(); return;
   }
   if ((text.includes('approve') || text.includes('deny')) && currentApproval !== 'never') {
     const id = 'exec-2';
-    const command = 'rm -rf /tmp/one/build';
+    const command = text.includes('long-approve')
+      ? `python3 - <<'PY'\n${Array.from({ length: 60 }, (_, i) => `print("permission detail ${i + 1}")`).join('\n')}\nPY\n# command end`
+      : 'rm -rf /tmp/one/build';
     notify('item/started', { turnId, item: { type: 'commandExecution', id, command, cwd: '/tmp/one', status: 'inProgress' } });
     const requestId = nextServerRequestId++;
     const available = text.includes('deny')
@@ -497,6 +539,11 @@ rl.on('line', (line) => {
     case 'thread/settings/update':
       applyTurnOverrides(msg.params);
       return out({ jsonrpc: '2.0', id: msg.id, result: {} });
+    case 'turn/settings/update':
+      if (activeTurn !== msg.params?.turnId) return out({ jsonrpc: '2.0', id: msg.id, result: { status: 'targetUnavailable' } });
+      // The native endpoint can change only the reviewer of the current turn.
+      if (typeof msg.params?.approvalsReviewer === 'string') activeApprovalsReviewer = msg.params.approvalsReviewer;
+      return out({ jsonrpc: '2.0', id: msg.id, result: { status: 'applied' } });
     case 'thread/goal/get':
       if (process.env.FAKE_CODEX_NO_GOALS) return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32601, message: 'goals not supported' } });
       return out({ jsonrpc: '2.0', id: msg.id, result: { goal } });
@@ -562,14 +609,17 @@ rl.on('line', (line) => {
       currentWebSearch = msg.params?.config?.web_search ?? null;
       if (typeof msg.params?.sandbox === 'string') currentSandbox = msg.params.sandbox.replace(/-([a-z])/g, (_, c) => c.toUpperCase()).replace('Fullaccess', 'FullAccess');
       if (typeof msg.params?.approvalPolicy === 'string') currentApproval = msg.params.approvalPolicy;
+      if (typeof msg.params?.approvalsReviewer === 'string') currentApprovalsReviewer = msg.params.approvalsReviewer;
       if (typeof msg.params?.model === 'string') currentModel = msg.params.model;
-      return out({ jsonrpc: '2.0', id: msg.id, result: { thread: { id: threadId, cwd: '/tmp/one' }, model: currentModel, reasoningEffort: currentEffort, sandbox: { type: 'readOnly' }, approvalPolicy: currentApproval } });
+      ensureRollout();
+      return out({ jsonrpc: '2.0', id: msg.id, result: { thread: { id: threadId, cwd: '/tmp/one' }, model: currentModel, reasoningEffort: currentEffort, sandbox: { type: 'readOnly' }, approvalPolicy: currentApproval, approvalsReviewer: currentApprovalsReviewer } });
     case 'thread/resume':
       currentWebSearch = msg.params?.config?.web_search ?? null;
       threadId = msg.params?.threadId ?? threadId;
       if (typeof msg.params?.sandbox === 'string') currentSandbox = msg.params.sandbox.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
       if (typeof msg.params?.approvalPolicy === 'string') currentApproval = msg.params.approvalPolicy;
-      return out({ jsonrpc: '2.0', id: msg.id, result: { thread: { id: msg.params?.threadId ?? threadId, cwd: '/tmp/one' }, model: currentModel, reasoningEffort: currentEffort, sandbox: { type: 'readOnly' }, approvalPolicy: currentApproval } });
+      if (typeof msg.params?.approvalsReviewer === 'string') currentApprovalsReviewer = msg.params.approvalsReviewer;
+      return out({ jsonrpc: '2.0', id: msg.id, result: { thread: { id: msg.params?.threadId ?? threadId, cwd: '/tmp/one' }, model: currentModel, reasoningEffort: currentEffort, sandbox: { type: 'readOnly' }, approvalPolicy: currentApproval, approvalsReviewer: currentApprovalsReviewer } });
     case 'turn/start': {
       if (activeTurn) return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32602, message: 'ActiveTurnNotSteerable' } });
       applyTurnOverrides(msg.params ?? {});
@@ -582,7 +632,9 @@ rl.on('line', (line) => {
       }
       const turnId = `turn-${nextTurnSeq++}`;
       const text = (msg.params?.input ?? []).filter((i) => i.type === 'text').map((i) => i.text).join('');
+      appendRollout(text);
       const images = (msg.params?.input ?? []).filter((i) => i.type === 'localImage');
+      const inlineImages = (msg.params?.input ?? []).filter((i) => i.type === 'image');
       const skills = (msg.params?.input ?? []).filter((i) => i.type === 'skill');
       if (['batch-completed', 'batch-item-first', 'batch-completed-only', 'batch-failed', 'batch-rejected', 'batch-late-previous', 'batch-late-no-start', 'batch-mismatched-start', 'batch-noise'].includes(text)) {
         const failed = text === 'batch-failed';
@@ -616,8 +668,21 @@ rl.on('line', (line) => {
       }
       out({ jsonrpc: '2.0', id: msg.id, result: { turn: { id: turnId, items: [], itemsView: 'notLoaded', status: 'inProgress', error: null } } });
       activeTurn = turnId;
+      activeApprovalsReviewer = currentApprovalsReviewer;
       notify('turn/started', { turn: { id: turnId, items: [], itemsView: 'notLoaded', status: 'inProgress', error: null } });
-      if (text === 'quota-exhausted') { activeTurn = null; finishTurn(turnId, 'failed', { message: "You've hit your usage limit for this model. Switch to another model now, or try again later." }); break; }
+      if (text === 'quota-exhausted' && !process.env.FAKE_CODEX_PLAN_LEFT) { activeTurn = null; finishTurn(turnId, 'failed', { message: "You've hit your usage limit for this model. Switch to another model now, or try again later." }); break; }
+      // Reproduce a backend rejecting uploaded image references while accepting image bytes.
+      if (images.length && process.env.FAKE_CODEX_REJECT_LOCAL_IMAGES) {
+        activeTurn = null; finishTurn(turnId, 'failed', { message: 'stream disconnected before completion: Invalid image' }); break;
+      }
+      if (inlineImages.length) {
+        const types = inlineImages.map((image) => {
+          const match = /^data:(image\/(?:png|jpeg|gif|webp));base64,([A-Za-z0-9+/]+={0,2})$/.exec(image.url);
+          if (!match || !Buffer.from(match[2], 'base64').length) throw new Error('Invalid inline image');
+          return match[1];
+        });
+        say(`inline-images:${types.join(',')};`);
+      }
       if (images.length) say(`images:${images.map((i) => i.path).join(',')}`);
       if (skills.length) say(`skills:${skills.map((s) => `${s.name}@${s.path}`).join(',')};`);
       setTimeout(() => runTurn(text, turnId, () => {
@@ -687,6 +752,14 @@ rl.on('line', (line) => {
       if (String(msg.params?.threadId).startsWith('hist-')) return out({ jsonrpc: '2.0', id: msg.id, result: { data: historyTurns(), nextCursor: null } });
       return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32602, message: 'unknown thread' } });
     case 'thread/fork': {
+      // Fork by path: the rollout file is read from disk, `threadId` is then ignored (the schema
+      // still requires it; calli passes an empty one). A missing file is the caller's error.
+      if (typeof msg.params?.path === 'string' && msg.params.path) {
+        let first = '';
+        try { first = readFileSync(msg.params.path, 'utf8').split('\n')[0] ?? ''; } catch { first = ''; }
+        if (!first.startsWith('{')) return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32602, message: 'no rollout found for path' } });
+        return out({ jsonrpc: '2.0', id: msg.id, result: { thread: { id: `imported-${basename(msg.params.path, '.jsonl')}`, cwd: msg.params?.cwd ?? '/tmp/one' }, model: currentModel } });
+      }
       // `lastTurnId`: the copy goes through that turn and leaves out what came after.
       const last = msg.params?.lastTurnId;
       if (last && !historyTurns().some((t) => t.id === last)) {

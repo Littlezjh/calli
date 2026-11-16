@@ -1,6 +1,6 @@
 import { realpathSync, statSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { isAbsolute, join, normalize, relative, sep } from 'node:path';
+import { homedir, tmpdir } from 'node:os';
+import { isAbsolute, join, normalize, relative, resolve, sep } from 'node:path';
 
 /** Exact local file references in an answer, never a substring of a longer path or URL. */
 export function referencesFile(text: string, path: string): boolean {
@@ -12,16 +12,17 @@ export function referencesFile(text: string, path: string): boolean {
       try { value = decodeURIComponent(value); } catch { /* A literal percent sign. */ }
     }
     value = value.replace(/(?::\d+(?::\d+)?|#L\d+(?:-L?\d+)?)$/, '');
+    if (!fileUrl && value.startsWith('~/')) value = resolve(homedir(), value.slice(2));
     return isAbsolute(value) && !value.startsWith('//') && normalize(value) === path;
   };
   // Markdown destinations may contain spaces in angle brackets, or balanced parentheses.
   for (const m of text.matchAll(/\[[^\]\n]*\]\(\s*(?:<([^>\n]+)>|((?:\\.|[^\\\s()]|\([^()\s]*\))+))(?:\s+"[^"\n]*")?\s*\)/g)) {
     if (matches((m[1] ?? m[2]).replace(/\\([\\()[\]<> ])/g, '$1'), true)) return true;
   }
-  for (const m of text.matchAll(/([`'"])((?:file:\/\/)?\/[^\r\n]*?)\1|<((?:file:\/\/)?\/[^>\r\n]+)>/gi)) {
+  for (const m of text.matchAll(/([`'"])((?:(?:file:\/\/)?\/|~\/)[^\r\n]*?)\1|<((?:file:\/\/)?\/[^>\r\n]+)>/gi)) {
     if (matches(m[2] ?? m[3])) return true;
   }
-  for (const m of text.matchAll(/(?<=^|[\s`'"(（：，。])((?:file:\/\/)?\/[^\s`'"<>()[\]，。；！？]+)/gi)) {
+  for (const m of text.matchAll(/(?<=^|[\s`'"(（：，。])((?:(?:file:\/\/)?\/|~\/)[^\s`'"<>()[\]，。；！？]+)/gi)) {
     if (matches(m[1].replace(/[.,;!?：]+$/, ''))) return true;
   }
   return false;

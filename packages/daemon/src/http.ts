@@ -1,4 +1,5 @@
 import type { PushService } from './push.js';
+import { DEFAULT_RULES } from './autotitle.js';
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { createReadStream, existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
@@ -9,6 +10,8 @@ import type { ApprovalDecision } from './adapters/types.js';
 import type { AgentRegistry } from './agents.js';
 import type { StoredEvent } from './events.js';
 import type { HistoryEvent } from './history.js';
+import type { LocalSessions } from './local-sessions.js';
+import type { MachineUsageMeter } from './machine-usage.js';
 import { refuse, type Desktop } from './desktop.js';
 import { HttpError } from './errors.js';
 import type { ExtensionHost } from './extension-host.js';
@@ -19,9 +22,11 @@ import type { TerminalEvent, TerminalManager } from './terminals.js';
 import type { ThreadManager } from './threads.js';
 import { isWithinWorkdirs } from './workdirs.js';
 import { listProjectDirectories } from './project-directories.js';
-import { MAX_VIDEO_BYTES } from './videos.js';
+import { MAX_FILE_BYTES, MAX_VIDEO_BYTES } from './videos.js';
 import type { VoiceService } from './voice-service.js';
 import { sendToolArtifact } from './borrowing-server.js';
+import { PetService } from './pets.js';
+import { todoStages } from './todo-stage.js';
 
 export interface HttpDeps {
   push?: PushService;
@@ -38,8 +43,16 @@ export interface HttpDeps {
   scheduler?: Scheduler;
   /** Calli extensions on this machine. Optional so tests can run without them. */
   extensions?: ExtensionHost;
+  /** The built-in 自动取名 extension's daemon side, when it ships. */
+  autotitle?: import('./autotitle.js').AutoTitle;
+  /** This machine's agent sessions that are not threads here. Optional so tests need none. */
+  localSessions?: LocalSessions;
+  /** This machine's token usage, metered off the agents' transcripts. */
+  machineUsage?: MachineUsageMeter;
   /** Host-owned native voice; absent on deployments that do not provide it. */
   voice?: VoiceService;
+  /** The desk's companion and its downloaded frames. Defaults to the one under the Calli home directory. */
+  pets?: PetService;
   /**
    * Requests need no token: the server listens on a socket only this user can open, and a hub
    * reaches it over SSH. Such a server shows this machine only, never the machines added to it.
@@ -72,6 +85,8 @@ const GLOBAL_EVENT_TYPES = new Set([
   'input.resolved',
   'todo.updated',
   'agent.modelsChanged',
+  // An account's plan usage moved: what the agent said while answering, or a probe.
+  'quota.updated',
   // Not a thread event: written by the extension host's own subscription below, like schedules.changed.
   'extensions.changed',
 ]);
@@ -268,13 +283,15 @@ function serveDownload(
 }
 
 export function createHttpServer(deps: HttpDeps): Server {
-  const { manager, registry, terminals, desktop, hosts, scheduler, extensions, voice, trusted, token, webDir, version } = deps;
+  const { manager, registry, terminals, desktop, hosts, scheduler, extensions, voice, trusted, token, webDir, version, autotitle, localSessions, machineUsage } = deps;
+  const pets = deps.pets ?? new PetService();
 
   const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const url = new URL(req.url ?? '/', 'http://localhost');
     const path = url.pathname;
     const method = req.method ?? 'GET';
 
+    if (path.startsWith('/pets/') && (method === 'GET' || method === 'HEAD') && pets.serve(path, res)) return;
     if (!path.startsWith('/api/')) {
       if (webDir && (method === 'GET' || method === 'HEAD')) return serveStatic(res, webDir, path);
       res.writeHead(404).end();
@@ -303,9 +320,74 @@ export function createHttpServer(deps: HttpDeps): Server {
       return { threads, schedules, teams, handoverOrders };
     };
 
+    if (path === '/api/general-settings') {
+      if (method === 'GET') return sendJson(res, 200, manager.generalSettings());
+      if (method === 'PUT') return sendJson(res, 200, manager.saveGeneralSettings(await readJson(req)));
+    }
+    if (path === '/api/draft-model-preferences') {
+      if (method === 'GET') return sendJson(res, 200, await manager.draftModelPreferences());
+      if (method === 'PUT') return sendJson(res, 200, await manager.saveDraftModelPreferences(await readJson(req)));
+    }
     if (path === '/api/personal/settings') {
       if (method === 'GET') return sendJson(res, 200, await manager.personal.settingsView());
       if (method === 'PUT') { manager.personal.putSettings(await readJson(req)); return sendJson(res, 200, await manager.personal.settingsView()); }
+    }
+    if (path === '/api/personal/proactive' && method === 'GET') {
+      const proactive = manager.personal.proactive;
+      return sendJson(res, 200, url.searchParams.get('summary') === 'true'
+        ? { settings: proactive.settings(), counts: proactive.counts() }
+        : { settings: proactive.settings(), runs: proactive.runs(url.searchParams.get('matterId') ?? undefined) });
+    }
+    if (path === '/api/personal/proactive/settings' && method === 'PUT') return sendJson(res, 200, await manager.personal.proactive.save(await readJson(req)));
+    if (parts[1] === 'personal' && parts[2] === 'proactive' && parts[3] === 'runs' && parts[4] && parts.length === 6) {
+      if (parts[5] === 'diff' && method === 'GET') return sendJson(res, 200, await manager.personal.proactive.diff(parts[4]));
+      if (['merge', 'discard', 'revert'].includes(parts[5]) && method === 'POST') return sendJson(res, 200, await manager.personal.proactive.act(parts[4], parts[5] as 'merge' | 'discard' | 'revert'));
+      // Marking an observation as "this one is fine": a record of the person's judgement, never a start.
+      if (parts[5] === 'approve' && method === 'POST') return sendJson(res, 200, manager.personal.proactive.approve(parts[4]));
+    }
+    if (path === '/api/personal/brief' && method === 'GET') return sendJson(res, 200, manager.briefs.preview(url.searchParams.get('kind')));
+    if (path === '/api/personal/brief/last' && method === 'GET') return sendJson(res, 200, manager.briefs.last(url.searchParams.get('kind')));
+    if (path === '/api/personal/brief/settings') {
+      if (method === 'GET') return sendJson(res, 200, manager.briefs.settings());
+      if (method === 'PUT') return sendJson(res, 200, manager.briefs.save(await readJson(req)));
+    }
+    if (path === '/api/personal/channels/lark') {
+      if (method === 'GET') return sendJson(res, 200, manager.lark.settings());
+      if (method === 'PUT') return sendJson(res, 200, manager.lark.save(await readJson(req)));
+    }
+    if (path === '/api/personal/channels/lark/status' && method === 'GET') return sendJson(res, 200, await manager.lark.status());
+    // What has reached a matter: the archive the channel keeps of every signal and where it went.
+    if (path === '/api/personal/signals' && method === 'GET') {
+      const matterId = url.searchParams.get('matterId') ?? undefined;
+      const rows = manager.personal.store.listSignals({ ...(matterId ? { matterId } : {}), limit: 50, materialScope: manager.lark.materialScope() });
+      return sendJson(res, 200, { signals: rows.map(({ payload, disposition, ...rest }) => {
+        const signal = payload as { summary?: unknown; source?: unknown; meeting?: unknown };
+        return { ...rest, summary: signal.summary ?? null, source: signal.source ?? null, ...(signal.meeting ? { meeting: signal.meeting } : {}), disposition };
+      }) });
+    }
+    if (parts[1] === 'personal' && parts[2] === 'signals' && parts[3] && parts[4] === 'material' && parts.length === 5 && method === 'GET') {
+      let key: string;
+      try { key = decodeURIComponent(parts[3]); } catch { throw new HttpError(400, 'invalid signal key'); }
+      const read = await manager.lark.readMaterial(key);
+      return sendJson(res, 200, { key, ...read });
+    }
+    if (path === '/api/personal/channels/lark/run' && method === 'POST') return sendJson(res, 200, await manager.lark.run());
+    if (path === '/api/personal/channels/lark/search' && method === 'GET') return sendJson(res, 200, await manager.lark.search(url.searchParams.get('kind'), url.searchParams.get('q')));
+    if (path === '/api/personal/say' && method === 'POST') return sendJson(res, 201, await manager.personal.router.say(await readJson(req)));
+    if (path === '/api/personal/router' && method === 'GET') return sendJson(res, 200, manager.personal.router.status());
+    if (path === '/api/personal/profile') {
+      if (method === 'GET') return sendJson(res, 200, manager.personal.profile());
+      if (method === 'PUT') return sendJson(res, 200, await manager.personal.saveProfile(await readJson(req)));
+    }
+    // The onboarding explore: readonly sources, one model judgement, a validated recommendation.
+    if (path === '/api/personal/explore/sources' && method === 'GET') return sendJson(res, 200, await manager.personal.explore.sources());
+    if (path === '/api/personal/explore') {
+      if (method === 'GET') return sendJson(res, 200, manager.personal.explore.status());
+      if (method === 'POST') {
+        const started = manager.personal.explore.start(await readJson(req));
+        return sendJson(res, started.running ? 200 : 202, { id: started.id });
+      }
+      if (method === 'DELETE') return sendJson(res, 200, manager.personal.explore.cancel());
     }
     if (path === '/api/wishes' && method === 'GET') return sendJson(res, 200, url.searchParams.get('summary') === 'true' ? { count: manager.personal.store.wishCount() } : manager.personal.store.listWishes());
     if (path === '/api/todos/summary') {
@@ -493,11 +575,13 @@ export function createHttpServer(deps: HttpDeps): Server {
       return sendJson(res, 201, await registry.add(body));
     }
 
-    // PATCH /api/agents/:id: rename an instance. The id is what threads store, so it stays.
+    // PATCH /api/agents/:id: change hub-owned settings without changing the instance id.
     if (method === 'PATCH' && parts[0] === 'api' && parts[1] === 'agents' && parts[2] && !parts[3]) {
       if (!registry) throw new HttpError(404, 'this daemon has no agent registry');
       const body = await readJson(req);
-      return sendJson(res, 200, await registry.update(parts[2], { label: body.label, hidden: body.hidden }));
+      const instance = await registry.update(parts[2], { label: body.label, hidden: body.hidden, streamBridge: body.streamBridge });
+      if (body.streamBridge !== undefined) manager.agentSettingsChanged(parts[2]);
+      return sendJson(res, 200, instance);
     }
 
     // DELETE /api/agents/:id: remove only the hub's registration. Native files stay untouched.
@@ -550,6 +634,13 @@ export function createHttpServer(deps: HttpDeps): Server {
       if (method === 'PUT') return sendJson(res, 200, manager.autoHandover.configure(await readJson(req)));
     }
 
+    // Auto-compact: quota-aware context compression ahead of the handover. The agent named in the
+    // settings writes the brief (a bridge to third-party models spends no official-account quota).
+    if (parts.join('/') === 'api/autocompact-settings') {
+      if (method === 'GET') return sendJson(res, 200, { settings: manager.autoCompact.settings(), status: manager.autoCompact.status() });
+      if (method === 'PUT') return sendJson(res, 200, manager.autoCompact.configure(await readJson(req)));
+    }
+
     // GET /api/agents/:id/quota: plan usage, read outside any session and cached briefly.
     // ?refresh=1 skips the cache: the dashboard's refresh button means "ask again now".
     if (method === 'GET' && parts[0] === 'api' && parts[1] === 'agents' && parts[2] && parts[3] === 'quota') {
@@ -563,7 +654,7 @@ export function createHttpServer(deps: HttpDeps): Server {
 
     // GET /api/agents/:id/models
     if (method === 'GET' && parts[0] === 'api' && parts[1] === 'agents' && parts[2] && parts[3] === 'models') {
-      return sendJson(res, 200, await manager.listModels(parts[2]));
+      return sendJson(res, 200, await manager.listModels(parts[2], url.searchParams.get('refresh') === '1'));
     }
 
     // Skills: what each agent instance has, where it came from, and how a copy moves between
@@ -648,6 +739,21 @@ export function createHttpServer(deps: HttpDeps): Server {
       }
       // GET /api/extensions
       if (method === 'GET' && !parts[2]) return sendJson(res, 200, extensions.list());
+      // 自动取名: its settings, and a dry run of its rules on one thread.
+      if (autotitle && parts[2] === 'autotitle' && parts[3] === 'settings' && !parts[4]) {
+        if (method === 'GET') { extensions.demand('autotitle', 'events.summary'); return sendJson(res, 200, { settings: autotitle.settings(), status: autotitle.status(), pass: autotitle.passState(), defaultRules: DEFAULT_RULES }); }
+        if (method === 'PUT') { extensions.demand('autotitle', 'events.summary'); return sendJson(res, 200, autotitle.configure(await readJson(req))); }
+      }
+      if (autotitle && method === 'POST' && parts[2] === 'autotitle' && parts[3] === 'preview' && !parts[4]) {
+        const body = await readJson(req);
+        if (typeof body?.threadId !== 'string') throw new HttpError(400, 'threadId missing');
+        return sendJson(res, 200, await autotitle.name(body.threadId, { apply: false }));
+      }
+      // POST /api/extensions/autotitle/organize: name the backlog of default-titled threads.
+      if (autotitle && method === 'POST' && parts[2] === 'autotitle' && parts[3] === 'organize' && !parts[4]) {
+        extensions.demand('autotitle', 'events.summary');
+        return sendJson(res, 200, autotitle.organize());
+      }
       // Only the installed extension with a current grant may inspect native memory.
       if (method === 'GET' && parts[2] && parts[3] === 'memory') {
         if (parts[4] === 'sources' && !parts[5]) return sendJson(res, 200, await extensions.memorySources(parts[2]));
@@ -704,6 +810,23 @@ export function createHttpServer(deps: HttpDeps): Server {
       return sendJson(res, 200, buildDirectoryTree(manager.allowedWorkdirs, root, maxDepth));
     }
 
+    // GET /api/local-sessions?limit=&cursor=: this machine's agent conversations that are not
+    // threads here, newest first, one page at a time. A visible page keeps the background scan
+    // fresh; the rows leave the list the moment one becomes a thread (POST /api/threads/import).
+    if (method === 'GET' && path === '/api/local-sessions') {
+      if (!localSessions) throw new HttpError(404, 'this daemon does not list local sessions');
+      localSessions.ensureFresh();
+      return sendJson(res, 200, localSessions.page(url.searchParams.get('limit'), url.searchParams.get('cursor')));
+    }
+
+    // GET /api/machine-usage?hours=1|24|168&model=&launcher=: this machine's tokens by minute,
+    // model and launcher, read off the agents' own transcripts.
+    if (method === 'GET' && path === '/api/machine-usage') {
+      if (!machineUsage) throw new HttpError(404, 'this daemon does not meter machine usage');
+      const hours = Number(url.searchParams.get('hours') ?? 24);
+      return sendJson(res, 200, machineUsage.report(hours, url.searchParams.get('model'), url.searchParams.get('launcher')));
+    }
+
     // POST /api/threads/import: turn an existing agent session into a thread
     if (method === 'POST' && path === '/api/threads/import') {
       const body = await readJson(req);
@@ -756,9 +879,21 @@ export function createHttpServer(deps: HttpDeps): Server {
       }
     }
 
+    if (path === '/api/pets' && method === 'GET') return sendJson(res, 200, pets.status());
+    if (path === '/api/pets/install' && method === 'POST') {
+      // Answers at once; the page polls the status while the frames arrive.
+      void pets.install().catch(() => undefined);
+      return sendJson(res, 202, pets.status());
+    }
+
     // Plan page: the user's own long-lived list, linked to threads.
     if (path === '/api/todos') {
-      if (method === 'GET') return sendJson(res, 200, manager.listTodos());
+      if (method === 'GET') {
+        const counts = manager.personal.proactive.counts();
+        const todos = manager.listTodos();
+        const stages = todoStages(manager, todos);
+        return sendJson(res, 200, todos.map(todo => ({ ...todo, proactiveRunCount: counts[todo.id] ?? 0, stage: stages.get(todo.id) ?? null })));
+      }
       if (method === 'POST') {
         const body = await readJson(req);
         return sendJson(res, 201, manager.createTodo(body.text, body.parentId, body));
@@ -913,6 +1048,24 @@ export function createHttpServer(deps: HttpDeps): Server {
       const threadId = parts[2];
       const sub = parts[3];
 
+      // GET /api/threads/:id/coordination/result/:deliveryId: the hub's copy of a remote member's
+      // result file. It is text the member wrote, so it downloads instead of rendering as a page.
+      if (method === 'GET' && sub === 'coordination' && parts[4] === 'result' && parts[5]) {
+        manager.threadView(threadId);
+        const collaboration = manager.coordination;
+        if (!collaboration) throw new HttpError(501, '此 daemon 尚未启用协作');
+        const file = collaboration.resultFile(threadId, parts[5]);
+        res.writeHead(200, {
+          'Content-Type': 'text/markdown; charset=utf-8',
+          'Content-Length': file.size,
+          'Content-Disposition': `attachment; filename="${file.name.replace(/[^\x20-\x7e]/g, '_')}"`,
+          'Cache-Control': 'no-store',
+          'X-Content-Type-Options': 'nosniff',
+        });
+        createReadStream(file.path).pipe(res);
+        return;
+      }
+
       if (sub === 'coordination') {
         manager.threadView(threadId);
         const collaboration = manager.coordination;
@@ -957,6 +1110,7 @@ export function createHttpServer(deps: HttpDeps): Server {
             sectionId: body.sectionId,
             unread: body.unread,
             done: body.done,
+            stage: body.stage,
           }),
         );
       }
@@ -970,7 +1124,7 @@ export function createHttpServer(deps: HttpDeps): Server {
           return n;
         };
         if (!parts[4] && url.searchParams.get('head') === '1') return sendJson(res, 200, { snapshotSeq: history.latest(threadId) });
-        if (!parts[4]) return sendJson(res, 200, await history.page(threadId, positive(url.searchParams.get('before'), true), positive(url.searchParams.get('after'), true), url.searchParams.get('chain') === '1'));
+        if (!parts[4]) return sendJson(res, 200, await history.page(threadId, positive(url.searchParams.get('before'), true), positive(url.searchParams.get('after'), true), url.searchParams.get('chain') === '1', url.searchParams.get('forward') === '1'));
         if (parts[4] === 'handover') return sendJson(res, 200, history.handoverInfo(threadId, url.searchParams.get('text') === '1'));
         if (parts[4] === 'voice') return sendJson(res, 200, history.voiceText(threadId, url.searchParams.get('session') ?? '', positive(url.searchParams.get('cursor'), true)));
         const turn = url.searchParams.get('turn');
@@ -1006,6 +1160,17 @@ export function createHttpServer(deps: HttpDeps): Server {
       if (method === 'GET' && sub === 'trace') {
         // ?turn=ID: that turn; without it, the thread's last one.
         return sendJson(res, 200, manager.turnTrace(threadId, url.searchParams.get('turn') || undefined));
+      }
+
+      if (method === 'GET' && sub === 'stats') {
+        // Summary numbers for the top-bar readings: per-turn timing from storage, tokens from the
+        // native samples, the running turn's progress computed fresh.
+        return sendJson(res, 200, manager.threadStats(threadId));
+      }
+
+      if (method === 'GET' && sub === 'outputs') {
+        // The overview beside the conversation: names and counts only, details are read when opened.
+        return sendJson(res, 200, await manager.threadOutputs(threadId));
       }
 
       if (method === 'GET' && sub === 'system-prompt') {
@@ -1051,8 +1216,12 @@ export function createHttpServer(deps: HttpDeps): Server {
 
       if (sub === 'auto-handover') {
         manager.getThread(threadId);
-        if (method === 'GET') return sendJson(res, 200, { ...manager.autoHandover.view(threadId), targets: await manager.autoHandover.targets(threadId) });
-        if (method === 'PATCH') return sendJson(res, 200, manager.autoHandover.setOverride(threadId, (await readJson(req)).enabled));
+        if (method === 'GET') return sendJson(res, 200, { ...manager.autoHandover.view(threadId), resume: manager.quotaResume.view(threadId), targets: await manager.autoHandover.targets(threadId) });
+        if (method === 'PATCH') {
+          const body = await readJson(req);
+          if (body.resume !== undefined) return sendJson(res, 200, await manager.setResume(threadId, body.resume));
+          return sendJson(res, 200, manager.autoHandover.setOverride(threadId, body.enabled));
+        }
         if (method === 'DELETE') { manager.autoHandover.cancel(threadId); return sendJson(res, 200, manager.autoHandover.view(threadId)); }
       }
       if (sub === 'collaboration-handover' && method === 'PATCH') {
@@ -1063,6 +1232,16 @@ export function createHttpServer(deps: HttpDeps): Server {
         const body = await readJson(req);
         return sendJson(res, 201, await manager.createHandoverThread(threadId, body.agent, body.model, body.mode));
       }
+      // POST /api/threads/:id/autotitle: the person's 「重新取名」, through the 自动取名 extension.
+      if (method === 'POST' && sub === 'autotitle') {
+        if (!autotitle) throw new HttpError(501, '此 daemon 没有自动取名扩展');
+        return sendJson(res, 200, await autotitle.name(threadId, { apply: true }));
+      }
+      // GET /api/threads/:id/brief: the facts behind a thread that wants the person (what waits for approval,
+      // whether a failed turn changed files, how a finished one ended), for the companion to word.
+      if (method === 'GET' && sub === 'brief') return sendJson(res, 200, manager.threadBrief(threadId));
+      // POST /api/threads/:id/retry: send the failed ask again, the person's 「接着做」.
+      if (method === 'POST' && sub === 'retry') return sendJson(res, 200, await manager.retryFailedTurn(threadId));
       if (method === 'POST' && sub === 'takeover') {
         const body = await readJson(req);
         return sendJson(res, 201, await manager.takeOver(threadId, body.agent, body.model, body.note));
@@ -1080,7 +1259,9 @@ export function createHttpServer(deps: HttpDeps): Server {
         return sendJson(
           res,
           200,
-          await manager.handoverSummary(threadId, url.searchParams.get('turn'), url.searchParams.get('target') ?? undefined),
+          // The clean brief of the auto handover: where to look with `calli`, a few lines of progress,
+          // and the interrupted ask when the thread ends on a failure.
+          await manager.handoverSummary(threadId, url.searchParams.get('turn'), { carryFailed: true }),
         );
       }
 
@@ -1097,7 +1278,7 @@ export function createHttpServer(deps: HttpDeps): Server {
         if (manager.coordination?.metadata(threadId)?.team && (typeof body.text !== 'string' || !body.text.trim() || body.text.length > 32000)) throw new HttpError(400, '团队任务需要 1～32000 字符');
         await manager.coordination?.previewMentions(threadId, typeof body.text === 'string' ? body.text : '', body.mentions, body.collaboration);
         await manager.coordination?.userSpoke(threadId);
-        return sendJson(res, 202, await manager.startTurn(threadId, { text: body.text, images: body.images, videos: body.videos, queue: body.queue, mentions: body.mentions, collaboration: body.collaboration, workMode: body.workMode }));
+        return sendJson(res, 202, await manager.startTurn(threadId, { text: body.text, images: body.images, videos: body.videos, queue: body.queue, mentions: body.mentions, collaboration: body.collaboration, workMode: body.workMode, fromUser: true }));
       }
 
       if (method === 'POST' && sub === 'videos' && !parts[4]) {
@@ -1105,6 +1286,13 @@ export function createHttpServer(deps: HttpDeps): Server {
         let name: string;
         try { name = decodeURIComponent(String(req.headers['x-file-name'] ?? '')); } catch { throw new HttpError(400, 'invalid file name'); }
         return sendJson(res, 201, await manager.saveVideo(threadId, req, name));
+      }
+
+      if (method === 'POST' && sub === 'files' && !parts[4]) {
+        if (Number(req.headers['content-length']) > MAX_FILE_BYTES) throw new HttpError(413, '文件不能超过 100 MB');
+        let name: string;
+        try { name = decodeURIComponent(String(req.headers['x-file-name'] ?? '')); } catch { throw new HttpError(400, 'invalid file name'); }
+        return sendJson(res, 201, await manager.saveFile(threadId, req, name));
       }
 
       // DELETE /api/threads/:id/queue/:queuedId: take back a message that is waiting; it comes back
@@ -1164,14 +1352,20 @@ export function createHttpServer(deps: HttpDeps): Server {
         return sendJson(res, 200, { url: `/api/threads/${threadId}/download?${query}`, name: file.name, size: file.size, mimeType: file.mimeType });
       }
 
+      // GET /api/threads/:id/roots: the folders the file browser can stand on, for the root switcher
+      if (method === 'GET' && sub === 'roots') {
+        return sendJson(res, 200, manager.threadRoots(threadId));
+      }
+
       // GET /api/threads/:id/tree?path=: one folder of the thread's directory, for the file browser
       if (method === 'GET' && sub === 'tree') {
         return sendJson(res, 200, await manager.listThreadDir(threadId, url.searchParams.get('path')));
       }
 
-      // GET /api/threads/:id/find?q=: files in the thread directory whose path matches, for the browser's filter
+      // GET /api/threads/:id/find?q=&path=: files under a browse root whose path matches, for the browser's filter
       if (method === 'GET' && sub === 'find') {
-        return sendJson(res, 200, await manager.findThreadFiles(threadId, url.searchParams.get('q') ?? ''));
+        const under = url.searchParams.get('path');
+        return sendJson(res, 200, await manager.findThreadFiles(threadId, url.searchParams.get('q') ?? '', under === null ? undefined : under));
       }
 
       // GET /api/threads/:id/text?path=: a text file's contents, for the file viewer (read only)

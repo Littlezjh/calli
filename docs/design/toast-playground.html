@@ -1,0 +1,647 @@
+<!doctype html>
+<html lang="zh" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>提示与运行中改设定 · Playground</title>
+<style>
+/* Tokens copied from packages/web/src/styles.css (paper palette), so the mock reads like the app. */
+:root {
+  --bg: #f8f6f1; --surface: #ffffff; --surface-2: #fbfaf7; --text: #1f1e1c; --muted: #827f77; --faint: #a9a69e;
+  --border: #e5e2da; --border-strong: #d6d2c8; --hover: rgba(31, 30, 28, 0.045); --accent: #1f1e1c; --accent-fg: #fff;
+  --positive: #2f7d5b; --positive-bg: #e6f3eb; --warn: #c2410c; --danger: #b42318; --danger-bg: #fdecea;
+  --user-bg: #eceae4; --code-bg: #efede7;
+  --shadow-pop: 0 14px 40px rgba(31, 30, 28, 0.14), 0 2px 6px rgba(31, 30, 28, 0.06);
+  --shadow-card: 0 1px 2px rgba(31, 30, 28, 0.04), 0 6px 20px rgba(31, 30, 28, 0.05);
+  --font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Helvetica Neue', 'Noto Sans CJK SC', sans-serif;
+  --mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
+  --radius-sm: 8px; --radius: 12px; --radius-lg: 18px; --radius-pill: 999px;
+}
+[data-theme='dark'] {
+  --bg: #1b1a18; --surface: #252422; --surface-2: #201f1d; --text: #ecebe7; --muted: #9a978f; --faint: #6f6c65;
+  --border: #32302c; --border-strong: #423f3a; --hover: rgba(236, 235, 231, 0.06); --accent: #ecebe7; --accent-fg: #1b1a18;
+  --positive: #3f9a72; --positive-bg: #1d3327; --warn: #f0935a; --danger: #f97066; --danger-bg: #3b1f1c;
+  --user-bg: #2c2b28; --code-bg: #262522;
+  --shadow-pop: 0 14px 40px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.3);
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 6px 20px rgba(0, 0, 0, 0.35);
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--font); -webkit-font-smoothing: antialiased; }
+button { font: inherit; color: inherit; }
+
+/* ---------- Page chrome ---------- */
+.controls { position: sticky; top: 0; z-index: 50; display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; padding: 12px 20px; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(12px); border-bottom: 1px solid var(--border); }
+.ctl { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+.seg { display: inline-flex; padding: 2px; border: 1px solid var(--border); border-radius: var(--radius-pill); background: var(--surface); }
+.seg button { border: 0; background: none; padding: 4px 11px; border-radius: var(--radius-pill); font-size: 12px; color: var(--muted); cursor: pointer; white-space: nowrap; }
+.seg button[aria-pressed='true'] { background: var(--accent); color: var(--accent-fg); }
+.ghostbtn { border: 1px dashed var(--border-strong); border-radius: var(--radius-pill); background: none; padding: 5px 12px; font-size: 12px; color: var(--muted); cursor: pointer; }
+.ghostbtn:hover { color: var(--text); border-color: var(--muted); }
+.note { margin: 18px auto 0; max-width: 1080px; padding: 0 20px; font-size: 12.5px; color: var(--muted); line-height: 1.7; }
+.note b { color: var(--text); font-weight: 600; }
+.note a { color: var(--muted); }
+h2 { max-width: 1080px; margin: 34px auto 4px; padding: 0 20px; font-size: 17px; }
+.sub { max-width: 1080px; margin: 0 auto 12px; padding: 0 20px; font-size: 12.5px; color: var(--muted); line-height: 1.7; }
+
+.stage { display: flex; justify-content: center; gap: 28px; flex-wrap: wrap; padding: 12px 20px 30px; align-items: flex-start; }
+
+/* ---------- Phone / desktop frames ---------- */
+.phone { position: relative; width: 390px; height: 760px; border: 1px solid var(--border-strong); border-radius: 44px; background: var(--bg); overflow: hidden; display: flex; flex-direction: column; box-shadow: var(--shadow-card); }
+.phone .notch { height: 26px; display: grid; place-items: center; }
+.phone .notch::after { content: ''; width: 108px; height: 22px; border-radius: 999px; background: #000; }
+.desk { position: relative; width: 760px; height: 600px; border: 1px solid var(--border-strong); border-radius: 18px; background: var(--bg); overflow: hidden; display: flex; flex-direction: column; box-shadow: var(--shadow-card); }
+.desk .notch { display: none; }
+/* A desktop frame centers a content column like the app, which frees the corners for toasts. */
+.desk .feed, .desk .composer, .desk .hdr .ttl { max-width: 620px; }
+.desk .feed { margin: 0 auto; width: 100%; }
+.desk .composer { margin: 6px auto 20px; }
+
+/* ---------- Thread screen inside the frame ---------- */
+.hdr { position: relative; display: flex; align-items: center; gap: 8px; padding: 10px 14px 8px; }
+.hdr .back { position: relative; display: inline-grid; place-items: center; width: 32px; height: 32px; border: 0; border-radius: var(--radius-pill); background: none; color: var(--muted); cursor: pointer; }
+.hdr .back:hover { background: var(--hover); color: var(--text); }
+.hdr .back .dot { position: absolute; top: 4px; right: 4px; width: 8px; height: 8px; border-radius: 50%; background: var(--danger); opacity: 0; transition: opacity 0.2s; }
+.hdr .back.has-dot .dot { opacity: 1; }
+.hdr .ttl { flex: 1; min-width: 0; }
+.hdr .ttl .t { font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hdr .ttl .s { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); height: 16px; margin-top: 1px; }
+.hdr .ttl .s .spin { width: 11px; height: 11px; border-radius: 50%; border: 1.5px solid var(--border-strong); border-top-color: var(--muted); animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.hdr .hb { display: inline-grid; place-items: center; width: 32px; height: 32px; border: 0; border-radius: var(--radius-pill); background: none; color: var(--muted); cursor: pointer; }
+.hdr .hb:hover { background: var(--hover); color: var(--text); }
+
+/* The slim row under the header: pattern D uses it for persistent notices (new version). */
+.hdrrow { position: relative; }
+.hdrnote { display: flex; align-items: center; gap: 8px; margin: 2px 14px 0; padding: 7px 10px 7px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); font-size: 12.5px; color: var(--muted); }
+.hdrnote button { margin-left: auto; border: 0; background: none; color: var(--text); font-weight: 600; font-size: 12.5px; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; white-space: nowrap; }
+
+/* The current app's error banner (kept for pattern A, the faithful "today" mock). */
+.banner { display: flex; align-items: center; gap: 8px; margin: 6px 14px 0; padding: 8px 8px 8px 14px; border-radius: var(--radius); background: var(--danger-bg); color: var(--danger); font-size: 13px; animation: drop 0.22s ease-out; }
+.banner .x { margin-left: auto; border: 0; background: none; color: inherit; cursor: pointer; font-size: 15px; line-height: 1; padding: 2px 6px; border-radius: 6px; }
+.banner .x:hover { background: color-mix(in srgb, var(--danger) 10%, transparent); }
+@keyframes drop { from { opacity: 0; transform: translateY(-6px); } }
+
+.feed { flex: 1; overflow: hidden; padding: 12px 14px 6px; display: flex; flex-direction: column; gap: 12px; }
+.meta { font-size: 12px; color: var(--faint); text-align: center; }
+.user { align-self: flex-end; max-width: 78%; padding: 9px 15px; border-radius: 18px; background: var(--user-bg); font-size: 14.5px; line-height: 1.6; }
+.answer { font-size: 14.5px; line-height: 1.75; color: var(--text); }
+.answer.dim { color: var(--muted); }
+.interrupted { padding: 10px 14px; border-radius: var(--radius); background: color-mix(in srgb, var(--warn) 7%, transparent); border: 1px solid color-mix(in srgb, var(--warn) 22%, transparent); color: color-mix(in srgb, var(--warn) 78%, var(--text)); font-size: 13px; line-height: 1.6; }
+.changecard { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); overflow: hidden; }
+.changecard .row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; font-size: 13.5px; font-weight: 600; }
+.changecard .num { margin-left: auto; font-size: 12px; font-weight: 400; }
+.changecard .add { color: var(--positive); } .changecard .del { color: var(--danger); }
+.changecard .acts { display: flex; gap: 2px; border-top: 1px solid var(--border); }
+.changecard .acts .copybtn { display: inline-flex; align-items: center; gap: 6px; border: 0; background: none; padding: 7px 12px; color: var(--muted); font-size: 12.5px; cursor: pointer; border-radius: 0; }
+.changecard .acts .copybtn:hover { background: var(--hover); color: var(--text); }
+.copybtn.ok { color: var(--positive); }
+.running { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted); }
+.running .pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); animation: pulse 1.6s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: 0.3; } }
+
+/* A system line the conversation itself carries (pattern D / section 2 proposals). */
+.sysline { display: flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--muted); animation: drop 0.25s ease-out; }
+.sysline svg { color: var(--faint); }
+
+.composer { position: relative; margin: 6px 14px 18px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-card); padding: 12px 12px 10px 16px; }
+.composer .ph { color: var(--faint); font-size: 14.5px; padding: 2px 0 12px; }
+.composer .row { display: flex; justify-content: space-between; align-items: center; color: var(--muted); }
+.composer .plus, .composer .mic { display: inline-grid; place-items: center; width: 28px; height: 28px; }
+.send { width: 32px; height: 32px; border-radius: 50%; background: var(--accent); color: var(--accent-fg); display: grid; place-items: center; border: 0; }
+
+/* ---------- Pattern A: the current accent pill ---------- */
+.toastA { position: absolute; top: 62px; left: 50%; transform: translateX(-50%); z-index: 30; display: flex; align-items: center; gap: 12px; max-width: calc(100% - 32px); padding: 9px 16px; border-radius: var(--radius-pill); background: var(--accent); color: var(--accent-fg); box-shadow: var(--shadow-pop); font-size: 14px; animation: toastA-in 0.18s ease-out; white-space: nowrap; }
+.toastA button { border: 0; background: none; color: inherit; font-weight: 600; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; font-size: 14px; }
+@keyframes toastA-in { from { opacity: 0; transform: translate(-50%, -8px); } }
+.toastA.out { opacity: 0; transition: opacity 0.25s; }
+
+/* ---------- Pattern B: one neutral bar above the composer ---------- */
+.toastB { position: absolute; left: 50%; bottom: 96px; transform: translateX(-50%); z-index: 30; display: flex; align-items: center; gap: 10px; width: max-content; max-width: calc(100% - 28px); padding: 10px 14px; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow-pop); font-size: 13.5px; animation: toastB-in 0.22s cubic-bezier(0.2, 0.9, 0.3, 1); }
+@keyframes toastB-in { from { opacity: 0; transform: translate(-50%, 10px); } }
+.toastB.out { opacity: 0; transform: translate(-50%, 8px); transition: all 0.25s; }
+.toastB .ic { flex: none; display: grid; place-items: center; width: 22px; height: 22px; }
+.toastB .ic.pos { color: var(--positive); } .toastB .ic.err { color: var(--danger); } .toastB .ic.warn { color: var(--warn); } .toastB .ic.info { color: var(--muted); }
+.toastB .spin { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--border-strong); border-top-color: var(--muted); animation: spin 0.8s linear infinite; }
+.toastB .tx { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.toastB .tx .b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.toastB .tx .d { font-size: 12px; color: var(--muted); margin-top: 1px; }
+.toastB .act { margin-left: 2px; border: 0; background: none; color: var(--text); font-weight: 600; font-size: 13px; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; white-space: nowrap; }
+.toastB .x { margin-left: 2px; border: 0; background: none; color: var(--faint); cursor: pointer; font-size: 14px; padding: 2px 4px; border-radius: 6px; }
+.toastB .x:hover { background: var(--hover); color: var(--text); }
+/* On a wide frame the bar docks to the corner, sonner-style, instead of covering the text column. */
+.desk .toastB { left: auto; right: 20px; bottom: 20px; transform: none; max-width: 380px; }
+.desk .toastB .tx .b { white-space: normal; }
+@keyframes toastB-in-desk { from { opacity: 0; transform: translateY(10px); } }
+.desk .toastB { animation-name: toastB-in-desk; }
+.desk .toastB.out { transform: translateY(8px); }
+
+/* ---------- Pattern C: a sonner-like stack ---------- */
+.stackC { position: absolute; left: 50%; bottom: 96px; transform: translateX(-50%); z-index: 30; width: min(340px, calc(100% - 28px)); }
+.desk .stackC { left: auto; right: 20px; bottom: 20px; transform: none; width: 340px; }
+.stackC .pile { position: relative; }
+.stackC .ghost { position: absolute; left: 0; right: 0; height: 46px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); box-shadow: var(--shadow-card); }
+.stackC .ghost.g1 { bottom: -6px; transform: scale(0.97); opacity: 0.8; }
+.stackC .ghost.g2 { bottom: -11px; transform: scale(0.94); opacity: 0.45; }
+.stackC .more { display: block; width: 100%; margin-top: 9px; border: 0; background: none; color: var(--faint); font-size: 11.5px; text-align: center; cursor: pointer; }
+.stackC .more { display: none; }
+.cardC { position: relative; display: flex; align-items: flex-start; gap: 11px; padding: 12px 12px 12px 14px; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow-pop); font-size: 13.5px; animation: cardC-in 0.25s cubic-bezier(0.2, 0.9, 0.3, 1); touch-action: none; }
+@keyframes cardC-in { from { opacity: 0; transform: translateY(14px) scale(0.97); } }
+.cardC.out { opacity: 0; transform: translateY(10px) scale(0.98); transition: all 0.22s; }
+.cardC .ic { flex: none; margin-top: 1px; }
+.cardC .ic.pos { color: var(--positive); } .cardC .ic.err { color: var(--danger); } .cardC .ic.warn { color: var(--warn); } .cardC .ic.info { color: var(--muted); }
+.cardC .spin { width: 15px; height: 15px; margin-top: 2px; border-radius: 50%; border: 2px solid var(--border-strong); border-top-color: var(--muted); animation: spin 0.8s linear infinite; }
+.cardC .tx { flex: 1; min-width: 0; }
+.cardC .tx .b { font-weight: 500; line-height: 1.45; }
+.cardC .tx .d { font-size: 12px; color: var(--muted); margin-top: 2px; line-height: 1.5; }
+.cardC .act { flex: none; margin-top: 1px; border: 1px solid var(--border-strong); border-radius: var(--radius-pill); background: var(--surface); padding: 4px 12px; font-size: 12.5px; font-weight: 600; cursor: pointer; }
+.cardC .act:hover { background: var(--hover); }
+.cardC .x { flex: none; border: 0; background: none; color: var(--faint); cursor: pointer; font-size: 14px; padding: 2px 4px; border-radius: 6px; }
+.cardC .x:hover { background: var(--hover); color: var(--text); }
+.stackC .more { display: block; width: 100%; margin-top: 6px; border: 0; background: none; color: var(--faint); font-size: 11.5px; text-align: center; cursor: pointer; }
+
+/* ---------- Section 2: the effort picker ---------- */
+.effort { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); padding: 12px 14px 14px; }
+.effort .vrow { display: flex; align-items: baseline; justify-content: center; gap: 8px; margin-bottom: 2px; }
+.effort .val { color: var(--positive); font-size: 17px; font-weight: 600; transition: color 0.2s; }
+.effort .pending { display: none; align-items: center; gap: 5px; font-size: 11px; font-weight: 500; color: var(--warn); border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent); border-radius: var(--radius-pill); padding: 2px 9px; }
+.effort.has-pending .pending { display: inline-flex; animation: drop 0.25s ease-out; }
+.effort .mrow { display: flex; justify-content: center; align-items: center; gap: 3px; color: var(--muted); font-size: 13px; margin-bottom: 14px; }
+.rail { position: relative; height: 34px; cursor: pointer; }
+.rail .fill { position: absolute; top: 15px; left: 6px; right: 6px; height: 4px; border-radius: 4px; background: var(--border); }
+.rail .fill::before { content: ''; position: absolute; inset: 0; width: var(--frac, 0%); border-radius: 4px; background: color-mix(in srgb, var(--positive) 60%, var(--border)); }
+.rail.is-default .fill::before { background: var(--border-strong); }
+.rail .d { position: absolute; top: 12px; width: 10px; height: 10px; border-radius: 50%; background: var(--surface); border: 2px solid var(--border-strong); transform: translateX(-50%); transition: border-color 0.15s, background 0.15s; }
+.rail .d.filled { border-color: color-mix(in srgb, var(--positive) 60%, var(--border)); background: color-mix(in srgb, var(--positive) 60%, var(--border)); }
+.rail .thumb { position: absolute; top: 7px; width: 20px; height: 20px; border-radius: 50%; background: var(--surface); border: 1px solid var(--border-strong); box-shadow: var(--shadow-card); transform: translateX(-50%); left: var(--pos, 6px); transition: left 0.18s ease; }
+.rail .lbl { position: absolute; top: 26px; transform: translateX(-50%); font-size: 10.5px; color: var(--faint); }
+.rail.snap .thumb { transition: none; }
+.effort .hint { text-align: center; font-size: 12px; color: var(--warn); margin-top: 12px; min-height: 16px; }
+.effort.denied { animation: shake 0.3s; }
+@keyframes shake { 25% { transform: translateX(-3px); } 75% { transform: translateX(3px); } }
+
+/* ---------- Reference list ---------- */
+.refs { max-width: 1080px; margin: 8px auto 60px; padding: 16px 20px; border-top: 1px solid var(--border); font-size: 12.5px; color: var(--muted); line-height: 2; }
+.refs a { color: var(--muted); }
+
+svg.ic { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+</style>
+</head>
+<body>
+
+<div class="controls">
+  <span class="ctl">主题</span>
+  <div class="seg" id="theme">
+    <button aria-pressed="true">亮色</button><button>Paper 暗色</button>
+  </div>
+  <span class="ctl">设备</span>
+  <div class="seg" id="device">
+    <button aria-pressed="true">手机</button><button>桌面</button>
+  </div>
+</div>
+
+<p class="note">
+  <b>现状的两个问题。</b>① 全局提示是一个黑色药丸（accent 底、顶部居中、`Toast.tsx`）：
+  busy 状态（正在取名…／正在分叉…）也用它，一直挂在标题上关不掉；手机上盖住内容。
+  ② 运行中改模型／思考强度：daemon 直接 409 拒绝（`threads.ts:1500`），前端把值弹回去，再出一条红色 banner。
+  <br>
+  <b>参考结论。</b> sonner（Open WebUI 在用、shadcn 默认）：中性卡片＋彩色图标＋可堆叠，悬停展开、可滑动关；
+  Chatwoot 自研顶部 snackbar 2.5s；LibreChat 自定义类 ChatGPT toast；Claude Code 的 /model <b>不等当前回答结束，下一轮生效</b>；
+  Codex 把模型作为下一轮 start 的参数传入。 Links at the bottom.
+</p>
+
+<h2>一、提示方式</h2>
+<p class="sub">同一个场景，四种呈现。左侧选呈现方式，右侧点场景按钮播放。</p>
+<div class="controls" style="position: static; border-bottom: 0; padding-bottom: 0;">
+  <span class="ctl">呈现</span>
+  <div class="seg" id="pattern">
+    <button aria-pressed="true" data-p="A">A 现状药丸</button>
+    <button data-p="B">B 中性浮条</button>
+    <button data-p="C">C 堆叠卡片</button>
+    <button data-p="D">D 不弹窗・内联</button>
+  </div>
+  <span class="ctl">场景</span>
+  <div class="seg" id="scene">
+    <button data-s="busy">取名中</button>
+    <button data-s="copy">复制成功</button>
+    <button data-s="thread">别的线程等你</button>
+    <button data-s="version">新版本</button>
+    <button data-s="denied" aria-pressed="true">改强度被拒</button>
+  </div>
+</div>
+
+<div class="stage">
+  <div class="phone" id="f1">
+    <div class="notch"></div>
+    <div class="hdr">
+      <button class="back" id="back1" title="返回">
+        <svg class="ic" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg>
+        <span class="dot"></span>
+      </button>
+      <div class="ttl">
+        <div class="t">企微转人工与共情回复</div>
+        <div class="s" id="titleSub"></div>
+      </div>
+      <button class="hb"><svg class="ic" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
+      <button class="hb"><svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="19" r="1.6"/></svg></button>
+    </div>
+    <div class="hdrrow" id="hdrRow1"></div>
+    <div class="feed">
+      <div class="meta">用时 13 分 12 秒</div>
+      <div class="answer">续时窗口的代码和检查已接上。取消逻辑也开始落代码：运行方会从现有 Redis 聚合队列读取中途消息。</div>
+      <div class="interrupted">hub 重启时这一轮还在运行，被中断了。再发一条消息可以接着做。</div>
+      <div class="changecard">
+        <div class="row"><svg class="ic" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>已更改 18 个文件<span class="num"><span class="add">+896</span> <span class="del">-16</span></span></div>
+        <div class="acts">
+          <button class="copybtn" id="copyBtn">
+            <svg class="ic c1" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+            <svg class="ic c2" viewBox="0 0 24 24" style="display:none"><path d="M20 6L9 17l-5-5"/></svg>
+            <span id="copyTx">复制</span>
+          </button>
+        </div>
+      </div>
+      <div class="running"><span class="pulse"></span>工作中 · 26 秒 · 1 步</div>
+      <div class="answer dim">继续。取消、旧结果拦截和共情独立消息存储的第一版代码已接上。</div>
+    </div>
+    <div class="composer">
+      <div class="ph">追加一条…</div>
+      <div class="row">
+        <svg class="ic" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+        <svg class="ic" viewBox="0 0 24 24"><path d="M3 12h2l2-6 3 12 3-9 2 3h6"/></svg>
+        <span class="send"><svg class="ic" viewBox="0 0 24 24" style="stroke:currentColor"><rect x="8" y="8" width="8" height="8" rx="1.5" fill="currentColor" stroke="none"/></svg></span>
+      </div>
+    </div>
+  </div>
+  <p class="note" style="max-width: 300px; margin: 8px 0;" id="patternNote"></p>
+</div>
+
+<h2>二、运行中改模型／思考强度</h2>
+<p class="sub">现在 daemon 在一轮运行中拒绝修改（409），前端弹红条并把值弹回。两种提案都不拦截：改了就记账，下一轮带上。点滑杆上的档位试试。</p>
+<div class="controls" style="position: static; border-bottom: 0; padding-bottom: 0;">
+  <span class="ctl">行为</span>
+  <div class="seg" id="behavior">
+    <button aria-pressed="true" data-b="now">现状・拒绝</button>
+    <button data-b="defer">提案 A・下一轮生效</button>
+    <button data-b="silent">提案 B・直接换不提示</button>
+  </div>
+  <button class="ghostbtn" id="finishTurn">模拟本轮结束</button>
+  <button class="ghostbtn" id="reset2">重置</button>
+</div>
+
+<div class="stage">
+  <div class="phone" id="f2">
+    <div class="notch"></div>
+    <div class="hdr">
+      <button class="back"><svg class="ic" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></button>
+      <div class="ttl"><div class="t">企微转人工与共情回复</div><div class="s">工作中 · 26 秒</div></div>
+    </div>
+    <div class="hdrrow" id="hdrRow2"></div>
+    <div class="feed" id="feed2">
+      <div class="effort" id="effortCard">
+        <div class="vrow"><span class="val" id="effVal">中</span><span class="pending"><svg class="ic" viewBox="0 0 24 24" style="width:11px;height:11px"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>下一轮生效</span></div>
+        <div class="mrow">GLM-5.3 <svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M9 6l6 6-6 6"/></svg></div>
+        <div class="rail" id="rail" role="slider" tabindex="0" aria-label="思考强度">
+          <div class="fill"></div>
+          <div class="lbl" style="left:6px">默认</div><div class="lbl" style="left:33%">低</div><div class="lbl" style="left:66%">中</div><div class="lbl" style="left:calc(100% - 6px)">高</div>
+        </div>
+        <div class="hint" id="effHint"></div>
+      </div>
+      <div class="answer dim">继续。取消、旧结果拦截和共情独立消息存储的第一版代码已接上。</div>
+      <div id="sysAnchor"></div>
+    </div>
+    <div class="composer">
+      <div class="ph">追加一条…</div>
+      <div class="row">
+        <svg class="ic" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+        <svg class="ic" viewBox="0 0 24 24"><path d="M3 12h2l2-6 3 12 3-9 2 3h6"/></svg>
+        <span class="send"><svg class="ic" viewBox="0 0 24 24" style="stroke:currentColor"><rect x="8" y="8" width="8" height="8" rx="1.5" fill="currentColor" stroke="none"/></svg></span>
+      </div>
+    </div>
+  </div>
+  <p class="note" style="max-width: 300px; margin: 8px 0;" id="behaviorNote"></p>
+</div>
+
+<div class="refs">
+  参考：
+  <a href="https://sonner.emilkowal.ski/">sonner</a>（Open WebUI 从 svelte-french-toast 迁到 svelte-sonner；shadcn/ui 默认 toast）·
+  <a href="https://github.com/openai/codex/commit/021e39b3031de7661245eff61ed9bbe11ffca531">Codex：切模式时在会话里写一行模型提示</a> ·
+  <a href="https://github.com/anthropics/claude-code/issues/36835">Claude Code：/model 下一轮生效，不等当前回答结束</a> ·
+  Chatwoot 自研 SnackbarContainer（top、2.5s）· LibreChat 自定义 Radix toast（类 ChatGPT）。
+</div>
+
+<script>
+'use strict';
+const $ = (s, el) => (el || document).querySelector(s);
+const $$ = (s, el) => [...(el || document).querySelectorAll(s)];
+
+/* ---------- global toggles ---------- */
+function seg(id, on) {
+  const el = $('#' + id);
+  el.addEventListener('click', (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    $$('button', el).forEach((x) => x.setAttribute('aria-pressed', x === b ? 'true' : 'false'));
+    on(b);
+  });
+  return el;
+}
+seg('theme', (b) => document.documentElement.setAttribute('data-theme', b.textContent.includes('暗') ? 'dark' : 'light'));
+seg('device', (b) => {
+  const phone = b.textContent.includes('手机');
+  for (const f of ['#f1', '#f2']) {
+    const el = $(f);
+    el.className = phone ? 'phone' : 'desk';
+    if (!phone) { const n = $('.notch', el); if (n) n.style.display = 'none'; }
+    else { const n = $('.notch', el); if (n) n.style.display = ''; }
+  }
+});
+
+/* ---------- icons ---------- */
+const IC = {
+  check: '<svg class="ic" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg>',
+  alert: '<svg class="ic" viewBox="0 0 24 24"><path d="M12 9v4m0 4h.01M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>',
+  info: '<svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4m0-4h.01"/></svg>',
+  arrow: '<svg class="ic" viewBox="0 0 24 24"><path d="M5 12h14m-6-6l6 6-6 6"/></svg>',
+};
+
+/* =================== Section 1: notification patterns =================== */
+const NOTES = {
+  A: '<b>A 现状。</b>accent 药丸、顶部居中。busy 也用它：一直挂在标题上，不能关。错误走另一条系统（红色 banner），两套并存。',
+  B: '<b>B 中性浮条。</b>一条就够：图标带颜色、底是中性 surface，放在 composer 上方（桌面收到右下角）。busy 有 spinner 和关闭键，确认 2.5s 自走，错误停留。ChatGPT / react-hot-toast / sonner 的共同形态。',
+  C: '<b>C 堆叠卡片（sonner）。</b>多条堆叠、悬停/点击展开，可拖走关掉。信息密度最高，适合桌面一次出多条；手机上和 B 二选一即可。',
+  D: '<b>D 不弹窗・内联。</b>持续状态放发生处：取名中→标题下小字；复制→按钮自己变对勾；跨线程→返回键上的红点；新版本→标题下一条常驻细行。没有任何东西飘在内容上。',
+};
+$('#patternNote').innerHTML = NOTES.A;
+
+let pattern = 'A';
+let timers1 = [];
+function clear1() {
+  timers1.forEach(clearTimeout); timers1 = [];
+  $$('.toastA,.toastB,.stackC,.hdrnote,.banner,.sysline', $('#f1')).forEach((n) => n.remove());
+  $('#titleSub').innerHTML = '';
+  $('#back1').classList.remove('has-dot');
+  $('#hdrRow1').innerHTML = '';
+  resetCopy();
+}
+function later(fn, ms) { timers1.push(setTimeout(fn, ms)); }
+
+/* Pattern A: faithful copy of today's toast. */
+function showA(scene) {
+  const f = $('#f1');
+  const mk = (html, ms) => {
+    const d = document.createElement('div');
+    d.className = 'toastA'; d.setAttribute('role', 'status'); d.innerHTML = html;
+    f.appendChild(d);
+    if (ms) later(() => { d.classList.add('out'); later(() => d.remove(), 300); }, ms);
+  };
+  if (scene === 'busy') mk('正在取名…');
+  if (scene === 'copy') mk('已复制', 2500);
+  if (scene === 'thread') mk('<span>「选品诊断」等你回复</span><button>去看</button>', 6000);
+  if (scene === 'version') mk('<span>有新版本</span><button>刷新</button>');
+  if (scene === 'denied') {
+    const d = document.createElement('div');
+    d.className = 'banner'; d.setAttribute('role', 'alert');
+    d.innerHTML = '<span>cannot change effort while a turn is running; try again after it finishes</span><button class="x">×</button>';
+    $('#hdrRow1').appendChild(d);
+    $('.x', d).onclick = () => d.remove();
+  }
+}
+
+/* Pattern B: one neutral bar, above the composer. */
+function showB(scene) {
+  const f = $('#f1');
+  const mk = (icon, body, opts) => {
+    const d = document.createElement('div');
+    d.className = 'toastB';
+    d.innerHTML = `<span class="ic ${opts.tone || 'info'}">${icon}</span><span class="tx">${body}</span>`
+      + (opts.act ? `<button class="act">${opts.act}</button>` : '')
+      + (opts.x ? '<button class="x">×</button>' : '');
+    f.appendChild(d);
+    if (opts.x) $('.x', d).onclick = () => gone(d);
+    if (opts.act) $('.act', d).onclick = () => gone(d);
+    if (opts.ms) later(() => gone(d), opts.ms);
+    return d;
+  };
+  const gone = (d) => { d.classList.add('out'); later(() => d.remove(), 260); };
+  const busyIcon = '<span class="spin"></span>';
+  if (scene === 'busy') mk(busyIcon, '<span class="b">正在取名…</span>', { x: true });
+  if (scene === 'copy') mk(IC.check, '<span class="b">已复制对话全文</span>', { tone: 'pos', ms: 2500 });
+  if (scene === 'thread') mk(IC.info, '<span class="b">「选品诊断」等你回复</span>', { act: '去看', ms: 6000 });
+  if (scene === 'version') mk(IC.arrow, '<span class="b">hub 有新版本</span>', { act: '刷新', x: true });
+  if (scene === 'denied') mk(IC.alert, '<span class="b">本轮还在运行</span><span class="d">思考强度已记下，本轮结束后生效</span>', { tone: 'warn', x: true });
+}
+
+/* Pattern C: sonner-like stack — newest in front, older ones folded behind, drag a card away to dismiss. */
+function showC(scene) {
+  const f = $('#f1');
+  const wrap = document.createElement('div');
+  wrap.className = 'stackC';
+  wrap.innerHTML = '<div class="pile"><div class="ghost g2"></div><div class="ghost g1"></div><button class="more"></button></div>';
+  f.appendChild(wrap);
+  const pile = $('.pile', wrap), more = $('.more', wrap);
+  const cards = [];
+  const gone = (card) => {
+    if (!card.el.isConnected) return;
+    clearTimeout(card.timer);
+    card.el.classList.add('out');
+    setTimeout(() => { card.el.remove(); relayout(); }, 220);
+  };
+  const relayout = () => {
+    const live = cards.filter((c) => c.el.isConnected);
+    const hidden = live.length - 1;
+    /* Folded: only the front card shows; the ghosts stand in for the rest. */
+    live.forEach((c, i) => (c.el.style.display = i === 0 || pile.dataset.expanded === '1' ? '' : 'none'));
+    $('.ghost.g1', wrap).style.display = hidden >= 1 ? '' : 'none';
+    $('.ghost.g2', wrap).style.display = hidden >= 2 ? '' : 'none';
+    more.style.display = hidden >= 1 && pile.dataset.expanded !== '1' ? '' : 'none';
+    more.textContent = `展开另外 ${hidden} 条`;
+    pile.dataset.expanded = pile.dataset.expanded === '1' && hidden >= 1 ? '1' : '0';
+  };
+  more.onclick = () => { pile.dataset.expanded = '1'; relayout(); };
+  const add = (card, ms) => {
+    pile.prepend(card.el);
+    cards.unshift(card);
+    if (ms) card.timer = setTimeout(() => gone(card), ms);
+    relayout();
+  };
+  const mkCard = (icon, b, d, opts) => {
+    const el = document.createElement('div');
+    el.className = 'cardC';
+    el.innerHTML = `<span class="ic ${opts.tone || 'info'}">${icon}</span><span class="tx"><div class="b">${b}</div>${d ? `<div class="d">${d}</div>` : ''}</span>`
+      + (opts.act ? `<button class="act">${opts.act}</button>` : '') + '<button class="x">×</button>';
+    const card = { el, timer: 0 };
+    $('.x', el).onclick = () => gone(card);
+    if (opts.act) $('.act', el).onclick = () => gone(card);
+    /* Drag down (or up) to dismiss, the sonner gesture. */
+    let y0 = null;
+    el.addEventListener('pointerdown', (e) => { if (e.target.closest('button')) return; y0 = e.clientY; el.setPointerCapture(e.pointerId); });
+    el.addEventListener('pointermove', (e) => {
+      if (y0 === null) return;
+      const dy = e.clientY - y0;
+      if (Math.abs(dy) > 4) { el.style.transition = 'none'; el.style.transform = `translateY(${dy}px)`; el.style.opacity = String(Math.max(0.2, 1 - Math.abs(dy) / 90)); }
+    });
+    el.addEventListener('pointerup', () => {
+      if (y0 === null) return;
+      const dy = parseFloat(el.style.transform?.replace(/[^0-9.-]/g, '') || '0'); y0 = null;
+      el.style.transition = ''; el.style.transform = ''; el.style.opacity = '';
+      if (Math.abs(dy) > 56) gone(card);
+    });
+    return card;
+  };
+  if (scene === 'busy') add(mkCard('<span class="spin"></span>', '正在取名…', undefined, {}), 0);
+  if (scene === 'copy') add(mkCard(IC.check, '已复制对话全文', undefined, { tone: 'pos' }), 4000);
+  if (scene === 'thread') add(mkCard(IC.info, '「选品诊断」等你回复', undefined, { act: '去看' }), 6000);
+  if (scene === 'version') add(mkCard(IC.arrow, 'hub 有新版本', '刷新后生效', { act: '刷新' }), 0);
+  if (scene === 'denied') add(mkCard(IC.alert, '本轮还在运行', '思考强度已记下，结束后生效', { tone: 'warn' }), 0);
+  /* A second card arrives just after, so the folding is visible. */
+  if (scene === 'thread' || scene === 'denied') later(() => {
+    if (wrap.isConnected) add(mkCard(IC.check, '已复制对话全文', undefined, { tone: 'pos' }), 3500);
+  }, 800);
+}
+
+/* Pattern D: nothing floats; the surface itself changes. */
+function showD(scene) {
+  if (scene === 'busy') {
+    $('#titleSub').innerHTML = '<span class="spin"></span>正在取名…';
+  }
+  if (scene === 'copy') { flipCopy(); }
+  if (scene === 'thread') { $('#back1').classList.add('has-dot'); }
+  if (scene === 'version') {
+    const d = document.createElement('div');
+    d.className = 'hdrnote';
+    d.innerHTML = `${IC.arrow}<span>hub 有新版本，刷新后生效</span><button>刷新</button>`;
+    $('#hdrRow1').appendChild(d);
+    $('button', d).onclick = () => d.remove();
+  }
+  if (scene === 'denied') {
+    /* Inline: the running line itself carries it; nothing floats. See section 2 for the full proposal. */
+    const d = document.createElement('div');
+    d.className = 'sysline';
+    d.style.color = 'var(--warn)';
+    d.innerHTML = `${IC.info}<span>思考强度改为 高：本轮运行中，下一轮生效</span>`;
+    $('.running', $('#f1'))?.after(d);
+  }
+}
+function flipCopy() {
+  const b = $('#copyBtn');
+  $('.c1', b).style.display = 'none'; $('.c2', b).style.display = ''; $('#copyTx').textContent = '已复制';
+  b.classList.add('ok');
+  timers1.push(setTimeout(resetCopy, 1600));
+}
+function resetCopy() {
+  const b = $('#copyBtn');
+  if (!b) return;
+  $('.c1', b).style.display = ''; $('.c2', b).style.display = 'none'; $('#copyTx').textContent = '复制';
+  b.classList.remove('ok');
+}
+
+let scene = 'denied';
+function play(scene) {
+  clear1();
+  ({ A: showA, B: showB, C: showC, D: showD })[pattern](scene);
+}
+seg('pattern', (b) => { pattern = b.dataset.p; $('#patternNote').innerHTML = NOTES[pattern]; play(scene); });
+seg('scene', (b) => { scene = b.dataset.s; play(scene); });
+play(scene);
+
+/* =================== Section 2: changing settings while running =================== */
+const BNOTES = {
+  now: '<b>现状。</b>daemon 409 拒绝，前端先亮后弹回，再出红 banner。用户什么也没改成，还得等完这轮再来一遍。',
+  defer: '<b>提案 A。</b>立即接受修改，滑杆旁挂一枚「下一轮生效」；本轮结束由 hub 把改动带给下一轮（或重启会话），并在会话里落一行系统提示。 Codex 切模式就是落一行会话提示。',
+  silent: '<b>提案 B（Claude Code）。</b>直接换，什么都不说：/model 的语义就是“下一条消息用新模型”，不等当前回答结束。',
+};
+$('#behaviorNote').innerHTML = BNOTES.now;
+
+const LEVELS = ['默认', '低', '中', '高'];
+const POS = ['6px', '33%', '66%', 'calc(100% - 6px)'];
+let behavior = 'now', effIndex = 2, running = true, pendingFrom = null, timers2 = [];
+const rail = $('#rail'), card = $('#effortCard');
+
+/* Build the dots into the rail. */
+for (let i = 0; i <= 3; i++) {
+  const d = document.createElement('span');
+  d.className = 'd'; d.style.left = POS[i]; d.dataset.i = String(i);
+  rail.appendChild(d);
+}
+const thumb = document.createElement('span');
+thumb.className = 'thumb'; rail.appendChild(thumb);
+
+function render2() {
+  /* Dots from 低 (1) up to the chosen level fill; 默认 (0) leaves the rail empty. */
+  $$('.d', rail).forEach((d, i) => d.classList.toggle('filled', i >= 1 && i <= effIndex));
+  rail.classList.toggle('is-default', effIndex === 0);
+  rail.style.setProperty('--pos', POS[effIndex]);
+  rail.style.setProperty('--frac', `${(effIndex / 3) * 100}%`);
+  $('#effVal').textContent = LEVELS[effIndex];
+  card.classList.toggle('has-pending', pendingFrom !== null);
+}
+render2();
+
+rail.addEventListener('pointerdown', (e) => {
+  const r = rail.getBoundingClientRect();
+  const frac = (e.clientX - r.left) / r.width * 3;
+  const i = Math.max(0, Math.min(3, Math.round(frac)));
+  if (i === effIndex) return;
+  if (running) {
+    if (behavior === 'now') {
+      /* Optimistic move, then the daemon's 409 rolls it back and banners. */
+      const from = effIndex;
+      effIndex = i; render2(); rail.classList.add('snap');
+      card.classList.remove('denied'); void card.offsetWidth; card.classList.add('denied');
+      timers2.forEach(clearTimeout); timers2 = [];
+      timers2.push(setTimeout(() => {
+        effIndex = from; render2();
+        const d = document.createElement('div');
+        d.className = 'banner'; d.setAttribute('role', 'alert');
+        d.innerHTML = '<span>cannot change effort while a turn is running; try again after it finishes</span><button class="x">×</button>';
+        $('#hdrRow2').appendChild(d);
+        $('.x', d).onclick = () => d.remove();
+        rail.classList.remove('snap');
+      }, 550));
+    } else if (behavior === 'defer') {
+      if (pendingFrom === null) pendingFrom = effIndex;
+      effIndex = i; render2();
+    } else {
+      effIndex = i; render2();
+    }
+  } else {
+    effIndex = i; render2();
+    pendingFrom = null; render2();
+  }
+});
+
+function sysline(text) {
+  const d = document.createElement('div');
+  d.className = 'sysline';
+  d.innerHTML = `${IC.check}<span>${text}</span>`;
+  $('#sysAnchor').before(d);
+}
+
+$('#finishTurn').addEventListener('click', () => {
+  if (!running) return;
+  running = false;
+  $('.ttl .s', $('#f2')).textContent = '已完成 · 用时 1 分 03 秒';
+  if (behavior === 'defer' && pendingFrom !== null) {
+    sysline(`思考强度：${LEVELS[pendingFrom]} → ${LEVELS[effIndex]}，本轮起生效`);
+    pendingFrom = null;
+    render2();
+  }
+});
+
+$('#reset2').addEventListener('click', () => {
+  timers2.forEach(clearTimeout); timers2 = [];
+  running = true; effIndex = 2; pendingFrom = null;
+  $$('.banner', $('#f2')).forEach((n) => n.remove());
+  $$('.sysline', $('#f2')).forEach((n) => n.remove());
+  $('.ttl .s', $('#f2')).textContent = '工作中 · 26 秒';
+  render2();
+});
+
+seg('behavior', (b) => {
+  behavior = b.dataset.b;
+  $('#behaviorNote').innerHTML = BNOTES[behavior];
+  $$('.banner', $('#f2')).forEach((n) => n.remove());
+  pendingFrom = null;
+  render2();
+});
+</script>
+</body>
+</html>

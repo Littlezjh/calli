@@ -9,6 +9,18 @@ import { basename } from 'node:path';
 import { createInterface } from 'node:readline';
 
 const args = process.argv.slice(2);
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+
+// Model an MCP server which outlives its launcher and ignores graceful termination.
+if (process.env.FAKE_PI_CHILDREN && !args.includes('--no-mcp')) {
+  const child = spawn(process.execPath, ['-e', "process.on('SIGTERM', () => {}); process.stdout.write('ready'); setInterval(() => {}, 1000);"], {
+    stdio: ['ignore', 'pipe', 'ignore'],
+    detached: true,
+  });
+  await once(child.stdout, 'data');
+  appendFileSync(process.env.FAKE_PI_CHILDREN, JSON.stringify({ pid: child.pid, kind: args[0] === 'mcp' ? 'mcp' : 'session' }) + '\n');
+}
 const catalogState = () => process.env.FAKE_PI_CATALOG_FILE ? JSON.parse(readFileSync(process.env.FAKE_PI_CATALOG_FILE, 'utf8')) : {};
 if (process.env.FAKE_PI_PROBE_LOG) appendFileSync(process.env.FAKE_PI_PROBE_LOG, JSON.stringify({ kind: args[0] === 'mcp' ? 'mcp' : args.includes('--no-session') ? 'catalog' : 'session', noMcp: args.includes('--no-mcp') }) + '\n');
 // `pi mcp list --json` is a shell command, not an RPC session: FAKE_PI_MCP=1 reports the zai vision
@@ -178,9 +190,17 @@ rl.on('line', (line) => {
     case 'set_model':
       currentModel = MODELS.find(m => m.provider === cmd.provider && m.id === cmd.modelId) ?? currentModel;
       return reply(currentModel);
-    case 'set_thinking_level':
+    case 'set_thinking_level': {
+      // Some agents refuse a mid-turn change; FAKE_PI_EFFORT_BUSY simulates one, and
+      // FAKE_PI_EFFORT_LOG records every attempt so a test can see which reached the agent.
+      const entry = JSON.stringify({ level: cmd.level, running }) + '\n';
+      if (process.env.FAKE_PI_EFFORT_LOG) appendFileSync(process.env.FAKE_PI_EFFORT_LOG, entry);
+      if (process.env.FAKE_PI_EFFORT_BUSY === '1' && running) return reply(null, false, 'a turn is running');
       return reply({});
+    }
     case 'get_messages':
+      // A slow read lets a test start a hub turn while /sync is still reading the session.
+      if (process.env.FAKE_PI_MESSAGES_DELAY_MS) return setTimeout(() => reply({ messages: messagesOf(sessionId) }), Number(process.env.FAKE_PI_MESSAGES_DELAY_MS));
       return reply({ messages: messagesOf(sessionId) });
     // The user messages a copy can be forked from, each with the id `fork` takes.
     case 'get_fork_messages':
@@ -190,7 +210,10 @@ rl.on('line', (line) => {
       const point = forkPoints(sessionId).find((m) => m.entryId === cmd.entryId);
       if (!point) return reply(null, false, `no entry ${cmd.entryId}`);
       sessionId = `${sessionId}-fork-${cmd.entryId}`;
-      return reply({ text: point.text, cancelled: false });
+      // A copy can take a moment; FAKE_PI_FORK_DELAY_MS holds one open so a busy state is visible.
+      const answer = () => reply({ text: point.text, cancelled: false });
+      const delay = Number(process.env.FAKE_PI_FORK_DELAY_MS);
+      return delay ? setTimeout(answer, delay) : answer();
     }
     case 'compact':
       if (cmd.customInstructions === 'explode') return reply(null, false, 'nothing to compact');
@@ -223,7 +246,12 @@ rl.on('line', (line) => {
     case 'clone':
       if (sessionId === 'uncloneable') return reply({ cancelled: true });
       sessionId = `${sessionId}-clone`;
-      return reply({ cancelled: false });
+      // FAKE_PI_FORK_DELAY_MS holds a copy open too, so a busy state is visible.
+      {
+        const answer = () => reply({ cancelled: false });
+        const delay = Number(process.env.FAKE_PI_FORK_DELAY_MS);
+        return delay ? setTimeout(answer, delay) : answer();
+      }
     case 'get_state':
       if (++stateReads > 1 && process.env.FAKE_PI_IMAGE_CHECK_DELAY_MS) {
         return setTimeout(() => reply({ sessionId, isStreaming: running, model: currentModel }), Number(process.env.FAKE_PI_IMAGE_CHECK_DELAY_MS));
@@ -237,7 +265,7 @@ rl.on('line', (line) => {
         for (let i = 0; i < (cmd.message.includes('twice') ? 2 : 1); i++) {
           out({ type: `${prefix}compaction_start`, reason: 'threshold' });
           out({ type: `${prefix}compaction_end`, reason: 'threshold', aborted: cmd.message.includes('cancel'),
-            ...(cmd.message.includes('fail') ? { errorMessage: 'summary failed' } : cmd.message.includes('cancel') || cmd.message.includes('skip') ? {} : { result: { summary: 'summary', tokensBefore: 150000 } }) });
+            ...(/\bfail\b/.test(cmd.message) ? { errorMessage: 'summary failed' } : cmd.message.includes('cancel') || cmd.message.includes('skip') ? {} : { result: { summary: 'summary', tokensBefore: 150000 } }) });
         }
         out({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: '继续处理。' } });
         out({ type: 'agent_settled', aborted: false });
@@ -265,6 +293,20 @@ rl.on('line', (line) => {
         return;
       }
       const personal = personalFixture(cmd.message);
+      if (personal === '__hold__') {
+        // A fixture answer that never settles: only a cancellation can end this turn.
+        reply({ disposition: 'started' });
+        out({ type: 'agent_start' });
+        running = true;
+        return;
+      }
+      if (personal === '__explore_error__') {
+        reply({ disposition: 'started' });
+        out({ type: 'agent_start' });
+        out({ type: 'message_end', message: { role: 'assistant', stopReason: 'error', errorMessage: 'explore provider unavailable' } });
+        out({ type: 'agent_settled', aborted: false });
+        return;
+      }
       if (personal !== null) {
         reply({ disposition: 'started' });
         out({ type: 'agent_start' });
@@ -330,6 +372,38 @@ rl.on('line', (line) => {
           running = false;
           out({ type: 'agent_settled', aborted: false });
         }, 2900);
+        return;
+      }
+      // "longthink" streams one long thought a sentence at a time, so a UI test can watch the live
+      // thinking window follow it. The stream runs well past the window's three lines, and each
+      // sentence starts short: exactly the writing that used to bounce the page up and down.
+      if (cmd.message.includes('longthink')) {
+        const sentences = [
+          '先把请求里提到的文件找出来，确认它们各自管什么。',
+          '路由注册在一个地方，但每个页面的数据是在组件里单独取的。',
+          '这样改的话，列表页要跟着动，先把列表页读完再决定。',
+          '列表页把筛选条件直接写进了 useState，刷新以后就丢了。',
+          '筛选条件得搬到 URL 的查询参数里，刷新和分享才都能保住。',
+          '类目是从接口拉的，价格是本地输入，两种参数的编码方式不一样。',
+          '中文类目名要 encodeURIComponent，不然分享出去的链接会坏。',
+          '价格区间用 min 和 max 两个参数，空的那边不传。',
+          '再把默认排序也带上，不传就按后端默认的来。',
+          '组件这边，把读参数和写参数封成一个 hook，页面里就干净了。',
+          'hook 里用 useSearchParams，配合 Suspense 边界，不然整个页面的渲染都要降级。',
+          '改动范围差不多定了：hook 一个文件，列表页一个文件。',
+          '最后过一遍现有的测试，看有没有直接断言旧 URL 结构的。',
+          '有两处，改完一起更新掉，再补一条带中文类目的用例。',
+        ];
+        sentences.forEach((s, i) => setTimeout(() => {
+          out({ type: 'message_update', assistantMessageEvent: { type: 'thinking_delta', contentIndex: 0, delta: s + ' ' } });
+          if (i === sentences.length - 1) {
+            setTimeout(() => {
+              out({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: '想清楚了：筛选进 URL，封装成 hook，改动两个文件。' } });
+              running = false;
+              out({ type: 'agent_settled', aborted: false });
+            }, 300);
+          }
+        }, 250 + i * 250));
         return;
       }
       // "manysteps" is a turn that looks around a lot before it says anything: four calls in a
@@ -417,6 +491,39 @@ rl.on('line', (line) => {
         running = false;
         return out({ type: 'agent_settled', aborted: false });
       }
+      // With FAKE_PI_TWO_REQUESTS the turn looks like pi's real shape: one request decides on the
+      // tool, the tool runs, a second request writes the answer, each with its own usage — so a
+      // session's model segments and tools alternate on the timeline instead of overlapping.
+      const twoRequests = process.env.FAKE_PI_TWO_REQUESTS === '1';
+      if (twoRequests) {
+        out({ type: 'message_start', message: { role: 'assistant', timestamp: Date.now() - 150 } });
+        out({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: '先看一眼目录。' } });
+        out({ type: 'message_end', message: { role: 'assistant', model: 'fixture-model', provider: 'fixture-provider', stopReason: 'tool_use', durationMs: 300, usage: { input: 80, output: 12, cacheRead: 20, cacheWrite: 5, totalTokens: 117 } } });
+        // The tool takes a beat, and the second request takes longer than the first.
+        setTimeout(() => {
+          out({ type: 'tool_execution_start', toolCallId: 'c1', toolName: 'bash', args: { command: 'ls' } });
+          out({ type: 'tool_execution_update', toolCallId: 'c1', toolName: 'bash', partialResult: { content: [{ type: 'text', text: 'partial' }] } });
+          out({ type: 'tool_execution_end', toolCallId: 'c1', toolName: 'bash', result: { content: [{ type: 'text', text: 'a.txt' }] }, isError: false });
+          setTimeout(() => {
+            if (cmd.images?.length) {
+              out({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: `images:${cmd.images.length}:${cmd.images.map((i) => i.mimeType).join(',')};` } });
+            }
+            out({ type: 'message_start', message: { role: 'assistant', timestamp: Date.now() - 200 } });
+            out({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: 'hi ' } });
+            const marker = process.env.FAKE_PI_LABEL ? `[${process.env.FAKE_PI_LABEL}] ` : '';
+            out({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: marker + 'there ' + cmd.message } });
+            if (/\bfail\b/.test(cmd.message)) {
+              out({ type: 'message_end', message: { role: 'assistant', stopReason: 'error', errorMessage: 'provider exploded' } });
+              running = false;
+              return out({ type: 'agent_settled', aborted: false });
+            }
+            if (process.env.FAKE_TELEMETRY) out({ type: 'message_end', message: { role: 'assistant', model: 'fixture-model', provider: 'fixture-provider', stopReason: 'stop', durationMs: 600, usage: { input: 120, output: 20, cacheRead: 40, cacheWrite: 10, reasoning: 5, totalTokens: 175, cost: { total: 0.0123 } } } });
+            running = false;
+            out({ type: 'agent_settled', aborted: false });
+          }, 400);
+        }, 300);
+        return;
+      }
       out({ type: 'tool_execution_start', toolCallId: 'c1', toolName: 'bash', args: { command: 'ls' } });
       out({ type: 'tool_execution_update', toolCallId: 'c1', toolName: 'bash', partialResult: { content: [{ type: 'text', text: 'partial' }] } });
       out({ type: 'tool_execution_end', toolCallId: 'c1', toolName: 'bash', result: { content: [{ type: 'text', text: 'a.txt' }] }, isError: false });
@@ -427,7 +534,10 @@ rl.on('line', (line) => {
       out({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: 'hi ' } });
       const marker = process.env.FAKE_PI_LABEL ? `[${process.env.FAKE_PI_LABEL}] ` : '';
       out({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: marker + 'there ' + cmd.message } });
-      if (cmd.message.includes('fail')) {
+      // Whole word only: protocol envelopes (the Router's INTRO names push.failure) must not
+      // turn an unrelated reply into a failure, while fail markers anywhere (work fail,
+      // router-fixture-fail in a signal ref) still do.
+      if (/\bfail\b/.test(cmd.message)) {
         out({ type: 'message_end', message: { role: 'assistant', stopReason: 'error', errorMessage: 'provider exploded' } });
         running = false;
         return out({ type: 'agent_settled', aborted: false });

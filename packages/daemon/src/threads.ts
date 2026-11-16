@@ -1,5 +1,11 @@
+import { PersonalBriefSchedule } from './personal-brief-schedule.js';
+import { changedFiles, mentionedFiles, checkMissingFiles, MAX_OUTPUT_ITEMS, type ThreadOutputs } from './outputs.js';
+import { LarkChannel } from './channels/lark.js';
 import { PersonalService } from './personal.js';
-import { AutoHandover, type AutoHandoverView, type HandoverTarget } from './auto-handover.js';
+import { AutoHandover, type AutoHandoverView, type HandoverTarget, type SettledOutcome } from './auto-handover.js';
+import { AutoCompact } from './auto-compact.js';
+import type { HandoverLink } from './handover-mode.js';
+import { QuotaResume, type ResumeView } from './quota-resume.js';
 import type { VoiceTransport } from './voice-sessions.js';
 import { VoiceConversation } from './voice-conversation.js';
 import { turnOutcome } from './lifecycle.js';
@@ -7,10 +13,12 @@ import { UserInputs } from './user-input.js';
 import type { SystemPrompt, WorkMode } from './adapters/types.js';
 import { diagnosticFailure } from './adapters/diagnostics.js';
 import { turnAnswer, type CoordinationManager, type CoordinationSetup } from './coordination.js';
-import { parseProgress, progressInstructions } from './progress-report.js';
+import { Injections, type InjectionGate } from './injections.js';
+import { parseProgress, progressInstructions, PROGRESS_STAGES, type ProgressStage } from './progress-report.js';
 import { habitsPath, isEditableArticle, isWritingStage, newestArticle, noteFile, saveArticle, writingInstructions, type WritingState } from './writing.js';
 import { randomUUID } from 'node:crypto';
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, statSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, rmSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import {
   EFFORT_LEVELS,
@@ -31,18 +39,24 @@ import {
 import type { GoalSnapshot } from './adapters/native-goal.js';
 import { findFiles, listDir, readText, type Listing, type TextFile } from './browse.js';
 import { referencedFile } from './artifacts.js';
-import { imagePathNote, MAX_IMAGES, sniffImageType, sniffSvg, type AttachmentStore, type StoredAttachment, type StoredVideo } from './attachments.js';
+import { imagePathNote, isVideoType, MAX_IMAGES, sniffImageType, sniffSvg, type AttachmentStore, type StoredAttachment, type StoredVideo } from './attachments.js';
 import { HttpError } from './errors.js';
-import { handoverBrief, handoverContext, handoverPrompt, synthesizeBrief, synthesizeHandover, turnMessage } from './handover.js';
+import { handoverBrief, handoverPrompt, synthesizeBrief, turnMessage } from './handover.js';
 import { McpManager } from './mcp.js';
 import { SkillsManager } from './skills.js';
 import { isWithinWorkdirs, Workdirs } from './workdirs.js';
-import { coalesceToolEvents, compactDeltas, toolText, type EmittedEvent, type EventType, type StoredEvent } from './events.js';
-import type { SearchHit, SectionRecord, Store, ThreadRecord, ThreadWorktree, TodoRecord } from './store.js';
+import { coalesceToolEvents, compactDeltas, toolText, type EmittedEvent, type EventType, type StoredEvent, type TurnChannel } from './events.js';
+import type { SearchHit, SectionRecord, Store, ThreadRecord, ThreadWorktree, TodoProposal, TodoRecord, TodoUrgency } from './store.js';
+import { readBrief, type ThreadBrief } from './brief.js';
+import { urgencyOf } from './store.js';
+import { todoStages } from './todo-stage.js';
+import { batchShape, mergeBatches, type TurnBatch } from './turn-batch.js';
 import { buildTrace, type TurnTrace } from './trace.js';
+import { aggregateThreadStats, statsOfTrace, type ThreadStats, type TurnStatsRow } from './turn-stats.js';
 import { askedText } from './util.js';
 import { MessageEdits } from './message-edits.js';
 import { addWorktree, countChanges, findCheckout, initRepository, removeWorktree, samePath, worktreeLeftovers, type Checkout, type Worktree } from './worktrees.js';
+import { isProbeSession } from './local-sessions.js';
 
 /** Why a copy cannot get a worktree of its own, said to whoever asked for one anyway. */
 const WORKTREE_REFUSALS = {
@@ -50,6 +64,46 @@ const WORKTREE_REFUSALS = {
   not_git: 'the directory is not in a git repository with a commit to start a worktree from',
   outside_workdirs: 'the repository is outside the allowed workdirs, so a worktree in it would be too',
 } as const;
+
+/** General preferences are shared by every browser connected to this daemon. */
+export type AutoArchiveDays = 1 | 3 | 7 | 15 | 30 | null;
+
+const AUTO_ARCHIVE_DAY_OPTIONS = [1, 3, 7, 15, 30] as const;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+export interface GeneralSettings {
+  /** The page to open when no thread or page was explicitly requested. */
+  startupPage: 'new-thread' | 'recent-thread';
+  /** Conversations older than this many days are hidden from the sidebar. Null leaves them alone. */
+  autoArchiveDays: AutoArchiveDays;
+}
+
+export interface DraftModelPreference {
+  /** Null means the agent should use its own default model. */
+  model: string | null;
+  /** Null means the agent should use its own/default thinking effort. */
+  effort: EffortLevel | null;
+  /** Null means the agent should use its own/default speed. */
+  speed: string | null;
+}
+
+export type DraftModelPreferences = Record<string, DraftModelPreference>;
+
+function storedAutoArchiveDays(value: unknown): AutoArchiveDays {
+  return AUTO_ARCHIVE_DAY_OPTIONS.includes(value as never) ? value as AutoArchiveDays : null;
+}
+
+function parseAutoArchiveDays(value: unknown): AutoArchiveDays {
+  if (value === null) return null;
+  if (AUTO_ARCHIVE_DAY_OPTIONS.includes(value as never)) return value as AutoArchiveDays;
+  throw new HttpError(400, 'invalid auto archive period');
+}
+
+const DRAFT_MODEL_PREFERENCES_KEY = 'draft.model.preferences';
+
+function hasDraftModelPreference(value: DraftModelPreference): boolean {
+  return Boolean(value.model || value.effort || value.speed);
+}
 
 /** What forking a thread can offer besides a copy in the same directory. */
 export interface ForkOptions {
@@ -84,6 +138,8 @@ export type ThreadView = Omit<ThreadRecord, 'worktree' | 'handover' | 'writing'>
   coordination?: { retired?: boolean; rootId: string; children: number; paused: boolean; doing?: string; team?: { name: string; status: import('./teams.js').TaskStatus; role: string; error?: string } };
   /** Working in the hub's scratch area: a thread that is in no project. */
   scratch: boolean;
+  /** The project directory no longer exists, e.g. a temporary checkout removed after a run. */
+  projectGone: boolean;
   /** `of` is how the directory was spelled when the worktree was made; `ofReal` has symlinks resolved, like `cwdReal`. */
   worktree: (ThreadWorktree & { ofReal: string }) | null;
   /** Shell command that continues this conversation in a terminal. Null until the agent session exists. */
@@ -97,21 +153,29 @@ export type ThreadView = Omit<ThreadRecord, 'worktree' | 'handover' | 'writing'>
   waiting: boolean;
   waitingReason: 'approval' | 'question' | 'plan' | null;
   /** Messages sent while a turn was running. They go out, in order, as turns finish. */
-  queued: Array<{ id: string; text: string; images: number; videos: number; targets?: string[]; error?: string }>;
+  queued: Array<{ id: string; text: string; images: number; videos: number; files?: number; targets?: string[]; error?: string; channel?: TurnChannel }>;
   /** The upstream model-provider queue reported by the native runtime, if this turn is waiting there. */
   modelQueue?: ModelQueueView | null;
   /** Turns the terminal added to this session since the hub last wrote to it. */
   terminalActivity: boolean;
   /** When the running turn started; null while nothing runs. */
   runningSince: string | null;
+  /** Why the thread stopped, while its status is `error`: the latest turn's failure. */
+  failure?: { code: string | null; message: string; at: string } | null;
 };
 
 interface QueuedTurn {
+  displayText?: string;
+  channel?: TurnChannel;
+  /** Later sends carrying a batch fold into this one instead of queueing behind it. */
+  coalesce?: TurnBatch;
   voiceSummary?: string;
   collaboration?: CoordinationSetup;
   error?: string;
   workMode?: WorkMode;
   mentions?: unknown[];
+  /** Typed by the person into this thread, rather than sent in by the hub. */
+  fromUser?: boolean;
   id: string;
   text: string;
   images: unknown[];
@@ -143,6 +207,8 @@ const MAX_SERVED_SVG_BYTES = 5 * 1024 * 1024;
 const SNIFF_BYTES = 4096;
 /** How long a plan-usage answer is reused. The probes spawn a CLI; a minute is fresh enough. */
 const QUOTA_TTL_MS = 60_000;
+/** A reading the agent gave while answering stands in for a probe this long, even on a refresh. */
+const OBSERVED_FRESH_MS = 3 * 60_000;
 
 /**
  * The content type a downloaded file is served as. Types a browser can play or show inline are
@@ -207,6 +273,7 @@ export interface AgentInfo {
   /** The account this instance runs as, when it is a linked second login (an email). */
   account?: string | null;
   available: boolean;
+  streamBridgeEnabled?: boolean;
   /** How it can be signed in from the hub, when its adapter can start the CLI's login. */
   login?: 'terminal' | 'wizard';
   capabilities: AgentAdapter['capabilities'];
@@ -216,6 +283,7 @@ export { HttpError };
 
 interface PendingApproval {
   threadId: string;
+  turnId: string;
   /** The option ids the agent offered. Anything else is refused instead of being passed on. */
   optionIds: string[];
   resolve(decision: ApprovalDecision): void;
@@ -235,6 +303,9 @@ function isDirectory(path: string): boolean {
  * Owns thread lifecycle: starts agent sessions, runs turns, persists every event,
  * fans events out to subscribers, and routes approval decisions back to agents.
  */
+/** The most context, in tokens, a handover still carries over by copying the conversation. */
+const RESUME_HANDOVER_MAX_CONTEXT = 50_000;
+
 export class ThreadManager {
   coordination?: CoordinationManager;
   borrowing?: import('./borrowing.js').BorrowingService;
@@ -257,6 +328,9 @@ export class ThreadManager {
   private readonly nativeTurns = new Map<string, Map<string, string>>();
   private readonly voiceThreads = new Set<string>();
   private readonly sessions = new Map<string, AgentSession>();
+  /** Threads whose model/effort/speed was changed mid-turn: the setting is stored, the session that
+   *  turn still runs in is stale. It is dropped when the turn ends, never interrupted mid-turn. */
+  private readonly refreshAfterTurn = new Set<string>();
   /** Turns in flight. `cancelRequested` covers cancels that arrive before the agent session exists. */
   private readonly running = new Map<string, { turnId: string; cancelRequested: boolean; since: string }>();
   readonly inputs = new UserInputs((thread, turn, type, data) => this.emitThreadEvent(thread, turn, type, data));
@@ -265,9 +339,17 @@ export class ThreadManager {
   private readonly changingModes = new Set<string>();
   /** Turns that asked the agent for a `[进度]` line, read back when they end. */
   private readonly reportTurns = new Set<string>();
+  /** Archived threads asking an agent one question (askOnce): they may run, and get nothing added. */
+  private readonly backgroundThreads = new Set<string>();
+  /** Questions whose input must not enter hub history or search indexes. */
+  private readonly unrecordedQuestions = new Set<string>();
+  /** Which protocol blocks each thread's agent has read, so a block is not attached to every message. */
+  private readonly injections: Injections;
   /** Whether an enabled extension holds `progress.report`. Wired by the daemon's entry point. */
   progressWanted: () => boolean = () => false;
   private readonly approvals = new Map<string, PendingApproval>();
+  /** Approval hooks are retired before terminal events or cancellation can reenter listeners. */
+  private readonly approvalTurns = new Map<string, string>();
   private readonly listeners = new Set<Listener>();
   /** Agent sessions being imported right now, so the same one is not imported twice in parallel. */
   private readonly importing = new Set<string>();
@@ -275,6 +357,13 @@ export class ThreadManager {
   private readonly diagnosticCache = new Map<string, { at: number; pending: boolean; value: Promise<unknown> }>();
   /** Plan-usage reads in flight or fresh, per agent: the probes spawn a CLI, so they are shared. */
   private readonly quotaCache = new Map<string, { at: number; value: Promise<PlanQuota> }>();
+  /** The last probe each agent answered, kept for between-turn decisions when a fresh one fails. */
+  private readonly lastGoodQuota = new Map<string, { at: number; quota: PlanQuota }>();
+  /** When the agent last told its usage while answering: a refresh within OBSERVED_FRESH_MS uses it. */
+  private readonly observedQuotaAt = new Map<string, number>();
+  /** The last reading sent to pages, so an unchanged one is not sent again. */
+  private readonly publishedQuota = new Map<string, string>();
+  private quotaWatch?: NodeJS.Timeout;
   /** Threads whose session is being synced right now, for the same reason. */
   private readonly syncing = new Set<string>();
   /** Messages waiting for the running turn of their thread to finish. Kept in memory only. */
@@ -285,9 +374,12 @@ export class ThreadManager {
   /** Where threads may work; directories can be added from the page while the hub runs. */
   readonly dirs: Workdirs;
   readonly autoHandover: AutoHandover;
+  readonly autoCompact: AutoCompact;
   readonly personal: PersonalService;
+  readonly lark: LarkChannel;
+  readonly briefs: PersonalBriefSchedule;
   private readonly quietTurns = new Set<string>();
-  private readonly settlingHandovers = new Set<Promise<void>>();
+  private readonly settlingHandovers = new Set<Promise<unknown>>();
 
   constructor(
     private readonly store: Store,
@@ -298,11 +390,37 @@ export class ThreadManager {
     private readonly agentMeta: () => Array<{ id: string; adapter?: string; account?: string | null; hidden?: boolean }> = () => [],
   ) {
     this.dirs = Array.isArray(workdirs) ? new Workdirs(workdirs) : workdirs;
+    this.injections = new Injections(store);
     this.autoHandover = new AutoHandover(store, this);
+    this.quotaResume = new QuotaResume(store, this, this.autoHandover);
+    this.autoHandover.onSaved = settings => this.quotaResume.onSettings(settings.resume);
+    this.autoCompact = new AutoCompact(store, this);
+    for (const [id, adapter] of adapters) adapter.onQuotaObserved = quota => this.observeQuota(id, quota);
+    this.startQuotaWatch();
+    this.quotaResume.start();
     this.personal = new PersonalService(store, this, adapters);
+    this.lark = new LarkChannel(store, this.personal);
+    this.briefs = new PersonalBriefSchedule(store, () => this.personal.review.status().quietHours, () => todoStages(this, this.listTodos()));
     this.dirs.personalDirectory = () => this.personal.directory();
     this.skills = new SkillsManager(this.adapters);
     this.mcp = new McpManager(this.adapters, store.mcpEntries);
+  }
+
+  /** Watches parked threads for their quota to reset, then continues them. Owned here so the HTTP layer can reach it. */
+  readonly quotaResume: QuotaResume;
+
+  /** Marks the timeline: the quota came back and the daemon resent the failed turn by itself. */
+  recordQuotaResume(id: string, resetsAt: string | null): void {
+    this.emitThreadEvent(id, null, 'handover.resume', { ...(resetsAt ? { resetsAt } : {}) });
+  }
+
+  /** The person's 「额度恢复后自动继续」 on an exhausted turn, or its cancel. */
+  async setResume(id: string, armed: unknown): Promise<AutoHandoverView & { resume: ResumeView | null }> {
+    this.getThread(id);
+    if (typeof armed !== 'boolean') throw new HttpError(400, 'resume must be boolean');
+    if (armed) await this.quotaResume.arm(id, 'user');
+    else this.quotaResume.drop(id);
+    return { ...this.autoHandover.view(id), resume: this.quotaResume.view(id) };
   }
 
   /** The skills every agent instance on this machine can reach. Read-mostly, by the skills page. */
@@ -343,9 +461,15 @@ export class ThreadManager {
         available: await a.available(),
         ...(a.startLogin ? { login: 'wizard' as const } : a.loginCommand ? { login: 'terminal' as const } : {}),
         capabilities: a.capabilities,
+        ...(a.capabilities.streamBridge ? { streamBridgeEnabled: a.streamBridgeEnabled ?? false } : {}),
       });
     }
     return out;
+  }
+
+  /** Invalidate only metadata; running turns keep their existing adapter until they finish. */
+  agentSettingsChanged(agent: string): void {
+    this.diagnosticCache.delete(agent);
   }
 
   /** Commands for an agent. `cwd` selects project-level commands and must be an allowed workdir. */
@@ -367,13 +491,78 @@ export class ThreadManager {
     if (!adapter.capabilities.quota || !adapter.fetchQuota) throw new HttpError(400, `${agent} has no plan usage to read`);
     const hit = this.quotaCache.get(agent);
     if (!refresh && hit && Date.now() - hit.at < QUOTA_TTL_MS) return hit.value;
+    // Even a refresh does not probe right after the agent said it: the usage endpoint can turn a
+    // probe away, and it would not know more.
+    const observed = this.observedQuotaAt.get(agent);
+    if (refresh && hit && observed !== undefined && Date.now() - observed < OBSERVED_FRESH_MS) return hit.value;
     const value = adapter.fetchQuota().catch((err) => {
       // A failed probe is not worth caching; the next caller can try again right away.
       if (this.quotaCache.get(agent)?.value === value) this.quotaCache.delete(agent);
       throw err;
     });
     this.quotaCache.set(agent, { at: Date.now(), value });
+    void value.then(q => { this.lastGoodQuota.set(agent, { at: Date.now(), quota: q }); this.publishQuota(agent, q); }).catch(() => undefined);
     return value;
+  }
+
+  /** What the agent itself said while answering beats any probe: it feeds the same cache the
+   *  probes fill, so decisions and the dashboard read one truth. */
+  private observeQuota(agent: string, observed: PlanQuota): void {
+    // The agent names its windows, not its plan; the plan a probe read still holds.
+    const plan = observed.plan ?? this.lastGoodQuota.get(agent)?.quota.plan;
+    const quota = plan ? { ...observed, plan } : observed;
+    this.lastGoodQuota.set(agent, { at: Date.now(), quota });
+    this.quotaCache.set(agent, { at: Date.now(), value: Promise.resolve(quota) });
+    this.observedQuotaAt.set(agent, Date.now());
+    this.publishQuota(agent, quota);
+  }
+
+  /** Sends a new reading to open pages, so quota shown anywhere moves as the agent answers. */
+  private publishQuota(agent: string, quota: PlanQuota): void {
+    const key = JSON.stringify([quota.windows, quota.plan ?? null, quota.note ?? null]);
+    if (this.publishedQuota.get(agent) === key) return;
+    this.publishedQuota.set(agent, key);
+    const event: StoredEvent = { threadId: '', seq: 0, turnId: null, type: 'quota.updated', ts: new Date().toISOString(), data: { agent, quota } };
+    for (const listener of this.listeners) listener(event);
+  }
+
+  /** The freshest reading a between-turn decision may trust: a recent one without a probe, a fresh
+   *  probe when the reading is old, and — when even the probe fails — a reading up to `graceMs`
+   *  old, for a near-limit check errs better on the side of acting than on waiting. */
+  async decisionQuota(agent: string, maxAgeMs = 5 * 60_000, graceMs = 15 * 60_000): Promise<PlanQuota | null> {
+    const last = this.lastGoodQuota.get(agent);
+    if (last && Date.now() - last.at <= maxAgeMs) return last.quota;
+    try {
+      return await this.agentQuota(agent, true);
+    } catch {
+      const older = this.lastGoodQuota.get(agent);
+      return older && Date.now() - older.at <= graceMs ? older.quota : null;
+    }
+  }
+
+  /** Agents worth watching: those of running threads and threads active in the last quarter hour. */
+  private quotaWatchAgents(): string[] {
+    const agents = new Set<string>();
+    for (const id of this.running.keys()) {
+      const thread = this.store.getThread(id);
+      if (thread) agents.add(thread.agent);
+    }
+    for (const row of this.store.activeThreadsSince(new Date(Date.now() - 15 * 60_000).toISOString())) {
+      const thread = this.store.getThread(row.threadId);
+      if (thread && !thread.archivedAt) agents.add(thread.agent);
+    }
+    return [...agents].filter(a => this.adapters.get(a)?.capabilities.quota).slice(0, 8);
+  }
+
+  /** Refreshes the watched agents' quota in the background, so between-turn decisions and the
+   *  dashboard see usage move without a probe after every turn. */
+  async refreshQuotas(): Promise<void> {
+    for (const agent of this.quotaWatchAgents()) await this.agentQuota(agent, true).catch(() => undefined);
+  }
+  private startQuotaWatch(): void {
+    const timer = setInterval(() => void this.refreshQuotas(), 3 * 60_000);
+    timer.unref?.();
+    this.quotaWatch = timer;
   }
 
   /**
@@ -390,6 +579,7 @@ export class ThreadManager {
     const allowed = new Map<string, boolean>();
     const workdirs = this.workdirs;
     return sessions
+      .filter((s) => !isProbeSession(s.title))
       // A session whose directory has since been removed cannot be continued, so it is not offered.
       .filter((s) => {
         if (!allowed.has(s.cwd)) allowed.set(s.cwd, !!s.cwd && isWithinWorkdirs(s.cwd, workdirs) && isDirectory(s.cwd));
@@ -474,7 +664,8 @@ export class ThreadManager {
     const adapter = this.adapters.get(thread.agent);
     if (!adapter?.capabilities.fork || !adapter.forkSession) throw new HttpError(400, `${thread.agent} cannot fork a conversation`);
     if (!thread.agentSessionId) throw new HttpError(400, 'there is nothing to fork yet; send a message first');
-    if (this.running.has(id)) throw new HttpError(409, 'wait for the running turn to finish before forking');
+    const running = this.running.has(id);
+    if (running && !opts.turnId) throw new HttpError(409, 'wait for the running turn to finish before forking');
 
     // Where the hub's copy stops, and which of its turns that is. Null: the whole thread.
     let cut: { upToSeq: number; hubIndex: number; hubKeys: string[] } | null = null;
@@ -484,9 +675,12 @@ export class ThreadManager {
       if (hubIndex < 0) throw new HttpError(404, 'no such turn in this thread');
       // A turn the user stopped is not a place to go on from: the agent may not have kept it at all.
       const end = this.store.listEventsOfType(id, 'turn.done').find((ev) => ev.turnId === opts.turnId);
+      if (running && !end) throw new HttpError(409, 'wait for this turn to finish before forking from it');
       if (end?.data.stopReason === 'cancelled') throw new HttpError(409, 'this turn was stopped, so a copy cannot end there');
       if (hubIndex < starts.length - 1) {
-        cut = { upToSeq: starts[hubIndex + 1].seq - 1, hubIndex, hubKeys: starts.map((ev) => turnKey(String(ev.data.text ?? ''))) };
+        // Match only through the requested boundary. Later turns may be running or divergent, and
+        // they are not part of the copy being made.
+        cut = { upToSeq: starts[hubIndex + 1].seq - 1, hubIndex, hubKeys: starts.slice(0, hubIndex + 1).map((ev) => turnKey(String(ev.data.text ?? ''))) };
       }
     }
 
@@ -590,14 +784,27 @@ export class ThreadManager {
     if (!adapter.capabilities.forkAt || !adapter.loadHistory || !thread.agentSessionId) {
       throw new HttpError(400, `${thread.agent} can only fork a whole conversation`);
     }
-    const agentTurns = await adapter.loadHistory(thread.agentSessionId, thread.cwd);
-    const matched = matchTurns(agentTurns.map((t) => turnKey(t.text)), hubKeys, ThreadManager.SYNC_SKIP_TOLERANCE);
-    const agentIndex = matched?.hubToAgent[hubIndex] ?? -1;
-    if (agentIndex < 0) throw new HttpError(409, `this turn is not in ${thread.agent}'s own history, so a copy cannot stop there`);
-    if (agentIndex === agentTurns.length - 1) return undefined;
-    const ref = agentTurns[agentIndex].forkRef;
-    if (!ref) throw new HttpError(409, `${thread.agent} cannot stop a copy at this turn`);
-    return ref;
+    const active = this.running.has(thread.id);
+    const retryDelays = active ? [0, 50, 150] : [0];
+    for (const delayMs of retryDelays) {
+      // A second app-server can briefly see the active writer's history one turn behind. Only
+      // retry that prefix case; a real text disagreement still fails immediately.
+      if (delayMs) await new Promise((resolve) => setTimeout(resolve, delayMs));
+      const agentTurns = await adapter.loadHistory(thread.agentSessionId, thread.cwd);
+      const matched = matchTurns(agentTurns.map((t) => turnKey(t.text)), hubKeys, ThreadManager.SYNC_SKIP_TOLERANCE);
+      const agentIndex = matched?.hubToAgent[hubIndex] ?? -1;
+      if (agentIndex < 0) {
+        if (matched && delayMs !== retryDelays.at(-1)) continue;
+        break;
+      }
+      // During a live turn the read snapshot may end at this older boundary even though the writer
+      // has already started another turn. Pass the explicit ref instead of cloning its moving tip.
+      if (!active && agentIndex === agentTurns.length - 1) return undefined;
+      const ref = agentTurns[agentIndex].forkRef;
+      if (!ref) throw new HttpError(409, `${thread.agent} cannot stop a copy at this turn`);
+      return ref;
+    }
+    throw new HttpError(409, `this turn is not in ${thread.agent}'s own history, so a copy cannot stop there`);
   }
 
   /** Where a stored image is on disk, for the HTTP layer to stream. */
@@ -614,11 +821,98 @@ export class ThreadManager {
     return this.attachments.saveVideo(threadId, source, name);
   }
 
+  /** Counts a waiting message's uploads by kind; `videos` held only videos before other files were allowed. */
+  private queuedUploads(threadId: string, ids: string[]): { videos: number; files?: number } {
+    const files = ids.filter(id => { const found = this.attachments.find(threadId, id); return found && !isVideoType(found.mimeType); }).length;
+    return { videos: ids.length - files, ...(files ? { files } : {}) };
+  }
+
+  async saveFile(threadId: string, source: AsyncIterable<Uint8Array>, name: string): Promise<StoredVideo> {
+    const thread = this.getThread(threadId);
+    if (thread.archivedAt) throw new HttpError(409, 'this thread is archived');
+    return this.attachments.saveFile(threadId, source, name);
+  }
+
   usageReport(hours: number, agent: string) { return this.store.telemetry.read(hours, agent); }
   usageCosts(hours: number, agent: string) { return this.store.telemetry.costReport(hours, agent); }
   usageDaily(agent: string, timeZone?: string) { return this.store.telemetry.daily(agent, timeZone); }
 
   activityReport(days: number, agent: string) { return this.store.activity.read(days, agent); }
+
+  /** Keep log summaries until they change; disk checks expire after 30 seconds and share in-flight reads. */
+  private readonly outputsCache = new Map<string, { seq: number; checkedAt: number | null; value: Promise<ThreadOutputs> }>();
+
+  /** What the thread has produced over all its turns: changed files, and the pictures and files its answers name. */
+  async threadOutputs(threadId: string): Promise<ThreadOutputs> {
+    const thread = this.getThread(threadId);
+    const latest = this.store.history.latest(threadId);
+    const cached = this.outputsCache.get(threadId);
+    if (cached && cached.seq === latest && (cached.checkedAt === null || Date.now() - cached.checkedAt < 30_000)) return cached.value;
+    const read = async () => {
+      if (cached && cached.seq === latest) return checkMissingFiles(await cached.value);
+      const { diffs, answers, seq } = await this.store.outputSources(threadId);
+      let cwdReal = thread.cwd;
+      try { cwdReal = realpathSync(thread.cwd); } catch { /* The directory may have been removed. */ }
+      const changes = changedFiles(diffs, thread.cwd, cwdReal);
+      return checkMissingFiles({
+        ...mentionedFiles(answers, thread.cwd, changes.files, cwdReal), seq,
+        changes: { ...changes, files: changes.files.slice(0, MAX_OUTPUT_ITEMS).map(({ seq: _seq, ...file }) => file) },
+      });
+    };
+    const entry: NonNullable<typeof cached> = {
+      seq: latest, checkedAt: null,
+      value: read().then(outputs => {
+        entry.seq = outputs.seq;
+        entry.checkedAt = Date.now();
+        return outputs;
+      }).catch(error => {
+        if (this.outputsCache.get(threadId) === entry) this.outputsCache.delete(threadId);
+        throw error;
+      }),
+    };
+    this.outputsCache.delete(threadId);
+    this.outputsCache.set(threadId, entry);
+    if (this.outputsCache.size > 50) this.outputsCache.delete(this.outputsCache.keys().next().value!);
+    return entry.value;
+  }
+
+  /**
+   * The thread's session statistics: stored per-turn timing, tokens summed from the native usage
+   * samples, and the running turn's progress computed fresh. Turns without a stored row — old
+   * threads, imports, a turn that ended while the daemon was down — are computed once here and
+   * then read from storage; the running turn is never stored, it is still growing.
+   */
+  threadStats(threadId: string): ThreadStats {
+    this.getThread(threadId);
+    const turns = this.store.listTurns(threadId);
+    const runningTurnId = this.store.openTurn(threadId);
+    const rows = this.store.telemetry.turnStatsRows(threadId);
+    for (const turn of turns) {
+      if (rows.has(turn.turnId)) continue;
+      const row = this.computeTurnStats(threadId, turn.turnId);
+      if (!row) continue;
+      rows.set(turn.turnId, row);
+      // The running turn is computed fresh on every read and never stored; it is still growing.
+      if (turn.turnId !== runningTurnId) this.store.telemetry.recordTurnStats(threadId, turn.turnId, row);
+    }
+    return aggregateThreadStats({
+      threadId,
+      checkedAt: new Date().toISOString(),
+      running: runningTurnId !== null,
+      runningTurnId,
+      turns,
+      rows,
+      tokens: this.store.telemetry.tokenSumsByTurn(threadId),
+      compactions: this.store.compactionSummary(threadId),
+    });
+  }
+
+  private computeTurnStats(threadId: string, turnId: string): TurnStatsRow | null {
+    const events = this.store.turnEvents(threadId, turnId);
+    if (!events.length) return null;
+    const trace = buildTrace(events);
+    return statsOfTrace(trace, trace.endedAt ?? events[events.length - 1].ts);
+  }
 
   /** One turn of a thread as a trace, the last turn when none is named. */
   turnTrace(threadId: string, turnId?: string): TurnTrace {
@@ -639,6 +933,7 @@ export class ThreadManager {
       startedAt: turn.ts,
       endedAt: trace.endedAt,
       steps: trace.steps,
+      segments: trace.segments,
       totals: trace.totals,
       turns: turns.map((t) => ({ turnId: t.turnId, ts: t.ts })),
     };
@@ -706,6 +1001,10 @@ export class ThreadManager {
       try {
         if (!await adapter.available()) return { ...base, checkedAt: new Date().toISOString(), state: 'missing', message: '没有找到 CLI，请检查该实例的命令和 PATH。', version: null, protocol: null, models: [] };
         const runtime = await adapter.diagnose?.().catch(() => null);
+        if (adapter.capabilities.modelCatalog === false) return {
+          ...base, ...runtime, checkedAt: new Date().toISOString(), state: 'cli_only', models: [],
+          message: 'CLI 可启动；原生接口不提供模型目录，沿用 CLI 默认设置。登录有效性以实际请求结果为准。',
+        };
         try {
           const models = await this.adapterModels(adapter, refresh);
           return { ...base, ...runtime, checkedAt: new Date().toISOString(), state: models.length ? 'ready' : 'empty',
@@ -729,10 +1028,10 @@ export class ThreadManager {
     return adapter.models(refresh);
   }
 
-  async listModels(agent: string): Promise<ModelOption[]> {
+  async listModels(agent: string, refresh = false): Promise<ModelOption[]> {
     const adapter = this.adapters.get(agent);
     if (!adapter) throw new HttpError(404, `unknown agent: ${agent}`);
-    return this.adapterModels(adapter);
+    return this.adapterModels(adapter, refresh);
   }
 
   /** Turns of any thread, archived ones too, in which the words were said. */
@@ -740,8 +1039,184 @@ export class ThreadManager {
     return typeof query === 'string' ? this.store.searchText(query.slice(0, 200)) : [];
   }
 
+  /**
+   * One question to an agent, answered in a thread of its own that is archived from the start: it
+   * never shows in the list, and the asking thread's agent and session are not touched. The answer
+   * comes back as plain text. A turn that asks for an approval or a reply is stopped, since nobody
+   * is there to give one; so is one that takes longer than `timeoutMs`. An AbortSignal stops this
+   * exact question, including startup. `recordPrompt: false` omits its input from hub history;
+   * native agent session retention is still owned by the adapter.
+   */
+  async askOnce(agent: string, text: string, opts: { model?: string | null; title?: string; timeoutMs?: number; signal?: AbortSignal; recordPrompt?: boolean } = {}): Promise<string> {
+    opts.signal?.throwIfAborted();
+    const adapter = this.adapters.get(agent);
+    if (!adapter) throw new HttpError(400, `unknown agent: ${agent}`);
+    const modes = adapter.capabilities.permissionModes;
+    const thread = await this.createThread({
+      agent, cwd: '', scratch: true, title: opts.title ?? 'Calli', model: opts.model ?? null,
+      permissionMode: modes.includes('ask') ? 'ask' : modes[0],
+    });
+    await this.updateThread(thread.id, { archived: true });
+    this.backgroundThreads.add(thread.id);
+    if (opts.recordPrompt === false) this.unrecordedQuestions.add(thread.id);
+    const cancel = () => { void this.cancelTurn(thread.id).catch(() => undefined); };
+    opts.signal?.addEventListener('abort', cancel, { once: true });
+    let turnId: string | null = null;
+    let stop: (() => void) | null = null;
+    let timedOut = false;
+    try {
+      opts.signal?.throwIfAborted();
+      const ended = new Promise<StoredEvent>((resolve, reject) => {
+        // On timeout the turn is cancelled and its recorded end — `cancelled`, not a session error —
+        // is awaited before the process is dropped in the finally below. The safety timer answers
+        // if the agent never records anything at all.
+        const timeoutMs = opts.timeoutMs ?? 120_000;
+        const timer = setTimeout(() => {
+          timedOut = true;
+          void this.cancelTurn(thread.id).catch(() => undefined);
+        }, timeoutMs);
+        timer.unref?.();
+        const safety = setTimeout(() => reject(new HttpError(504, 'the agent took too long to answer')), timeoutMs + 10_000);
+        safety.unref?.();
+        const unsubscribe = this.subscribe(ev => {
+          if (ev.threadId !== thread.id) return;
+          if (ev.type === 'approval.request' || ev.type === 'input.request') void this.cancelTurn(thread.id).catch(() => undefined);
+          if (turnId && ev.turnId === turnId && turnOutcome(ev)) resolve(ev);
+        });
+        stop = () => { clearTimeout(timer); clearTimeout(safety); unsubscribe(); };
+      });
+      const started = await this.startTurn(thread.id, { text });
+      if (!('turnId' in started) || !started.turnId) throw new HttpError(500, 'the question was not sent');
+      turnId = started.turnId;
+      if (opts.signal?.aborted) cancel();
+      // The turn may have ended before its id was known here.
+      const done = this.store.listTurnEvents(thread.id, turnId).find(e => turnOutcome(e));
+      const end = done ?? await ended;
+      const outcome = turnOutcome(end)!;
+      opts.signal?.throwIfAborted();
+      if (timedOut) throw new HttpError(504, 'the agent took too long to answer');
+      if (outcome.outcome !== 'ok') throw new HttpError(502, outcome.message ?? `the agent's turn ended: ${outcome.outcome}`);
+      return turnAnswer(this.store.listEvents(thread.id, 0, -1), turnId).trim();
+    } finally {
+      (stop as (() => void) | null)?.();
+      opts.signal?.removeEventListener('abort', cancel);
+      this.unrecordedQuestions.delete(thread.id);
+      this.backgroundThreads.delete(thread.id);
+      // The answer is read from the store: the agent process and its scratch folder can go now, so
+      // one question does not leave a resident process behind.
+      await this.dropSession(thread.id);
+      if (this.dirs.scratchRoot && thread.cwd.startsWith(this.dirs.scratchRoot + sep)) rmSync(thread.cwd, { recursive: true, force: true });
+    }
+  }
+
+  /** A title an extension gave the thread. Marked as such, so a later automatic pass may revise it. */
+  autoRename(id: string, title: string): ThreadView {
+    const clean = title.trim();
+    if (!clean) throw new HttpError(400, 'empty title');
+    this.getThread(id);
+    this.store.updateThread(id, { title: clean });
+    this.store.setTitleBy(id, 'auto');
+    this.emitThreadEvent(id, null, 'thread.updated', {});
+    return this.threadView(id);
+  }
+
+
+  /** Who set the thread's title; see Store.titleBy. */
+  titleBy(id: string) { return this.store.titleBy(id); }
+
   listThreads(opts: { archived?: boolean } = {}): ThreadView[] {
     return this.store.listThreads(opts).map((t) => this.view(t));
+  }
+
+  generalSettings(): GeneralSettings {
+    const value = this.store.hubSetting<Partial<GeneralSettings> | null>('general.settings', null);
+    return {
+      startupPage: value?.startupPage === 'recent-thread' ? 'recent-thread' : 'new-thread',
+      autoArchiveDays: storedAutoArchiveDays(value?.autoArchiveDays),
+    };
+  }
+
+  saveGeneralSettings(input: unknown): GeneralSettings {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new HttpError(400, 'invalid general settings');
+    const current = this.generalSettings();
+    const raw = input as Partial<GeneralSettings>;
+    const startupPage = raw.startupPage;
+    if (startupPage !== 'new-thread' && startupPage !== 'recent-thread') throw new HttpError(400, 'invalid startup page');
+    const autoArchiveDays = Object.hasOwn(raw, 'autoArchiveDays') ? parseAutoArchiveDays(raw.autoArchiveDays) : current.autoArchiveDays;
+    const value: GeneralSettings = { startupPage, autoArchiveDays };
+    this.store.saveHubSetting('general.settings', value);
+    return value;
+  }
+
+  async draftModelPreferences(): Promise<DraftModelPreferences> {
+    const stored = this.store.hubSetting<unknown>(DRAFT_MODEL_PREFERENCES_KEY, {});
+    if (!stored || typeof stored !== 'object' || Array.isArray(stored)) return {};
+    const out: DraftModelPreferences = {};
+    for (const [agent, value] of Object.entries(stored)) {
+      const preference = await this.sanitizeDraftModelPreference(agent, value);
+      if (preference) out[agent] = preference;
+    }
+    if (JSON.stringify(out) !== JSON.stringify(stored)) this.store.saveHubSetting(DRAFT_MODEL_PREFERENCES_KEY, out);
+    return out;
+  }
+
+  async saveDraftModelPreferences(input: unknown): Promise<DraftModelPreferences> {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new HttpError(400, 'invalid draft model preferences');
+    const out: DraftModelPreferences = {};
+    for (const [agent, value] of Object.entries(input)) {
+      const preference = await this.sanitizeDraftModelPreference(agent, value);
+      if (preference) out[agent] = preference;
+    }
+    this.store.saveHubSetting(DRAFT_MODEL_PREFERENCES_KEY, out);
+    return out;
+  }
+
+  private async sanitizeDraftModelPreference(agent: string, value: unknown): Promise<DraftModelPreference | null> {
+    if (!this.adapters.has(agent)) return null;
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const source = value as { model?: unknown; effort?: unknown; speed?: unknown };
+    const model = typeof source.model === 'string' ? await this.validateModelOrNull(agent, source.model) : null;
+    const effort = typeof source.effort === 'string' ? await this.validateEffortOrNull(agent, model, source.effort) : null;
+    const speed = typeof source.speed === 'string' ? await this.validateSpeedOrNull(agent, model, source.speed) : null;
+    const preference = { model, effort, speed };
+    return hasDraftModelPreference(preference) ? preference : null;
+  }
+
+  private async validateModelOrNull(agent: string, model: string): Promise<string | null> {
+    try { return await this.validateModel(agent, model); }
+    catch { return null; }
+  }
+
+  private async validateEffortOrNull(agent: string, model: string | null, effort: string): Promise<EffortLevel | null> {
+    try { return await this.validateEffort(agent, model, effort); }
+    catch { return null; }
+  }
+
+  private async validateSpeedOrNull(agent: string, model: string | null, speed: string): Promise<string | null> {
+    try { return await this.validateSpeed(agent, model, speed); }
+    catch { return null; }
+  }
+
+  /** Periodic housekeeping only archives conversations that do not currently need attention. */
+  async autoArchiveOldThreads(now = new Date()): Promise<number> {
+    const days = this.generalSettings().autoArchiveDays;
+    if (days === null) return 0;
+    const cutoff = now.getTime() - days * DAY_MS;
+    let archived = 0;
+    for (const thread of this.store.listThreads()) {
+      const updatedAt = Date.parse(thread.updatedAt);
+      if (!Number.isFinite(updatedAt) || updatedAt >= cutoff) continue;
+      if (thread.pinned || thread.unread || thread.status === 'running') continue;
+      if (this.view(thread).waiting) continue;
+      try {
+        await this.updateThread(thread.id, { archived: true });
+        archived++;
+      } catch (error) {
+        if (error instanceof HttpError && error.status === 409) continue;
+        throw error;
+      }
+    }
+    return archived;
   }
 
   threadView(id: string): ThreadView {
@@ -755,28 +1230,40 @@ export class ThreadManager {
         ? `cd ${shellQuote(thread.cwd)} && ${adapter.resumeCommand(thread.agentSessionId)}`
         : null;
     let cwdReal = thread.cwd;
+    let cwdGone = false;
     try {
       cwdReal = realpathSync(thread.cwd);
     } catch {
       // The directory is gone; the stored spelling is the best there is.
+      cwdGone = true;
     }
     let waitingReason: ThreadView['waitingReason'] = this.inputs.waitingReason(thread.id);
     for (const p of this.approvals.values()) if (p.threadId === thread.id) { waitingReason = 'approval'; break; }
     const waiting = waitingReason !== null;
-    const queued = (this.queues.get(thread.id) ?? []).map((q) => ({ id: q.id, text: q.voiceSummary ? '[语音结束总结]' : q.text, images: q.images.length, videos: q.videos.length,
-      ...(q.mentions?.length ? { targets: q.mentions.map(m => {
-        const value = m as { label?: unknown; id?: unknown };
+    const queued = (this.queues.get(thread.id) ?? []).map((q) => {
+      // Only a mention with words of its own is named in the message the person will see; one left
+      // blank is the lead's to assign, and the queue's chip follows that message, not the request.
+      const targets = (q.mentions ?? []).flatMap((m) => {
+        const value = m as { label?: unknown; id?: unknown; task?: unknown };
+        if (typeof value.task !== 'string' || !value.task.trim()) return [];
         return typeof value.label === 'string' ? value.label : String(value.id ?? '');
-      }) } : {}), ...(q.error ? { error: q.error } : {}) }));
+      });
+      return { id: q.id, text: q.voiceSummary ? '[语音结束总结]' : q.displayText ?? q.text, images: q.images.length, ...this.queuedUploads(thread.id, q.videos),
+        ...(q.channel ? { channel: q.channel } : {}),
+        ...(targets.length ? { targets } : {}), ...(q.error ? { error: q.error } : {}) };
+    });
     // The terminal wrote to this session after the hub last did: the UI asks before sending more.
     const terminalActivity = thread.externalAt !== null && (thread.hubTurnAt === null || thread.externalAt > thread.hubTurnAt);
     let worktree: ThreadView['worktree'] = null;
+    let projectGone = cwdGone;
     if (thread.worktree) {
       let ofReal = thread.worktree.of;
+      projectGone = false;
       try {
         ofReal = realpathSync(thread.worktree.of);
       } catch {
         // As above.
+        projectGone = true;
       }
       worktree = { ...thread.worktree, ofReal };
     }
@@ -790,39 +1277,99 @@ export class ThreadManager {
       ...(modelQueueState.message !== undefined ? { message: modelQueueState.message } : {}),
       updatedAt: modelQueueState.updatedAt,
     } : null;
-    return { ...thread, writing: thread.writing ? { ...thread.writing, habits: habitsPath() } : null, handover: thread.handover ? { ...thread.handover, mode: this.store.handoverMode(thread)!, automatic: thread.handover.mode === 'continue' } : null, autoHandover: this.autoHandover.view(thread.id), worktree, resumeCommand, cwdReal, waiting, waitingReason, queued, modelQueue, terminalActivity, scratch, runningSince, coordination: this.coordination?.metadata(thread.id) };
+    const failed = thread.status === 'error' ? this.store.lastTurnFailure(thread.id) : null;
+    const failure = failed ? { code: failed.code, message: failed.message.slice(0, 500), at: failed.at } : null;
+    return { ...thread, failure, writing: thread.writing ? { ...thread.writing, habits: habitsPath() } : null, handover: thread.handover ? { ...thread.handover, mode: this.store.handoverMode(thread)!, automatic: thread.handover.mode === 'continue' } : null, autoHandover: { ...this.autoHandover.view(thread.id), resume: this.quotaResume.view(thread.id) }, worktree, resumeCommand, cwdReal, waiting, waitingReason, queued, modelQueue, terminalActivity, scratch, projectGone, runningSince, coordination: this.coordination?.metadata(thread.id) };
   }
 
   /**
-   * Where a path the page asked about really is, if the thread may show it: inside the thread's
-   * directory, or the agent's own folder for this session. Symlinks are resolved first, so a link
-   * inside cannot point the way out. Anything else is "not found", whether it exists or not.
+   * The folders the file browser may stand on, most specific first: the thread's own directory,
+   * the agent's folders for this session, this machine's project directories, and the home
+   * directory. Read only, like every file the hub shows. Gone folders are left out.
+   */
+  private browseRoots(thread: ThreadRecord): Array<{ path: string; kind: 'thread' | 'session' | 'project' | 'home' }> {
+    const adapter = this.adapters.get(thread.agent);
+    const named: Array<[string, 'thread' | 'session' | 'project' | 'home']> = [
+      [thread.cwd, 'thread'],
+      ...(thread.agentSessionId
+        ? (adapter?.artifactDirs?.(thread.agentSessionId) ?? []).map((path): [string, 'session'] => [path, 'session'])
+        : []),
+      ...this.dirs.roots().map((path): [string, 'project'] => [path, 'project']),
+      [homedir(), 'home'],
+    ];
+    const roots: Array<{ path: string; kind: 'thread' | 'session' | 'project' | 'home' }> = [];
+    const seen = new Set<string>();
+    for (const [path, kind] of named) {
+      let real: string;
+      try {
+        real = realpathSync(path);
+      } catch {
+        continue;
+      }
+      if (seen.has(real)) continue;
+      seen.add(real);
+      roots.push({ path: real, kind });
+    }
+    return roots;
+  }
+
+  /**
+   * The folders of the task itself, without the file browser's wider choice: the thread's own
+   * directory and the agent's folders for this session. A borrowed tool's verified artifacts must
+   * come from here, not from anywhere the browser may read.
+   */
+  private taskRoots(thread: ThreadRecord): Array<{ path: string; kind: 'thread' | 'session' | 'project' | 'home' }> {
+    const adapter = this.adapters.get(thread.agent);
+    const named: Array<[string, 'thread' | 'session']> = [
+      [thread.cwd, 'thread'],
+      ...(thread.agentSessionId
+        ? (adapter?.artifactDirs?.(thread.agentSessionId) ?? []).map((path): [string, 'session'] => [path, 'session'])
+        : []),
+    ];
+    const roots: Array<{ path: string; kind: 'thread' | 'session' | 'project' | 'home' }> = [];
+    const seen = new Set<string>();
+    for (const [path, kind] of named) {
+      let real: string;
+      try {
+        real = realpathSync(path);
+      } catch {
+        continue;
+      }
+      if (seen.has(real)) continue;
+      seen.add(real);
+      roots.push({ path: real, kind });
+    }
+    return roots;
+  }
+
+  /**
+   * Where a path the page asked about really is, if the thread may show it: inside one of the
+   * folders the file browser may stand on (see browseRoots), or with `task` scope, only the
+   * thread's own directory and the agent's session folders. Symlinks are resolved first, so a
+   * link inside cannot point the way out. Anything else is "not found", whether it exists or not.
    * `root` is the real path of the folder it was found in, which the file browser counts from.
    */
-  resolveInThread(threadId: string, rawPath: unknown, notFound: HttpError): { real: string; root: string } {
+  resolveInThread(threadId: string, rawPath: unknown, notFound: HttpError, scope: 'browse' | 'task' = 'browse'): { real: string; root: string } {
     const thread = this.getThread(threadId);
     if (rawPath !== undefined && rawPath !== null && typeof rawPath !== 'string') throw new HttpError(400, 'path must be a string');
     if (typeof rawPath === 'string' && rawPath.length > 4096) throw new HttpError(400, 'path is too long');
-    const given = !rawPath ? thread.cwd : rawPath.startsWith('file://') ? rawPath.slice('file://'.length) : rawPath;
+    const given = !rawPath ? thread.cwd : expandHome(stripFileUrl(rawPath));
 
-    const adapter = this.adapters.get(thread.agent);
-    const roots = [thread.cwd, ...(thread.agentSessionId ? (adapter?.artifactDirs?.(thread.agentSessionId) ?? []) : [])];
     let real: string;
     try {
       real = realpathSync(isAbsolute(given) ? given : resolve(thread.cwd, given));
     } catch {
       throw notFound;
     }
-    for (const root of roots) {
-      let base: string;
-      try {
-        base = realpathSync(root);
-      } catch {
-        continue;
-      }
-      if (real === base || real.startsWith(base.endsWith(sep) ? base : base + sep)) return { real, root: base };
+    for (const root of scope === 'browse' ? this.browseRoots(thread) : this.taskRoots(thread)) {
+      if (real === root.path || real.startsWith(root.path.endsWith(sep) ? root.path : root.path + sep)) return { real, root: root.path };
     }
     throw notFound;
+  }
+
+  /** The folders the file browser can stand on, for the page's root switcher. */
+  threadRoots(threadId: string): { roots: Array<{ path: string; kind: 'thread' | 'session' | 'project' | 'home' }> } {
+    return { roots: this.browseRoots(this.getThread(threadId)) };
   }
 
   /**
@@ -872,10 +1419,10 @@ export class ThreadManager {
     return { root, path: real, ...(await listDir(real)) };
   }
 
-  /** Files under the thread's directory whose path matches a search, relative to it. */
-  async findThreadFiles(threadId: string, query: unknown): Promise<{ root: string; paths: string[]; truncated: boolean }> {
+  /** Files under the thread's directory (or another browse root, when `rawPath` names one) whose path matches a search, relative to it. */
+  async findThreadFiles(threadId: string, query: unknown, rawPath?: unknown): Promise<{ root: string; paths: string[]; truncated: boolean }> {
     if (typeof query !== 'string' || query.length > 200) throw new HttpError(400, 'q must be a short string');
-    const { real } = this.resolveInThread(threadId, null, new HttpError(404, 'the thread directory is gone'));
+    const { real } = this.resolveInThread(threadId, rawPath ?? null, new HttpError(404, 'the thread directory is gone'));
     return { root: real, ...(await findFiles(real, query)) };
   }
 
@@ -965,11 +1512,7 @@ export class ThreadManager {
     } catch (error) {
       if (error !== notFound) throw error;
     }
-    let given = rawPath;
-    if (/^file:\/\//i.test(given)) {
-      given = given.slice(7);
-      try { given = decodeURIComponent(given); } catch { /* A literal percent sign. */ }
-    }
+    let given = expandHome(stripFileUrl(rawPath));
     const path = resolve(this.getThread(threadId).cwd, given);
     const real = referencedFile(path);
     if (!real) throw notFound;
@@ -1012,12 +1555,12 @@ export class ThreadManager {
     return { turnId };
   }
 
-  notice(id: string, text: unknown, confirmation = false): StoredEvent {
+  notice(id: string, text: unknown, confirmation = false, proactive = false): StoredEvent {
     this.getThread(id);
     if (typeof text !== 'string' || !text.trim() || [...text].length > 500) throw new HttpError(400, 'notice text must contain 1–500 characters');
     this.personal.review.recordNotice(id, this.running.get(id)?.turnId ?? null);
     this.store.updateThread(id, { unread: true });
-    const event = this.store.appendEvent(id, this.running.get(id)?.turnId ?? null, 'agent.notice', { text, ...(confirmation ? { confirmation: true } : {}) });
+    const event = this.store.appendEvent(id, this.running.get(id)?.turnId ?? null, 'agent.notice', { text, ...(confirmation ? { confirmation: true } : {}), ...(proactive ? { proactive: true } : {}) });
     for (const listener of this.listeners) listener(event);
     this.emitThreadEvent(id, null, 'thread.updated', {});
     return event;
@@ -1026,9 +1569,10 @@ export class ThreadManager {
   // ---------- Plan page (todos) ----------
 
   /** Todos with their linked threads as full views, so chips can show agent, title and state. */
-  listTodos(): Array<TodoRecord & { threads: ThreadView[] }> {
+  listTodos(): Array<TodoRecord & { urgency: TodoUrgency; proposals: TodoProposal[]; threads: ThreadView[] }> {
     return this.store.listTodos().map((todo) => ({
       ...todo,
+      urgency: urgencyOf(todo),
       proposals: this.store.todoProposals(todo.id).filter(p => p.state === 'open'),
       threads: this.store
         .todoThreadIds(todo.id)
@@ -1049,6 +1593,7 @@ export class ThreadManager {
   deleteTodo(id: string, rev?: unknown): void {
     this.store.checkTodoRev(id, rev === undefined ? this.store.getTodo(id)?.rev : rev);
     this.store.deleteTodo(id);
+    this.personal.mirrorTodoRemoval(id);
     this.broadcastTodo();
   }
 
@@ -1128,6 +1673,8 @@ export class ThreadManager {
       sectionId?: string | null;
       unread?: boolean;
       done?: boolean;
+      /** The person places the thread on the board; it stands until a later turn reports again. */
+      stage?: ProgressStage;
     },
   ): Promise<ThreadView> {
     const thread = this.getThread(id);
@@ -1136,6 +1683,11 @@ export class ThreadManager {
       if (typeof updates.done !== 'boolean') throw new HttpError(400, 'done must be true or false');
       // The person's word; whatever the agent said before no longer stands.
       this.store.setThreadProgress(id, { doneAt: updates.done ? (thread.doneAt ?? new Date().toISOString()) : null, report: null });
+    }
+    if (updates.stage !== undefined) {
+      if (updates.done !== undefined) throw new HttpError(400, 'set done or stage, not both');
+      if (!PROGRESS_STAGES.includes(updates.stage)) throw new HttpError(400, 'stage must be backlog, doing, blocked or review');
+      this.store.setThreadProgress(id, { doneAt: null, report: { stage: updates.stage, note: '', at: new Date().toISOString(), by: 'user' } });
     }
     if (updates.speed !== undefined) {
       patch.speed = updates.speed === null ? (thread.speed ? 'default' : null) : await this.validateSpeed(thread.agent, updates.model === undefined ? thread.model : updates.model, updates.speed);
@@ -1218,13 +1770,17 @@ export class ThreadManager {
       await this.applyLive(thread, 'speed', s => s.setSpeed?.(patch.speed as string | null) ?? Promise.resolve(false));
     }
     this.store.updateThread(id, patch as any);
+    // The person named it: nothing renames it for them again.
+    if (patch.title !== undefined && patch.title !== thread.title) this.store.setTitleBy(id, 'user');
     this.emitThreadEvent(id, null, 'thread.updated', {});
     return this.threadView(id);
   }
 
   /**
    * Applies a model or effort change. If the live session cannot change it in place, the session is
-   * closed and the next turn resumes the same agent session with the new setting.
+   * closed and the next turn resumes the same agent session with the new setting. A turn in flight
+   * is never interrupted: the change is remembered and the session is refreshed for the next turn,
+   * the way Claude Code's /model takes effect for the next message.
    */
   private async applyLive(
     thread: ThreadRecord,
@@ -1236,7 +1792,8 @@ export class ThreadManager {
     const inPlace = await apply(session).catch(() => false);
     if (inPlace) return;
     if (this.running.has(thread.id)) {
-      throw new HttpError(409, `cannot change ${what} while a turn is running; try again after it finishes`);
+      this.refreshAfterTurn.add(thread.id);
+      return;
     }
     await this.dropSession(thread.id);
   }
@@ -1244,7 +1801,8 @@ export class ThreadManager {
   private async restartForChange(thread: ThreadRecord, what: 'model' | 'effort'): Promise<void> {
     if (!this.sessions.has(thread.id)) return;
     if (this.running.has(thread.id)) {
-      throw new HttpError(409, `cannot change ${what} while a turn is running; try again after it finishes`);
+      this.refreshAfterTurn.add(thread.id);
+      return;
     }
     await this.dropSession(thread.id);
   }
@@ -1279,6 +1837,7 @@ export class ThreadManager {
       doomed = { main, tree };
     }
     await this.dropSession(id);
+    this.quotaResume.drop(id);
     if (opts.agentSession && thread.agentSessionId) {
       const adapter = this.adapters.get(thread.agent);
       if (!adapter?.capabilities.deleteSession || !adapter.deleteSession) {
@@ -1455,14 +2014,13 @@ export class ThreadManager {
       throw new HttpError(400, `this thread's session cannot be read back`);
     }
 
-    const [agentTurns, hubTexts] = await Promise.all([
-      adapter.loadHistory(thread.agentSessionId, thread.cwd),
-      Promise.resolve(
-        // Every turn the hub has, not one page of the log: a turn missing from this list would
-        // look new on the agent's side and be appended again on every sync.
-        this.store.listEventsOfType(id, 'turn.started').map((ev) => turnKey(String(ev.data.text ?? ''))),
-      ),
-    ]);
+    const agentTurns = await adapter.loadHistory(thread.agentSessionId, thread.cwd);
+    // Reading the history takes a while. A turn the hub started meanwhile is already in the agent's
+    // session, so the hub's turns are read after it, and a turn still running is left for later.
+    if (this.running.has(id)) return { added: 0, terminalActivity: this.view(thread).terminalActivity };
+    // Every turn the hub has, not one page of the log: a turn missing from this list would look
+    // new on the agent's side and be appended again on every sync.
+    const hubTexts = this.store.listEventsOfType(id, 'turn.started').map((ev) => turnKey(String(ev.data.text ?? '')));
 
     const matched = matchTurns(agentTurns.map((t) => turnKey(t.text)), hubTexts, ThreadManager.SYNC_SKIP_TOLERANCE);
     if (!matched) return { added: 0, terminalActivity: this.view(thread).terminalActivity }; // histories disagree
@@ -1611,18 +2169,27 @@ export class ThreadManager {
   }
 
   /** A fresh conversation in the source's exact directory, sharing its existing worktree. No agent is started. */
-  async createHandoverThread(threadId: string, agent: string, model?: string, mode?: unknown): Promise<ThreadView> {
+  async createHandoverThread(threadId: string, agent: string, model?: string, mode?: unknown, method?: HandoverLink['method']): Promise<ThreadView> {
     const source = this.getThread(threadId);
     if (mode !== undefined && mode !== 'continue' && mode !== 'branch') throw new HttpError(400, 'invalid handover mode');
+    // Whoever takes over from here, the work leaves this thread; stop waiting for its quota.
+    this.quotaResume.drop(threadId);
     const selected = mode ?? 'branch';
+    // A relay between accounts of the same agent keeps the thread's model and effort: without this
+    // the successor falls back to the target account's default (opus, say) and the swap quietly
+    // multiplies the burn and the cache rewrite. Across agent kinds the names mean different
+    // things, so the target keeps its own default.
+    const kind = (id: string) => this.adapters.get(id)?.id;
+    const sameKind = kind(agent) !== undefined && kind(agent) === kind(source.agent);
     const successor = await this.createThread({
       agent,
       cwd: source.cwd,
       title: `${source.title}（接手）`,
-      model,
+      model: model ?? (sameKind ? source.model ?? undefined : undefined),
+      effort: sameKind ? source.effort ?? undefined : undefined,
       sectionId: source.sectionId,
     }, source.worktree, { sourceId: source.id, title: source.title, agent: source.agent, mode: selected,
-      sourceSeq: this.store.history.latest(source.id) });
+      sourceSeq: this.store.history.latest(source.id), ...(method ? { method } : {}) });
     this.personal.inherit(source.id, successor.id);
     return successor;
   }
@@ -1799,6 +2366,7 @@ export class ThreadManager {
           images: images.map((it) => ({ data: it.image.data, mimeType: it.image.mimeType })),
           videos: videos.map((v) => v.id),
           workMode: typeof targetData.workMode === 'string' ? targetData.workMode : undefined,
+          fromUser: true,
         },
         undefined,
         false,
@@ -1844,7 +2412,7 @@ export class ThreadManager {
 
   private async startTurnReady(
     threadId: string,
-    input: { voiceSummary?: string; workMode?: unknown; text?: unknown; images?: unknown; videos?: unknown; queue?: unknown; mentions?: unknown; collaboration?: CoordinationSetup; handoverFrom?: string; autoContinuation?: boolean; handover?: unknown; scheduled?: unknown; review?: boolean },
+    input: { voiceSummary?: string; workMode?: unknown; text?: unknown; displayText?: string; channel?: TurnChannel; coalesce?: TurnBatch; images?: unknown; videos?: unknown; queue?: unknown; mentions?: unknown; collaboration?: CoordinationSetup; handoverFrom?: string; autoContinuation?: boolean; handover?: unknown; scheduled?: unknown; review?: boolean; proactive?: unknown; fromUser?: boolean },
     delivery?: { turnId: string; source: Record<string, unknown>; displayText: string; claim: () => void },
     fromQueue = false,
     reservedTurnId?: string,
@@ -1861,9 +2429,9 @@ export class ThreadManager {
     const rawImages = Array.isArray(input.images) ? input.images : [];
     const storedVideos = this.attachments.videos(threadId, input.videos);
     const videoIds = storedVideos.map(v => v.id);
-    if (storedVideos.length && /^\/\S+/.test(rawText)) throw new HttpError(400, '视频请随普通消息发送，不能附在斜杠命令后');
+    if (storedVideos.length && /^\/\S+/.test(rawText)) throw new HttpError(400, '视频和文件请随普通消息发送，不能附在斜杠命令后');
     if (!rawText && rawImages.length === 0 && !storedVideos.length) throw new HttpError(400, 'text is empty');
-    if (thread.archivedAt) throw new HttpError(409, 'this thread is archived; restore it first');
+    if (thread.archivedAt && !this.backgroundThreads.has(threadId)) throw new HttpError(409, 'this thread is archived; restore it first');
     if (this.running.has(threadId) || this.autoHandover.held(threadId) && !input.handover && !input.autoContinuation || !fromQueue && this.queues.get(threadId)?.some(q => !q.error)) {
       const goalAction = originalText === '/goal' ? 'show' : originalText === '/goal pause' ? 'pause' : originalText === '/goal clear' ? 'clear' : null;
       const adapter = this.adapters.get(thread.agent);
@@ -1891,9 +2459,15 @@ export class ThreadManager {
       }
       if (input.queue !== true) throw new HttpError(409, 'a turn is already running in this thread');
       const queue = this.queues.get(threadId) ?? [];
+      const tail = queue.at(-1);
+      const merged = input.coalesce && tail?.coalesce && !tail.error ? mergeBatches(tail.coalesce, input.coalesce) : null;
+      if (tail && merged) {
+        this.setQueue(threadId, [...queue.slice(0, -1), { ...tail, text: merged.body + merged.context, coalesce: merged, ...batchShape(merged.parts) }]);
+        return { queued: true, id: tail.id };
+      }
       if (queue.length >= MAX_QUEUED) throw new HttpError(409, `at most ${MAX_QUEUED} messages can wait in a thread`);
       this.attachments.check(rawImages); // a bad image is refused now, not when its turn comes
-      const queued: QueuedTurn = { voiceSummary: input.voiceSummary, workMode: thread.workMode ?? 'execute', id: randomUUID(), text: originalText, images: rawImages, videos: videoIds, ...(mentions ? { mentions } : {}), ...(input.collaboration ? { collaboration: input.collaboration } : {}) };
+      const queued: QueuedTurn = { voiceSummary: input.voiceSummary, workMode: thread.workMode ?? 'execute', id: randomUUID(), text: originalText, displayText: input.displayText, channel: input.channel, ...(input.coalesce ? { coalesce: input.coalesce } : {}), images: rawImages, videos: videoIds, ...(mentions ? { mentions } : {}), ...(input.collaboration ? { collaboration: input.collaboration } : {}), ...(input.fromUser ? { fromUser: true } : {}) };
       this.queues.set(threadId, [...queue, queued]);
       this.emitThreadEvent(threadId, null, 'thread.updated', {});
       return { queued: true, id: queued.id };
@@ -1906,14 +2480,20 @@ export class ThreadManager {
     rawText = this.coordination?.mentionText(threadId, originalText, mentions) ?? originalText;
     // Slash commands have their own argument grammar; hidden instructions become unwanted arguments.
     const slashCommand = /^\/\S+/.test(rawText);
-    const coordinated = slashCommand ? rawText : rawText ? (this.coordination?.instructions(input.handoverFrom ?? threadId, rawText) ?? rawText) : '';
-    const discoverable = slashCommand || !rawText ? coordinated : this.personal.instructions(threadId, this.borrowing?.instructions(threadId, coordinated) ?? coordinated);
+    // A collaboration member spoken to by the person directly answers the person, not the lead.
+    const fromUser = Boolean(input.fromUser && !delivery && this.coordination?.isMember(threadId));
+    // A resent prompt (a retry, a handover) carries its blocks already: they are not attached twice.
+    const gate: InjectionGate = (kind, block) => !rawText.includes(`<calli-${kind}>`) && this.injections.needed(threadId, kind, block);
+    const coordinated = slashCommand ? rawText : rawText ? (this.coordination?.instructions(input.handoverFrom ?? threadId, rawText, fromUser, gate) ?? rawText) : '';
+    // A background question goes as asked: no hints, tools or progress request around it.
+    const bare = this.backgroundThreads.has(threadId);
+    const discoverable = slashCommand || !rawText || bare ? coordinated : this.personal.instructions(threadId, this.borrowing?.instructions(threadId, coordinated, gate) ?? coordinated, gate);
     // With the board's consent, the agent is asked to say where the work stands; read back at the end.
     // Writing mode's way of working for its stage; an edit the person made is mentioned once.
     const writing = !slashCommand && rawText ? thread.writing : null;
     const written = writing ? writingInstructions(discoverable, writing) : discoverable;
-    const askProgress = !slashCommand && Boolean(rawText) && this.progressWanted();
-    const text = askProgress ? progressInstructions(written) : written;
+    const askProgress = !bare && !slashCommand && Boolean(rawText) && this.progressWanted();
+    const text = askProgress ? progressInstructions(written, gate) : written;
 
     if (rawImages.length > 0) {
       const adapter = this.adapters.get(thread.agent);
@@ -1927,6 +2507,9 @@ export class ThreadManager {
     }
     const { stored, images } = this.attachments.save(threadId, rawImages);
     const promptText = text + this.attachments.videoNote(threadId, storedVideos);
+    // Internal callers may attach protocol context. Only the person's words (or a channel
+    // summary) belong in the conversation, its queue, and later replay/continuation views.
+    const displayText = delivery?.displayText ?? input.displayText ?? rawText.split('\n\n[指定协作对象]')[0];
 
     const turnId = delivery?.turnId ?? reservedTurnId ?? randomUUID();
     if (askProgress) this.reportTurns.add(turnId);
@@ -1944,21 +2527,27 @@ export class ThreadManager {
         this.modelQueues.delete(threadId);
         this.store.updateThread(threadId, { status: 'running', workMode: thread.workMode ?? 'execute', hubTurnAt: new Date().toISOString() }, { touch: true });
         if (thread.title === 'New thread' && !input.voiceSummary) {
-          const title = askedText(rawText).split('\n')[0].slice(0, 60) || (storedVideos.length ? '视频' : '图片');
+          const title = askedText(displayText).split('\n')[0].slice(0, 60) || (storedVideos.length ? storedVideos.every(v => isVideoType(v.mimeType)) ? '视频' : storedVideos[0].name : '图片');
           this.store.updateThread(threadId, { title });
+          this.store.setTitleBy(threadId, 'default');
         }
         this.emitThreadEvent(threadId, turnId, 'turn.started', {
           text: promptText,
+          ...(input.channel ? { channel: input.channel } : {}),
+          ...(input.displayText !== undefined ? { hiddenPrompt: true } : {}),
+          ...(bare ? { background: true } : {}),
           ...(input.voiceSummary ? { voiceSummary: input.voiceSummary } : {}),
           speed: thread.speed,
           workMode: thread.workMode ?? 'execute',
           ...(delivery ? { coordination: delivery.source } : {}),
-          ...(promptText !== rawText ? { displayText: delivery?.displayText ?? rawText.split('\n\n[指定协作对象]')[0] } : {}),
+          ...(fromUser ? { fromUser: true } : {}),
+          ...(promptText !== displayText ? { displayText } : {}),
           ...(stored.length ? { images: stored } : {}),
           ...(storedVideos.length ? { videos: storedVideos } : {}),
           ...(typeof input.handover === 'string' && input.handover ? { handover: input.handover, handoverLabel: this.adapters.get(input.handover)?.label ?? input.handover } : {}),
           ...(input.scheduled === true ? { scheduled: true } : {}),
           ...(input.review === true ? { review: true } : {}),
+          ...(input.proactive === true ? { proactive: true } : {}),
         });
       });
     } catch (err) { this.running.delete(threadId); this.reportTurns.delete(turnId); throw err; }
@@ -1999,8 +2588,7 @@ export class ThreadManager {
   async handoverSummary(
     threadId: string,
     turnId: string | null,
-    target?: string,
-    brief = false,
+    opts: { carryFailed?: boolean; compress?: boolean } = {},
   ): Promise<{ pending: true } | { summary: string; source: 'agent' | 'log' }> {
     const thread = this.threadView(threadId);
     const events = this.listEventsSince(threadId, 0);
@@ -2009,22 +2597,10 @@ export class ThreadManager {
     const worktree = checkout && !samePath(checkout.top, checkout.main)
       ? { root: checkout.top, branch: checkout.branch, main: checkout.main }
       : thread.worktree ? { root: thread.worktree.root, branch: thread.worktree.branch, main: thread.worktree.of } : null;
-    const location = brief ? undefined : await adapter?.sessionLocation?.(thread.agentSessionId, thread.cwd);
-    const context = (brief
-      ? handoverBrief({ threadId, from: adapter?.label ?? thread.agent, cwd: thread.cwd, worktree, lead: this.coordination?.leads(threadId) })
-      : handoverContext({
-        threadId,
-        title: thread.title,
-        agentId: thread.agent,
-        agentLabel: adapter?.label ?? thread.agent,
-        adapter: adapter?.id ?? '未知',
-        cwd: thread.cwd,
-        cwdReal: thread.cwdReal,
-        worktree,
-        sessionId: thread.agentSessionId,
-        ...location,
-        resumeCommand: location?.resumeCommand ? `cd ${shellQuote(thread.cwd)} && ${location.resumeCommand}` : thread.resumeCommand,
-      })) + this.personal.context(threadId);
+    // The brief of the auto handover: the successor reads the source itself with `calli`, so it gets
+    // where to look and how, plus a few lines of where things stood — not a retelling.
+    const context = handoverBrief({ threadId, from: adapter?.label ?? thread.agent, cwd: thread.cwd, worktree, lead: this.coordination?.leads(threadId) })
+      + this.personal.context(threadId);
     if (turnId) {
       const turnEvents = events.filter((e) => e.turnId === turnId);
       if (turnEvents.length === 0) throw new HttpError(404, 'no such turn');
@@ -2032,10 +2608,16 @@ export class ThreadManager {
       const written = turnMessage(turnEvents).trim();
       if (written && !turnEvents.some(e => e.type === 'turn.error' || e.type === 'turn.done' && e.data.stopReason === 'cancelled')) return { summary: `${context}\n\n${written}`, source: 'agent' };
     }
-    if (brief) return { summary: [context, synthesizeBrief(events)].filter(Boolean).join('\n\n'), source: 'log' };
-    const successor = (target ? this.adapters.get(target)?.label ?? target : '另一个 agent');
-    const from = this.adapters.get(thread.agent)?.label ?? thread.agent;
-    return { summary: `${context}\n\n${synthesizeHandover(events, { title: thread.title, from, target: successor })}`, source: 'log' };
+    // The brief's 最近的要求 steps over a failed last ask (the auto path carries it word for word
+    // after the text); without this section a handover written on a failed thread would lose it.
+    const lastTurn = this.store.listTurns(threadId).at(-1)?.turnId ?? null;
+    const failedTurn = lastTurn && this.store.listTurnEvents(threadId, lastTurn).some(e => e.type === 'turn.error') ? lastTurn : null;
+    const retryStart = failedTurn ? this.store.listTurnEvents(threadId, failedTurn).find(e => e.type === 'turn.started') : undefined;
+    const retry = opts.carryFailed && retryStart ? String(retryStart.data.displayText ?? retryStart.data.text ?? '') : '';
+    // The source could not write its own summary: another agent reads the record, when one is set up for that.
+    const written = opts.compress ? await this.autoCompact.summarizeForHandover(threadId) : null;
+    const brief = [context, written, synthesizeBrief(events)].filter(Boolean).join('\n\n');
+    return { summary: retry ? `${brief}\n\n## 继续未完成的这一轮\n\n${retry}` : brief, source: 'log' };
   }
 
   hasAgent(id: string): boolean { return this.adapters.has(id); }
@@ -2076,9 +2658,9 @@ export class ThreadManager {
         summaryTurn = null;
       }
     }
-    const result = await this.handoverSummary(id, summaryTurn, target, true);
+    const result = await this.handoverSummary(id, summaryTurn, { compress: true });
     if ('summary' in result) return result.summary;
-    const fallback = await this.handoverSummary(id, null, target, true);
+    const fallback = await this.handoverSummary(id, null, { compress: true });
     if ('summary' in fallback) return fallback.summary;
     throw new HttpError(409, 'handover summary unavailable');
   }
@@ -2092,10 +2674,32 @@ export class ThreadManager {
     });
     const text = String(failed.data.displayText ?? failed.data.text ?? '');
     const turnId = randomUUID();
-    await this.startTurn(id, { text, images, videos: ((failed.data.videos ?? []) as Array<{ id: string }>).map(v => v.id), autoContinuation: true }, {
+    await this.startTurn(id, { text: failed.data.hiddenPrompt ? failed.data.text : text, ...(failed.data.hiddenPrompt ? { displayText: text } : {}), channel: failed.data.channel as TurnChannel | undefined, images, videos: ((failed.data.videos ?? []) as Array<{ id: string }>).map(v => v.id), autoContinuation: true }, {
       turnId, source: { retry: failedTurn }, displayText: text,
       claim: () => this.coordination?.retryHandoverTurn(id, failedTurn, turnId),
     }, true);
+  }
+
+  /** The facts behind a thread that wants the person, for the companion to put in words. Read-only, no model. */
+  threadBrief(id: string): ThreadBrief {
+    const thread = this.getThread(id);
+    const pendingApprovals = [...this.approvals].filter(([, approval]) => approval.threadId === id).map(([approvalId]) => approvalId);
+    return readBrief(this.store, thread, { pendingApprovals, resume: this.quotaResume.view(id) !== null });
+  }
+
+  /**
+   * The person's 「接着做」 on a thread that stopped on an error: the failed ask goes out again, as
+   * the quota watch would send it, and any watch on the thread is dropped since it is moot now.
+   */
+  async retryFailedTurn(id: string): Promise<ThreadView> {
+    const thread = this.getThread(id);
+    if (thread.archivedAt) throw new HttpError(409, 'the thread is archived');
+    if (this.running.has(id) || this.threadView(id).waiting) throw new HttpError(409, 'the thread is busy');
+    const failed = thread.status === 'error' ? this.store.lastTurnFailure(id) : null;
+    if (!failed) throw new HttpError(409, 'the thread did not stop on an error');
+    this.quotaResume.drop(id);
+    await this.retryAutoHandoverTurn(id, failed.turnId);
+    return this.threadView(id);
   }
 
   /**
@@ -2110,17 +2714,91 @@ export class ThreadManager {
     if (note !== undefined && (typeof note !== 'string' || note.length > 20_000)) throw new HttpError(400, 'invalid note');
     if (this.running.has(id) || this.threadView(id).waiting) throw new HttpError(409, 'the thread is busy');
     this.autoHandover.cancel(id);
+    this.quotaResume.drop(id);
     // The turn that failed is carried over, so the successor picks up the ask that was cut off.
     const last = this.store.listTurns(id).at(-1)?.turnId ?? null;
     const failed = last && this.store.listTurnEvents(id, last).some(e => e.type === 'turn.error') ? last : null;
-    const result = await this.handoverSummary(id, null, agent, true);
+    const target = { agent, ...(model ? { model } : {}) };
+    if (this.autoHandover.settings().method === 'resume' && await this.canResumeHandover(id, agent, failed)) {
+      const sessionId = await this.importHandoverSession(id, agent);
+      if (sessionId) return this.executeResumeHandover(id, target, sessionId, failed, note?.trim());
+    }
+    const result = await this.handoverSummary(id, null, { compress: true });
     if (!('summary' in result)) throw new HttpError(409, 'handover summary unavailable');
-    return this.executeAutoHandover(id, { agent, ...(model ? { model } : {}) }, result.summary, failed, note?.trim());
+    return this.executeAutoHandover(id, target, result.summary, failed, note?.trim());
+  }
+
+  /**
+   * Whether `target` can go on in a copy of this thread's own conversation: another instance (another
+   * account) of the same agent, one that can take in a session the source wrote.
+   */
+  async canResumeHandover(id: string, target: string, failedTurn: string | null): Promise<boolean> {
+    const thread = this.getThread(id);
+    if (target === thread.agent || !thread.agentSessionId || !this.adapters.get(thread.agent)?.sessionLocation || !this.adapters.get(target)?.importSession) return false;
+    // The copy starts the successor with the whole context on a cold cache, and every step after
+    // re-reads it; past this size a brief and `calli history` cost far less than carrying it over.
+    if ((this.store.lastContextUsed(id) ?? 0) > RESUME_HANDOVER_MAX_CONTEXT) return false;
+    // A teammate's place moves with the successor's first turn; without a failed turn to resend there is none.
+    if (!failedTurn && this.coordination?.metadata(id)) return false;
+    const agents = await this.listAgents();
+    const kind = (agent: string) => agents.find(a => a.id === agent)?.adapter;
+    return kind(thread.agent) !== undefined && kind(thread.agent) === kind(target);
+  }
+
+  /** Copies the thread's conversation into `target`'s account; null when it cannot be read or written. */
+  async importHandoverSession(id: string, target: string): Promise<string | null> {
+    const thread = this.getThread(id);
+    try {
+      const { sessionPath } = await this.adapters.get(thread.agent)!.sessionLocation!(thread.agentSessionId!, thread.cwd);
+      return sessionPath ? await this.adapters.get(target)!.importSession!(sessionPath) : null;
+    } catch (error) {
+      console.error(`[handover] could not copy the conversation of ${id} to ${target}: ${error instanceof Error ? error.message : error}`);
+      return null;
+    }
+  }
+
+  /**
+   * Hands the thread to another account of the same agent, which goes on in a copy of the
+   * conversation: no brief, the failed turn resent as it was asked. The successor joins the source as
+   * an automatic continuation, so the page shows one conversation.
+   */
+  async executeResumeHandover(id: string, target: HandoverTarget, sessionId: string, failedTurn: string | null, note?: string): Promise<ThreadView> {
+    const source = this.getThread(id);
+    this.quotaResume.drop(id);
+    const successor = await this.createHandoverThread(id, target.agent, target.model, 'continue', 'resume');
+    this.store.updateThread(successor.id, { agentSessionId: sessionId });
+    this.autoHandover.inherit(id, successor.id);
+    const adapter = this.adapters.get(target.agent)!;
+    if (adapter.capabilities.permissionModes.includes(source.permissionMode as PermissionMode)) await this.updateThread(successor.id, { permissionMode: source.permissionMode });
+    if (adapter.capabilities.workModes?.includes(source.workMode ?? 'execute')) await this.updateThread(successor.id, { workMode: source.workMode ?? 'execute' });
+    this.attachments.copyThread(id, successor.id);
+    const failed = failedTurn ? this.store.listTurnEvents(id, failedTurn).find(e => e.type === 'turn.started') : undefined;
+    if (failed || note) {
+      const images = ((failed?.data.images ?? []) as Array<{ id: string }>).map(img => {
+        const file = this.attachments.find(id, img.id);
+        if (!file) throw new HttpError(409, 'handover attachment unavailable');
+        return { mimeType: file.mimeType, data: readFileSync(file.path).toString('base64') };
+      });
+      const added = note ? `${failed ? '\n\n' : ''}${note}` : '';
+      const text = String(failed?.data.displayText ?? failed?.data.text ?? '') + added;
+      const turnId = randomUUID();
+      await this.startTurn(successor.id, { text: failed?.data.hiddenPrompt ? String(failed.data.text) + added : text, ...(failed?.data.hiddenPrompt ? { displayText: text } : {}), channel: failed?.data.channel as TurnChannel | undefined, images, videos: ((failed?.data.videos ?? []) as Array<{ id: string }>).map(v => v.id), handoverFrom: id }, {
+        turnId, source: { handover: id, ...(failedTurn ? { retry: failedTurn } : {}) }, displayText: text,
+        claim: () => this.coordination?.replaceHandoverMember(id, successor.id, turnId),
+      });
+    }
+    const queue = this.queues.get(id) ?? [];
+    this.setQueue(id, []);
+    if (queue.length) this.setQueue(successor.id, [...(this.queues.get(successor.id) ?? []), ...queue]);
+    this.startNextQueued(successor.id);
+    return this.threadView(successor.id);
   }
 
   async executeAutoHandover(id: string, target: HandoverTarget, summary: string, failedTurn: string | null, note?: string): Promise<ThreadView> {
     const source = this.getThread(id);
-    const successor = await this.createHandoverThread(id, target.agent, target.model, 'continue');
+    // The work moves; waiting for this agent's quota to come back is moot.
+    this.quotaResume.drop(id);
+    const successor = await this.createHandoverThread(id, target.agent, target.model, 'continue', 'summary');
     this.autoHandover.inherit(id, successor.id);
     const adapter = this.adapters.get(target.agent)!;
     // Preserve the user's execution and permission choices when the successor supports them.
@@ -2137,8 +2815,11 @@ export class ThreadManager {
     const retry = failed ? String(failed.data.displayText ?? failed.data.text ?? '') : '';
     const turnId = randomUUID();
     const text = summary + (retry ? '\n\n## 继续未完成的这一轮\n\n' + retry : '') + (note ? '\n\n## 用户补充\n\n' + note : '');
+    const promptText = failed?.data.hiddenPrompt
+      ? summary + '\n\n## 继续未完成的这一轮\n\n' + String(failed.data.text) + (note ? '\n\n## 用户补充\n\n' + note : '')
+      : text;
     // Reserve the mailbox identity in the same synchronous claim as the first successor turn.
-    await this.startTurn(successor.id, { text, images, videos, handoverFrom: id }, {
+    await this.startTurn(successor.id, { text: promptText, ...(failed?.data.hiddenPrompt ? { displayText: text } : {}), channel: failed?.data.channel as TurnChannel | undefined, images, videos, handoverFrom: id }, {
       turnId, source: { handover: id }, displayText: text,
       claim: () => this.coordination?.replaceHandoverMember(id, successor.id, turnId),
     });
@@ -2159,7 +2840,7 @@ export class ThreadManager {
     const videos = this.attachments.videos(threadId, taken.videos);
     this.setQueue(threadId, queue.filter((q) => q.id !== queuedId));
     this.startNextQueued(threadId);
-    return { text: taken.text, images: taken.images, ...(videos.length ? { videos } : {}), ...(taken.mentions ? { mentions: taken.mentions } : {}) };
+    return { text: taken.displayText ?? taken.text, images: taken.images, ...(videos.length ? { videos } : {}), ...(taken.mentions ? { mentions: taken.mentions } : {}) };
   }
 
   /** Interrupts the running turn so that this waiting message goes out next, ahead of the others. */
@@ -2190,7 +2871,7 @@ export class ThreadManager {
     this.dispatchingQueues.add(threadId);
     if (rest.length) this.queues.set(threadId, rest);
     else this.queues.delete(threadId);
-    this.startTurn(threadId, { workMode: next.workMode, text: next.text, voiceSummary: next.voiceSummary, images: next.images, videos: next.videos, mentions: next.mentions, collaboration: next.collaboration }, undefined, true).catch((err) => {
+    this.startTurn(threadId, { workMode: next.workMode, text: next.text, displayText: next.displayText, channel: next.channel, voiceSummary: next.voiceSummary, images: next.images, videos: next.videos, mentions: next.mentions, collaboration: next.collaboration, fromUser: next.fromUser }, undefined, true).catch((err) => {
       // The thread was archived or deleted in the meantime, or the message is no longer acceptable.
       console.error(`could not send a queued message: ${err instanceof Error ? err.message : err}`);
       if (this.store.getThread(threadId)) this.setQueue(threadId, [
@@ -2210,7 +2891,7 @@ export class ThreadManager {
     this.getThread(threadId);
     if (!opts.keepQueue) await this.coordination?.beforeStop(threadId);
     const mentions = opts.keepQueue ? [] : (this.queues.get(threadId) ?? []).flatMap(q => q.mentions ?? []);
-    const dropped = opts.keepQueue ? [] : (this.queues.get(threadId) ?? []).map((q) => q.text).filter(Boolean);
+    const dropped = opts.keepQueue ? [] : (this.queues.get(threadId) ?? []).map((q) => q.displayText ?? q.text).filter(Boolean);
     if (!opts.keepQueue && this.queues.has(threadId)) this.setQueue(threadId, []);
     await this.stopTurn(threadId);
     return { dropped, ...(mentions.length ? { mentions } : {}) };
@@ -2220,9 +2901,7 @@ export class ThreadManager {
     const run = this.running.get(threadId);
     if (run) run.cancelRequested = true;
     this.inputs.cancel(threadId, undefined, true);
-    for (const [approvalId, p] of this.approvals) {
-      if (p.threadId === threadId) this.resolveApproval(approvalId, { cancelled: true });
-    }
+    this.cancelApprovals(threadId);
     const session = this.sessions.get(threadId);
     if (session) await session.cancel();
   }
@@ -2243,10 +2922,27 @@ export class ThreadManager {
     return true;
   }
 
+  private cancelApprovals(threadId: string, turnId?: string): void {
+    for (const [id, thread] of this.approvalTurns) {
+      if (thread === threadId && (turnId === undefined || id === turnId)) this.approvalTurns.delete(id);
+    }
+    for (const [id, approval] of this.approvals) {
+      if (approval.threadId === threadId && (turnId === undefined || approval.turnId === turnId)) {
+        this.resolveApproval(id, { cancelled: true });
+      }
+    }
+  }
+
   /** Closes live agent processes. Threads and events stay in the store. */
   async shutdown(): Promise<void> {
+    await this.personal.explore.dispose();
+    await this.lark.dispose();
     this.autoHandover.close();
+    if (this.quotaWatch) clearInterval(this.quotaWatch);
+    this.quotaResume.dispose();
     this.coordination?.suspendAll();
+    // The file mirror must finish its queued writes before callers remove the data directory.
+    await this.personal.flushMirror().catch(() => undefined);
     for (const threadId of [...this.running.keys()]) await this.cancelTurn(threadId).catch(() => undefined);
     const deadline = Date.now() + 3000;
     while (this.running.size > 0 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 25));
@@ -2300,6 +2996,7 @@ export class ThreadManager {
       this.emitThreadEvent(thread.id, turnId, 'turn.error', { message, ...(exhausted ? { code: 'plan_exhausted' } : {}) });
       await this.dropSession(thread.id);
     } finally {
+      this.cancelApprovals(thread.id, turnId);
       this.quietTurns.delete(turnId);
       this.reportTurns.delete(turnId);
       if (!this.nativeTurns.get(thread.id)?.size) this.inputs.cancel(thread.id, undefined, true);
@@ -2309,6 +3006,12 @@ export class ThreadManager {
       if (nativeTurn && !this.running.has(thread.id)) {
         this.running.set(thread.id, { turnId: nativeTurn, cancelRequested: false, since: new Date().toISOString() });
         finalStatus = 'running';
+      }
+      // A model/effort/speed change arrived while this turn ran: now that nothing runs in the
+      // session (a native takeover keeps it busy, and its own finish hook retries), drop it so
+      // the next turn resumes the agent session with the new setting.
+      if (!this.running.has(thread.id) && this.refreshAfterTurn.delete(thread.id)) {
+        await this.dropSession(thread.id).catch(() => undefined);
       }
       // The thread may have been deleted while its last turn was winding down.
       if (this.store.getThread(thread.id)) {
@@ -2324,7 +3027,17 @@ export class ThreadManager {
         void this.refreshGoal(thread.id);
         const settling = this.autoHandover.settled(thread.id, turnId);
         this.settlingHandovers.add(settling);
-        try { await settling; } finally { this.settlingHandovers.delete(settling); }
+        let settled: SettledOutcome = 'none';
+        try { settled = await settling; } finally { this.settlingHandovers.delete(settling); }
+        // The turn died of plan exhaustion and the handover did not move the work away: a spot
+        // where the resume watch belongs (armed here when the global setting is on, by the
+        // exhausted turn's card otherwise).
+        const failed = this.store.listTurnEvents(thread.id, turnId).find(e => e.type === 'turn.error');
+        if (failed?.data.code === 'plan_exhausted' && settled !== 'moved'
+          && !this.running.has(thread.id) && !this.threadView(thread.id).waiting) this.quotaResume.parked(thread.id);
+        // Quota is closing in but the handover did not move the work: shrink the context while the
+        // account can still answer, so the rest of the window is not spent re-reading it.
+        if (settled !== 'moved') void this.autoCompact.settled(thread.id, turnId).catch(() => undefined);
         this.startNextQueued(thread.id);
       }
     }
@@ -2528,19 +3241,24 @@ export class ThreadManager {
 
   private async createSession(thread: ThreadRecord): Promise<AgentSession> {
     const personalScope = Boolean(this.personal.environment(thread.id));
-    if (this.sessions.has(thread.id) && this.personalScopes.get(thread.id) !== personalScope) await this.dropSession(thread.id);
+    const adapter = this.adapters.get(thread.agent);
+    if (!adapter) throw new Error(`unknown agent: ${thread.agent}`);
+    if (this.sessions.has(thread.id) && (this.personalScopes.get(thread.id) !== personalScope || this.sessionAdapters.get(thread.id) !== adapter)) await this.dropSession(thread.id);
     const existing = this.sessions.get(thread.id);
     if (existing) {
       if (existing.setWorkMode) await existing.setWorkMode(thread.workMode ?? 'execute');
       return existing;
     }
-    const adapter = this.adapters.get(thread.agent);
-    if (!adapter) throw new Error(`unknown agent: ${thread.agent}`);
     const session = await adapter.start({
       borrowedTool: this.borrowing?.toolForThread(thread.id),
-      coordinationEnv: { ...this.coordination?.environment(thread.id), ...this.borrowing?.environment(thread.id), ...this.personal.environment(thread.id) },
+      coordinationEnv: this.backgroundThreads.has(thread.id) ? {} : { ...this.coordination?.environment(thread.id), ...this.borrowing?.environment(thread.id), ...this.personal.environment(thread.id) },
       cwd: thread.cwd,
       resumeId: thread.agentSessionId ?? undefined,
+      onSessionId: (id) => {
+        if (!id || !this.store.getThread(thread.id)) return;
+        this.store.updateThread(thread.id, { agentSessionId: id });
+        this.emitThreadEvent(thread.id, null, 'thread.updated', {});
+      },
       permissionMode: thread.permissionMode as PermissionMode,
       speed: thread.speed,
       workMode: thread.workMode ?? 'execute',
@@ -2574,7 +3292,7 @@ export class ThreadManager {
         this.emitThreadEvent(thread.id, turnId, 'turn.started', { text: '', source: opts?.background ? 'background' : 'voice', nativeTurnId: nativeId });
         return this.hooksFor(thread.id, turnId);
       },
-      turnFinished: (nativeId, result) => {
+      turnFinished: async (nativeId, result) => {
         const turns = this.nativeTurns.get(thread.id);
         const turnId = turns?.get(nativeId);
         if (!turnId) return;
@@ -2586,16 +3304,18 @@ export class ThreadManager {
           for (const resolve of waiters ?? []) resolve();
         }
         if (!this.store.getThread(thread.id)) return;
+        this.cancelApprovals(thread.id, turnId);
         this.emitThreadEvent(thread.id, turnId, result.stopReason === 'error' ? 'turn.error' : 'turn.done',
           result.stopReason === 'error' ? { message: result.error ?? 'agent error' } : { stopReason: result.stopReason });
         if (this.running.get(thread.id)?.turnId === turnId) {
           this.running.delete(thread.id);
           this.clearModelQueue(thread.id, turnId);
           this.inputs.cancel(thread.id, undefined, true);
-          for (const [id, approval] of this.approvals) if (approval.threadId === thread.id) this.resolveApproval(id, { cancelled: true });
           this.store.updateThread(thread.id, { status: result.stopReason === 'error' ? 'error' : 'idle', ...(result.stopReason !== 'cancelled' && (result.stopReason === 'error' || !this.quietTurns.has(turnId)) ? { unread: true } : {}) }, { touch: true });
           this.quietTurns.delete(turnId);
           this.emitThreadEvent(thread.id, null, 'thread.updated', {});
+          // Same end-of-turn refresh as a hub turn: a setting changed mid-turn waits for this moment.
+          if (this.refreshAfterTurn.delete(thread.id)) await this.dropSession(thread.id).catch(() => undefined);
           this.startNextQueued(thread.id);
         }
       },
@@ -2603,7 +3323,7 @@ export class ThreadManager {
     this.personalScopes.set(thread.id, personalScope);
     this.sessions.set(thread.id, session);
     this.sessionAdapters.set(thread.id, adapter);
-    if (session.agentSessionId !== thread.agentSessionId) {
+    if (session.agentSessionId && session.agentSessionId !== thread.agentSessionId) {
       this.store.updateThread(thread.id, { agentSessionId: session.agentSessionId });
     }
     return session;
@@ -2703,6 +3423,7 @@ export class ThreadManager {
   }
 
   private hooksFor(threadId: string, turnId: string): TurnHooks {
+    this.approvalTurns.set(turnId, threadId);
     const started = performance.now();
     let previousPhase = started;
     return {
@@ -2726,21 +3447,25 @@ export class ThreadManager {
         ? Promise.resolve({ cancelled: true }) : this.inputs.request(threadId, turnId, req),
       cancelInput: id => this.inputs.cancel(threadId, id, true),
       requestApproval: (req: ApprovalRequest) => {
+        const run = this.running.get(threadId);
+        const native = [...(this.nativeTurns.get(threadId)?.values() ?? [])].includes(turnId);
+        if (this.approvalTurns.get(turnId) !== threadId || run?.cancelRequested || (run?.turnId !== turnId && !native)) return Promise.resolve({ cancelled: true });
         const approvalId = randomUUID();
-        this.emitThreadEvent(threadId, turnId, 'approval.request', {
-          approvalId,
-          title: req.title,
-          options: req.options,
-          toolCall: req.toolCall,
-        });
         return new Promise<ApprovalDecision>((resolve) => {
           this.approvals.set(approvalId, {
             threadId,
+            turnId,
             optionIds: req.options.map((o) => o.optionId),
             resolve: (decision) => {
               this.emitThreadEvent(threadId, turnId, 'approval.resolved', { approvalId, decision });
               resolve(decision);
             },
+          });
+          this.emitThreadEvent(threadId, turnId, 'approval.request', {
+            approvalId,
+            title: req.title,
+            options: req.options,
+            toolCall: req.toolCall,
           });
         });
       },
@@ -2748,14 +3473,52 @@ export class ThreadManager {
   }
 
   private emitThreadEvent(threadId: string, turnId: string | null, type: EventType, data: Record<string, unknown>): void {
+    if (turnId && (type === 'turn.done' || type === 'turn.error')) this.approvalTurns.delete(turnId);
     if (type === 'turn.done' && turnId && this.quietTurns.has(turnId) && data.stopReason !== 'cancelled') data = { ...data, quiet: true };
     if (type === 'turn.started') {
-      if (!data.control && /<(?:calli|limi)-todo>/.test(String(data.text ?? ''))) this.personal.started(threadId);
+      if (!data.control) this.injections.started(threadId, String(data.text ?? ''));
       const agent = this.store.getThread(threadId)?.agent;
       const account = this.agentMeta().find(m => m.id === agent)?.account;
       if (account) data = { ...data, linkedAccount: account };
     }
+    // What the agent was told may have left its context, or never reached it: attach it again next time.
+    if (type === 'context.compaction' || type === 'turn.error') this.injections.forget(threadId);
+    if (type === 'turn.started' && this.unrecordedQuestions.has(threadId)) {
+      data = { ...data, text: '', displayText: '', promptOmitted: true };
+    }
     const stored = this.store.appendEvent(threadId, turnId, type, data);
+    // Turn timing is computed once, when the turn ends; a deferred task keeps it off the turn's tail.
+    if (turnId && (type === 'turn.done' || type === 'turn.error') && !data.imported && !data.fromTerminal) this.recordTurnStats(threadId, turnId);
     for (const l of this.listeners) l(stored);
   }
+
+  /** Store a finished turn's timing in the background; a failed run is recomputed on the next read. */
+  private recordTurnStats(threadId: string, turnId: string): void {
+    const timer = setTimeout(() => {
+      try {
+        const row = this.computeTurnStats(threadId, turnId);
+        if (row) this.store.telemetry.recordTurnStats(threadId, turnId, row);
+      } catch { /* The store may be closing; the read path backfills this turn later. */ }
+    }, 0);
+    timer.unref?.();
+  }
+}
+
+/** A `file://` prefix, as answers and the page both write paths, is not part of the path itself. */
+export function stripFileUrl(raw: string): string {
+  if (!/^file:\/\//i.test(raw)) return raw;
+  let rest = raw.slice('file://'.length);
+  try {
+    rest = decodeURIComponent(rest);
+  } catch {
+    // A literal percent sign: use it as written.
+  }
+  return rest;
+}
+
+/** `~` and `~/…` stand for the daemon user's home directory, as answers often spell them. */
+export function expandHome(given: string): string {
+  if (given === '~') return homedir();
+  if (given.startsWith('~/')) return join(homedir(), given.slice(2));
+  return given;
 }

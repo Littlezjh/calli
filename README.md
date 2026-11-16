@@ -59,8 +59,10 @@ Calli 不动 agent 本身的目录、配置和会话，装好即用。Calli 是�
 | Codex | `codex app-server` | 有 | 有 | 有 |
 | TRAE CLI | app-server 执行，ACP 模型与历史接口 | 有 | 有 | 有 |
 | zcode | `zcode app-server` 精简接入 | 有 | 按原生模型能力 | 暂无 |
+| DeepSeek Harness | `dsh --profile acp`（ACP） | 有（仅允许一次/拒绝） | 有（按当前模型路由） | 暂无 |
+| Doubao CLI | `doubao -p` / `--resume`，可选实验流式桥 | 无（无界面下需要批准的操作由 CLI 拒绝） | 暂无 | 暂无 |
 
-各家 agent CLI 需要先在主机上装好并完成登录或鉴权。没装的 agent 在界面里显示为不可用；各家的能力和接入边界见 [架构说明](docs/PLAN.md)。
+各家 agent CLI 需要先在主机上装好并完成登录或鉴权。没装的 agent 在界面里显示为不可用；各家的能力和接入边界见 [架构说明](docs/PLAN.md)。Doubao CLI 使用原生默认模型，可通过 `CALLI_DOUBAO_BIN` 指定入口；已有安装可从 Agent 管理的添加入口接入，在添加页或实例「接入设置」里可开启版本限定的实验流式桥（2.31.2 / Linux x64，原安装不变）；也支持 `CALLI_DOUBAO_STREAM=1`，具体范围见 [Doubao CLI 接入](docs/doubao-cli-design.md)。
 
 ## 插件与参与
 
@@ -75,18 +77,39 @@ skills 和 MCP 属于 agent 资源，通过各自的管理页操作，与 Calli 
 
 ## 快速开始
 
-需要 Node.js 22 或更高版本。
+需要 Linux 或 macOS、git 和 Node.js 22 或更高版本。
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/maxliux5/calli/main/install.sh | bash
+```
+
+脚本把代码装到 `~/.local/share/calli` 并构建，生成 `~/.config/calli/.env`（随机 token；线程数据放在 `~/.local/state/calli`；agent 默认在家目录工作），在 Linux 上装成 systemd 用户服务，最后打印地址和 token。打开地址，点「连接 hub」粘贴 token 即可；没连接时先显示一套示例数据，可以随便点开看。
+
+- 先看会做什么：`… | bash -s -- --dry-run`
+- 更新：再运行一次。设置、token 和线程数据都保留，等正在跑的线程结束后才重启。
+- 卸载：`… | bash -s -- --uninstall`。只删服务和代码，设置和数据保留。
+- 不装服务：`--no-service`，脚本打印手动启动的命令。没有 systemd（如 macOS）时也是这样。
+
+**让 agent 帮你装**：把这句话发给这台机器上的 Claude Code、Codex 等：
+
+```text
+按 https://raw.githubusercontent.com/maxliux5/calli/main/docs/install-agent.md 在这台机器上安装 Calli
+```
+
+它会先预览、再安装、确认服务在运行，最后告诉你地址和 token；装 Node.js、编译工具这类改系统的事会先问你。
+
+各家 agent CLI 要自己装好并登录，Calli 只调用这台机器上现有的。
+
+### 从源码开发
 
 ```bash
 npm install
-npm run setup               # 生成 .env 和随机 CALLI_TOKEN，并打印出来
+npm run setup               # 生成仓库根目录的 .env 和随机 CALLI_TOKEN，并打印出来
 npm run build
 CALLI_ENV_FILE=../../.env npm start -w @calli/daemon    # 默认监听 127.0.0.1:8787
 ```
 
-打开 `http://127.0.0.1:8787/`。没有连接时先显示一套示例数据，可以随便点开看；点「连接 hub」粘贴 `npm run setup` 打印的 token 即可。要让 agent 在哪些目录工作，编辑 `.env` 里的 `CALLI_WORKDIRS`。
-
-开发时可以分开启动：
+要让 agent 在哪些目录工作，编辑 `.env` 里的 `CALLI_WORKDIRS`。开发时可以分开启动：
 
 ```bash
 CALLI_ENV_FILE=../../.env npm run dev:daemon   # 后端
@@ -127,13 +150,13 @@ GitHub Pages 通过 `.github/workflows/pages.yml` 发布：推送到 `main` 后�
 
 浏览器只连主 hub；主 hub 通过 SSH 隧道访问另一台机器上的 daemon。线程、文件和 agent 都留在各自机器上。
 
-1. **目标机器**：按上面的快速开始安装、配置并构建，再用 `scripts/install-service.sh` 启动服务。保持默认的私有 socket，不必对外开放 HTTP 端口。
+1. **目标机器**：运行上面快速开始里的安装命令。保持默认的私有 socket，不必对外开放 HTTP 端口。之后想用 `scripts/update-hosts.sh` 统一更新，在主 hub 的 hosts.json 里给这台机器写 `"repo": "~/.local/share/calli"`。
 2. **主 hub**：以 daemon 的运行用户配置 SSH 别名和凭据，先手动连接、核实主机密钥，再确认 `ssh -o BatchMode=yes <SSH别名> true` 能成功。服务需要能持续免交互认证；只在当前终端可用的 ssh-agent 或临时票据不一定能被服务使用。
 3. **浏览器**：打开「配置 → 机器」，从 SSH 别名列表添加，或输入别名 / `user@host`。成功后在线程列表顶部切换机器。
 
 添加流程读取的是 **hub 所在机器**的 SSH 配置，不是手机或电脑浏览器的配置。目标上的 daemon 要先启动；第一期不自动安装和启动。远端 daemon 负责调用该机器上的 agent、读取会话与文件，浏览器仍只访问主 hub；远端无需单独部署前端或开放 HTTP 端口。
 
-更新主 hub 不会自动更新远端 daemon，每台机器需要分别更新。源码安装先同步代码、安装依赖，再运行 `scripts/restart.sh` 构建并等待线程空闲后重启；仅安装运行包的机器需要同步新版 daemon 构建产物，依赖有变化时安装生产依赖，再运行 `scripts/restart.sh --no-build`。保留原有配置和数据目录即可保留 token、线程与会话。涉及新接口的功能（例如新建接手对话）需要目标机器的 daemon 也更新。
+更新主 hub 不会自动更新远端 daemon，但可以用 `scripts/update-hosts.sh` 一次把各台机器带上去：先把代码推到它们能拉取的远端（例如 GitHub），再在主 hub 上运行。脚本对 hosts.json 里的每台机器（或 `scripts/update-hosts.sh 机器ID` 只指定一台）通过 SSH 快进拉取那台机器的仓库克隆，构建一个新快照目录，等那台机器所有线程空闲后（同 `restart.sh`）把服务切过去，健康检查失败自动切回旧快照。全程不强制：连不上、克隆与远端分叉、构建失败都只报告并跳过，那台机器的 daemon 保持原样。加 `--check` 先看每台机器会更新到什么。远端布局与手工部署一致：克隆在 `~/code/calli`（hosts.json 里写 `"repo": "<路径>"` 可改），服务运行在 `~/.local/share/calli-<短sha>` 快照上。涉及新接口的功能（例如新建接手对话）需要目标机器的 daemon 也更新。
 
 | 配置 | 默认与用途 |
 | --- | --- |

@@ -231,6 +231,9 @@ test('subscribers get whitelisted summaries: no text, tool calls, answers, previ
     h.emit('t1', 'turn-1', 'approval.resolved', { approvalId: 'a1', decision: { optionId: 'allow' } });
     h.emit('t1', 'turn-1', 'input.request', { inputId: 'i1', kind: 'plan', questions: [{ id: 'q', question: SECRET, options: [{ label: SECRET, value: SECRET }] }] });
     h.emit('t1', 'turn-1', 'input.resolved', { inputId: 'i1', answer: { answers: { q: [SECRET] } } });
+    // A request that arrives already answered (full access approves a plan itself) raises no
+    // attention: nothing is being asked, so the hooks below stay as they are.
+    h.emit('t1', 'turn-1', 'input.request', { inputId: 'i2', kind: 'plan', auto: { answers: { approval: ['exit-plan-bypass'] } }, questions: [{ id: 'approval', question: SECRET, options: [{ label: SECRET, value: SECRET }] }] });
     h.emit('t1', 'turn-1', 'message.delta', { text: SECRET });
     h.emit('t1', 'turn-1', 'tool.start', { id: 'tool', title: SECRET, rawInput: SECRET });
     h.emit('t1', 'turn-1', 'turn.done', { stopReason: 'end_turn' });
@@ -326,7 +329,7 @@ test('the summary of a thread is the sidebar\'s view of it', () => {
     coordination: { rootId: 't2', children: 3, paused: false }, status: 'error', unread: true, archivedAt: '2026-01-02T00:00:00.000Z',
   }));
   assert.deepEqual(s, {
-    id: 't2', title: 'Fix the build', agent: 'claude', project: '/work/app', status: 'error', attention: { kind: 'error' }, runningSince: null,
+    id: 't2', title: 'Fix the build', agent: 'claude', project: '/work/app', projectGone: undefined, status: 'error', attention: { kind: 'error' }, runningSince: null,
     unread: true, pinned: false, archived: true, scheduled: true, worktree: true, handover: true, teamSize: 3,
     doneAt: null, report: null, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
   });
@@ -368,4 +371,52 @@ test('thread.created distinguishes imported history from a new thread', async ()
     await flush();
     assert.deepEqual(h.p.got.filter(e => e.hook === 'thread.created').map(e => (e.data as any).origin), ['import', 'new']);
   } finally { h.close(); }
+});
+
+test('board upgrades defer only assistant.ask, preserve enablement, and grant it explicitly', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'calli-board-upgrade-'));
+  const old = manifest('board', { permissions: ['events.summary', 'progress.report', 'worksource.read'] });
+  const next = { ...old, version: '2.0.0', permissions: [...old.permissions, 'assistant.ask' as const] };
+  let hub = await serve(dir, [old]);
+  try {
+    assert.equal((await hub.api('/api/extensions/board/install', 'POST', { granted: old.permissions })).status, 200);
+    await hub.close();
+    hub = await serve(dir, [next]);
+    let state = (await (await hub.api('/api/extensions')).json() as ExtensionState[])[0];
+    assert.equal(state.installed, true);
+    assert.equal(state.enabled, true);
+    assert.deepEqual(state.granted, old.permissions, 'reading the upgraded catalog never grants assistant access');
+    assert.equal((await hub.api('/api/extensions/board', 'PATCH', { enabled: false })).status, 200);
+    assert.equal((await hub.api('/api/extensions/board', 'PATCH', { enabled: true })).status, 200);
+    assert.equal((await hub.api('/api/extensions/board/install', 'POST', { granted: old.permissions })).status, 400, 'install still requires the exact manifest');
+    assert.equal((await hub.api('/api/extensions/board/install', 'POST', { granted: next.permissions })).status, 200);
+    state = (await (await hub.api('/api/extensions')).json() as ExtensionState[])[0];
+    assert.ok(state.granted.includes('assistant.ask'));
+    await hub.close();
+    hub = await serve(dir, [next]);
+    assert.ok(((await (await hub.api('/api/extensions')).json() as ExtensionState[])[0]).granted.includes('assistant.ask'), 'grant survives restart');
+  } finally { await hub.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('deferred assistant access neither authorizes the call nor waives other permission changes', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'calli-board-permissions-'));
+  const store = new Store(dir);
+  const old = manifest('board', { permissions: ['events.summary', 'progress.report'] });
+  const next = { ...old, permissions: [...old.permissions, 'assistant.ask' as const] };
+  store.extensions.install('board', old.version, old.permissions);
+  const source = fakeSource(new Map()).source;
+  const host = new ExtensionHost({ store: store.extensions, source, catalog: [next] });
+  try {
+    assert.equal(host.allows('board', 'events.summary'), true);
+    assert.equal(host.allows('board', 'progress.report'), true);
+    assert.equal(host.allows('board', 'assistant.ask'), false);
+    assert.throws(() => host.demand('board', 'assistant.ask'));
+    host.install('board', next.permissions);
+    assert.equal(host.allows('board', 'assistant.ask'), true);
+    host.setEnabled('board', false);
+    assert.equal(host.allows('board', 'assistant.ask'), false);
+    assert.doesNotThrow(() => checkManifest(next));
+    store.extensions.install('board', '1.0.0', ['events.summary']);
+    assert.equal(host.list()[0].enabled, false, 'missing progress.report still disables the update');
+  } finally { host.dispose(); store.close(); rmSync(dir, { recursive: true, force: true }); }
 });

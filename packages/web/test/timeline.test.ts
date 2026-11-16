@@ -1,7 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { channelRows, turnChannel } from '../src/timeline.js';
 import {
   buildTimeline,
+  stepCommand,
   compactionLabel,
   coordinationNote,
   deliveredPreview,
@@ -11,7 +13,6 @@ import {
   runSummary,
   splitThinking,
   splitUserQuote,
-  thinkingPreview,
   stepDurationLabel,
   stepStatusLabel,
   stepTitle,
@@ -79,6 +80,28 @@ test('terminal-only and repeated compactions survive replay with turn-scoped ide
   const entry = work[0].entries[0];
   assert.ok(entry.kind === 'compaction');
   assert.equal(compactionLabel(entry), '上下文已压缩');
+});
+
+test('the context panel data: usage readings and the latest request sample', () => {
+  const events = [
+    ev('usage.updated', { used: 1000, size: 200000 }),
+    // Turn samples summarize a whole turn and never pose as one request.
+    ev('usage.sample', { scope: 'turn', input: 900, output: 100 }),
+    ev('usage.sample', { scope: 'request', input: 500, cacheRead: 400, cacheWrite: 60, output: 40, reasoning: 10, model: 'fixture-model' }),
+    // A sample without a single valid number carries nothing and is ignored.
+    ev('usage.sample', { scope: 'update', input: 'junk', output: -5 }),
+    ev('context.compaction', { id: 'c1', status: 'completed', automatic: true }),
+    // An explicit unknown reading invalidates the measurement, e.g. after compaction.
+    ev('usage.updated', { used: null, size: 200000 }),
+  ];
+  const first = buildTimeline(events);
+  assert.equal(first.usage, null);
+  assert.deepEqual(first.lastSample, { scope: 'request', model: 'fixture-model', input: 500, cacheRead: 400, cacheWrite: 60, output: 40, reasoning: 10 });
+
+  // A later update sample takes over as the latest request reading.
+  const later = buildTimeline([...events, ev('usage.sample', { scope: 'update', output: 7 })]);
+  assert.deepEqual(later.lastSample, { scope: 'update', output: 7 });
+  assert.equal(later.usage, null);
 });
 
 test('collaboration turns expose their source and hide runtime instructions', () => {
@@ -150,6 +173,23 @@ test('tool.update changes status without creating a new step', () => {
   assert.equal(work.kind === 'work' && work.steps.length, 1);
   assert.equal(work.kind === 'work' && work.steps[0].output, 'partial');
   assert.equal(tl.running, true);
+});
+
+test('a command that surfaced as "Terminal" takes its name and input from the update that names it', () => {
+  seq = 0;
+  const tl = buildTimeline([
+    ev('turn.started', { text: 'x' }),
+    ev('tool.start', { id: 's', title: 'Terminal', kind: 'execute', input: {} }),
+    ev('tool.update', { id: 's', title: 'npm test', kind: 'execute', input: { command: 'npm test', description: 'Run tests' } }),
+    ev('tool.end', { id: 's', status: 'completed', output: '2 passing' }),
+  ]);
+  const work = tl.items[1];
+  const step = work.kind === 'work' ? work.steps[0] : undefined;
+  assert.equal(step && stepTitle(step), '运行了 npm test');
+  assert.equal(step && stepCommand(step), 'npm test');
+  assert.equal(step?.output, '2 passing');
+  assert.equal(stepCommand({ kind: 'read', input: { command: 'x' } }), null, 'only a command run has a command line');
+  assert.equal(stepCommand({ kind: 'execute', input: {} }), null);
 });
 
 test('approval is shown and its decision is attached when resolved', () => {
@@ -386,7 +426,7 @@ test('a turn refused for lack of permission explains the way out; other errors a
   assert.equal(errors[1], 'quota exceeded');
 });
 
-import { imagePathsIn, usageSummary } from '../src/timeline.js';
+import { imagePathsIn, imagePlaces, usageSummary } from '../src/timeline.js';
 
 test('a plan is one item per turn, updated in place, and does not open a work group', () => {
   seq = 0;
@@ -434,6 +474,13 @@ test('unknown context clears the previous reading and a later measurement restor
   assert.deepEqual(buildTimeline(events).usage, { used: 12000, size: 258400 });
   for (const used of [-1, NaN, Infinity]) events.push(ev('usage.updated', { used, size: 258400 }));
   assert.deepEqual(buildTimeline(events).usage, { used: 12000, size: 258400 });
+});
+
+test('imagePlaces says where each picture is first named, in reading order', () => {
+  const text = 'First ![a](out/a.png) then:\n\n- see /work/b.jpg\n- and [again](out/a.png)';
+  assert.deepEqual(imagePlaces(text), [{ path: 'out/a.png', at: text.indexOf('![a]') }, { path: '/work/b.jpg', at: text.indexOf('/work/b.jpg') }]);
+  // A link cut out of the text does not make the word after it stand alone.
+  assert.deepEqual(imagePathsIn('word[x](a.png)b.png'), ['a.png']);
 });
 
 test('imagePathsIn finds local image files in an answer and leaves web addresses alone', () => {
@@ -519,8 +566,12 @@ test('stepTitle puts a verb first and stepStatusLabel shows the state', () => {
   assert.equal(stepStatusLabel({ ...base, kind: 'execute', status: 'completed', startedAt: '2026-10-10T00:00:00.000Z', endedAt: '2026-10-10T00:00:00.900Z' }), '0.9 秒');
   assert.equal(stepStatusLabel({ ...base, kind: 'read', status: 'in_progress' }), '运行中');
   assert.equal(stepStatusLabel({ ...base, kind: 'other', status: 'failed' }), '已结束');
+  assert.equal(stepStatusLabel({ ...base, kind: 'other', status: 'unknown' }), '已结束');
+  assert.equal(stepStatusLabel({ ...base, kind: 'other', status: 'interrupted' }), '已结束');
   assert.equal(stepStatusLabel({ ...base, kind: 'execute', status: 'failed', startedAt: '2026-10-10T00:00:00.000Z', endedAt: '2026-10-10T00:00:00.900Z' }), '0.9 秒');
   assert.equal(stepTitle({ ...base, kind: 'other', status: 'completed' }), 'npm test');
+  // Claude's bridge titles the plan-exit call with this fixed string; the thread speaks its own language.
+  assert.equal(stepTitle({ ...base, kind: 'other', status: 'completed', title: 'Exited Plan Mode' }), '已退出计划模式');
   // A command is named by what it runs; the directory it steps into first says nothing in one line.
   assert.equal(stepTitle({ ...base, kind: 'execute', status: 'completed', title: 'cd /srv/app && git status --short' }), '运行了 git status --short');
   assert.equal(stepTitle({ ...base, kind: 'execute', status: 'completed', title: 'cd "/srv/my app"; ls' }), '运行了 ls');
@@ -638,16 +689,6 @@ test('a turn that says something and ends on a tool call still has an answer: it
   const [, work, answer] = tl.items;
   assert.deepEqual(work.kind === 'work' && work.entries.map((e) => e.kind), ['step']);
   assert.equal(answer.kind === 'assistant' && answer.text, '我来写文件。');
-});
-
-test('thinkingPreview shows where a long thought has got to, not where it began', () => {
-  assert.equal(thinkingPreview([]), '');
-  assert.equal(thinkingPreview(['first.', 'short last.']), 'short last.');
-  const long = `${'start of a long plan '.repeat(20)}and this is the end of it.`;
-  const preview = thinkingPreview(['earlier', long]);
-  assert.ok(preview.startsWith('…') && preview.endsWith('and this is the end of it.'));
-  assert.ok(preview.length < 160);
-  assert.ok(thinkingPreview(['思'.repeat(300)]).length <= 141, 'text without spaces is cut as it is');
 });
 
 test('a tool that finishes after text began still updates the row it started in', () => {
@@ -818,6 +859,11 @@ test('withNotes numbers each passage, with its comment when there is one, and sp
     notes: [{ quote: '写不清楚', comment: '删', file: 'writing/思考是人类的事情.md' }],
     body: '好了',
   });
+  // A passage from an earlier conversation of the chain says where the agent can read it; it comes back too.
+  const source = { threadId: '8241c21f-6958-4f20-8a3b-3cf7d4aa4599', turnId: '9a00ee69-200a-4202-a7ff-90e706016fbb' };
+  const fromEarlier = withNotes([{ quote: '拒收后仍推送', comment: '这个还在吗？', source }], '');
+  assert.equal(fromEarlier, `[注释 1]\n来源：交接前的会话，原文和上下文用 calli history ${source.threadId} --turn ${source.turnId} 读\n> 拒收后仍推送\n评论：这个还在吗？`);
+  assert.deepEqual(splitNotes(fromEarlier), { notes: [{ quote: '拒收后仍推送', comment: '这个还在吗？', source }], body: '' });
   // Anything else is left as it is, including the older single quote.
   assert.deepEqual(splitNotes('> quoted\n\nwhy?'), { notes: [], body: '> quoted\n\nwhy?' });
   assert.deepEqual(splitNotes('see [注释 1] above'), { notes: [], body: 'see [注释 1] above' });
@@ -886,6 +932,26 @@ test('native questions replay answers and cease waiting after cancellation or da
   assert.ok(old && old.kind === 'input');
   assert.deepEqual(old.answer, { cancelled: true, ended: true });
   assert.equal(interrupted.awaitingApproval, false);
+});
+
+test('a plan gate full access answered itself arrives recorded, never waiting', () => {
+  const tl = buildTimeline([
+    ev('turn.started', { text: '先出方案', workMode: 'plan' }),
+    ev('input.request', {
+      inputId: 'p1', title: '计划已准备好', kind: 'plan',
+      auto: { answers: { approval: ['exit-plan-bypass'] } },
+      plan: '## 实施计划\n\n1. 阅读代码',
+      questions: [{ id: 'approval', question: '是否按此计划开始执行？', options: [{ value: 'exit-plan-bypass', label: '开始执行' }] }],
+    }),
+    ev('turn.done', {}),
+  ]);
+  assert.equal(tl.awaitingApproval, false, 'nobody is asked, so the thread is not waiting');
+  const item = tl.items.find(it => it.kind === 'input');
+  assert.ok(item && item.kind === 'input');
+  assert.equal(item.auto, true);
+  assert.ok(item.answer && 'answers' in item.answer);
+  assert.deepEqual(item.answer.answers, { approval: ['exit-plan-bypass'] });
+  assert.equal(item.plan, '## 实施计划\n\n1. 阅读代码');
 });
 
 test('work after a question, plan or approval lands below the card, and tools started above still get their result', () => {
@@ -1023,4 +1089,44 @@ test('agent notices preserve their text and confirmation link marker without cha
   assert.equal(notices.length, 2);
   assert.deepEqual(notices.map(item => [item.text, item.confirmation]), [['The draft is ready.', false], ['待你确认：Review report', true]]);
   assert.equal(timeline.running, false);
+});
+
+test('a quota-resume marker divides the timeline where the daemon continued the thread by itself', () => {
+  const timeline = buildTimeline([
+    ev('turn.started', { text: 'keep working' }),
+    ev('turn.error', { message: 'You have exhausted your quota on this model.', code: 'plan_exhausted' }),
+    ev('handover.resume', { resetsAt: '2026-10-12T09:00:00.000Z' }, null),
+    ev('turn.started', { text: 'keep working' }, 't2'),
+    ev('message.delta', { text: 'resumed' }, 't2'),
+    ev('turn.done', {}, 't2'),
+  ]);
+  const marker = timeline.items.find(item => item.kind === 'quota-resume');
+  assert.ok(marker?.kind === 'quota-resume');
+  assert.equal(marker.resetsAt, '2026-10-12T09:00:00.000Z');
+  assert.ok(!marker.turnId);
+  assert.ok(timeline.items.some(item => item.kind === 'error' && item.planExhausted === true));
+});
+
+test('a turn a channel started is marked by its source, never by its words', () => {
+  const user = (data: Record<string, any>) => buildTimeline([ev('turn.started', data)]).items.find(i => i.kind === 'user') as any;
+  assert.deepEqual(user({ text: 'raw', displayText: '飞书 · 3 条新信号', channel: { kind: 'lark', count: 3 } }).channel, { kind: 'lark', count: 3 });
+  assert.equal(user({ text: '飞书 · 3 条新信号' }).channel, undefined);
+  assert.equal(user({ text: 'x', channel: { count: 2 } }).channel, undefined);
+});
+
+test('a mixed batch keeps its parts in order: a person\'s words stay words, the rest are quiet lines', () => {
+  const parts = [{ kind: 'lark', count: 2 }, { kind: 'person', text: '先记下周三的会' }, { kind: 'worker', count: 1 }, { kind: 'person', text: '买票' }];
+  const channel = turnChannel({ kind: 'mixed', count: 5, parts })!;
+  assert.deepEqual(channel.parts, parts);
+  assert.deepEqual(channelRows(channel, 'joined'), [
+    { kind: 'note', text: '飞书 · 2 条新信号' }, { kind: 'person', text: '先记下周三的会' }, { kind: 'note', text: '工作 · 1 条进展' }, { kind: 'person', text: '买票' },
+  ]);
+});
+
+test('single channels are one quiet line, and a batch that cannot say what it holds stays a message', () => {
+  assert.deepEqual(channelRows(turnChannel({ kind: 'worker', count: 3 })!, 'x'), [{ kind: 'note', text: '工作 · 3 条进展' }]);
+  assert.deepEqual(channelRows(turnChannel({ kind: 'future', count: 1 })!, 'as sent'), [{ kind: 'note', text: 'as sent' }]);
+  assert.equal(turnChannel({ kind: 'mixed', count: 2 }), null);
+  assert.equal(turnChannel({ kind: 'mixed', count: 2, parts: [{ kind: 'nonsense' }] }), null);
+  assert.deepEqual(turnChannel({ kind: 'mixed', count: 2, parts: [{ kind: 'nonsense' }, { kind: 'person', text: '话' }] })!.parts, [{ kind: 'person', text: '话' }]);
 });
