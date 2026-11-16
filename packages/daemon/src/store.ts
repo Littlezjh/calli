@@ -20,9 +20,11 @@ import { MessageEdits } from './message-edits.js';
 import type { MeetingReference, SignalMaterial, SignalMaterialRead } from './channels/lark-material.js';
 
 /** Storage cap for one tool snapshot's output; see docs/tool-output-storage-design.md. */
-const MAX_OUTPUT_CHARS = 128 * 1024;
-const OUTPUT_HEAD_CHARS = 96 * 1024;
-const OUTPUT_TAIL_CHARS = 32 * 1024;
+// The hub keeps a preview of a tool's output, not the output: the agent's own session file is the
+// full copy. 4K is enough to read a command's start and its last lines in the timeline.
+const MAX_OUTPUT_CHARS = 4 * 1024;
+const OUTPUT_HEAD_CHARS = 3 * 1024;
+const OUTPUT_TAIL_CHARS = 1024;
 
 export type TitleBy = 'default' | 'user' | 'auto';
 
@@ -1501,6 +1503,28 @@ export class Store {
         }});
     }
     this.saveHubSetting('toolOutputCollapsed', true);
+  }
+
+  /** One-time shrink of outputs stored under the old 128K cap down to the preview size. */
+  trimStoredToolOutputs(): void {
+    if (this.hubSetting('toolOutputTrimmed', false)) return;
+    const threads = this.db.prepare('SELECT id FROM threads').all() as Array<{ id: string }>;
+    for (const { id } of threads) {
+      this.transaction(() => {
+        const rows = this.db.prepare(
+          "SELECT seq, data FROM events WHERE thread_id = ? AND type IN ('tool.update', 'tool.end') AND length(data) > ?",
+        ).all(id, MAX_OUTPUT_CHARS) as Array<{ seq: number; data: string }>;
+        for (const row of rows) {
+          let data: Record<string, unknown>;
+          try {
+            data = JSON.parse(row.data) as Record<string, unknown>;
+          } catch { continue; }
+          const stored = this.capOutput(data);
+          if (stored !== data) this.db.prepare('UPDATE events SET data = ? WHERE thread_id = ? AND seq = ?').run(JSON.stringify(stored), id, row.seq);
+        }
+      });
+    }
+    this.saveHubSetting('toolOutputTrimmed', true);
   }
 
   /** Head and tail of an oversized output, with an honest marker where the middle was. */
