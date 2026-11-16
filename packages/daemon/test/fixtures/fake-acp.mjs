@@ -210,8 +210,11 @@ rl.on('line', (line) => {
       if (!dsh) {
         const initial = msg.params?._meta?.claudeCode?.options;
         if (typeof initial?.model === 'string' && process.env.FAKE_ACP_MODEL_SELECTION_LOG) appendFileSync(process.env.FAKE_ACP_MODEL_SELECTION_LOG, initial.model + '\n');
-        if (initial?.model === 'broken') return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32603, message: 'Internal error' } });
+        const reconciledModel = process.env.FAKE_CLAUDE_SETTINGS_MODEL
+          ? process.env.ANTHROPIC_MODEL ?? process.env.FAKE_CLAUDE_SETTINGS_MODEL : initial?.model;
+        if (reconciledModel === 'broken') return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32603, message: 'Internal error', data: { details: 'Could not confirm model "broken" with the API.' } } });
         if (typeof initial?.model === 'string') currentModel = initial.model;
+        if (typeof reconciledModel === 'string') currentModel = reconciledModel;
         if (typeof initial?.effort === 'string') {
           const efforts = sessionInfo().configOptions.find(option => option.id === 'effort')?.options;
           if (!efforts?.some(value => value.value === initial.effort)) return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32602, message: 'unsupported effort' } });

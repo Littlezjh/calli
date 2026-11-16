@@ -16,8 +16,11 @@ export class RpcError extends Error {
   constructor(
     message: string,
     readonly code: number,
+    readonly data?: unknown,
   ) {
-    super(message);
+    const details = data && typeof data === 'object' && 'details' in data ? data.details : undefined;
+    super(typeof details === 'string' && details.trim() && details.trim() !== message
+      ? `${message}\n${details.trim()}` : message);
   }
 }
 
@@ -101,7 +104,7 @@ export class JsonRpcPeer {
       const p = this.pending.get(msg.id);
       if (!p) return;
       this.pending.delete(msg.id);
-      if (msg.error) p.reject(new RpcError(msg.error.message ?? 'RPC error', msg.error.code ?? -32000));
+      if (msg.error) p.reject(new RpcError(msg.error.message ?? 'RPC error', msg.error.code ?? -32000, msg.error.data));
       else p.resolve(msg.result);
       return;
     }

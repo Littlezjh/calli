@@ -338,6 +338,22 @@ test('ClaudeAcpAdapter: permission mode, model and effort are applied when the n
   await session.close();
 });
 
+test('ClaudeAcpAdapter: a selected model overrides a failing settings pin without changing the instance', async (t) => {
+  const env = { ANTHROPIC_MODEL: 'broken', FAKE_CLAUDE_SETTINGS_MODEL: 'broken' };
+  const adapter = new ClaudeAcpAdapter([process.execPath, fakeAcp], env);
+  for (const model of ['big', 'small']) {
+    const session = await adapter.start({ cwd: here, model });
+    t.after(() => session.close());
+    const { hooks, events } = collectingHooks();
+    await session.prompt(turn('model?'), hooks);
+    assert.equal(events.at(-1)?.data.text, `model:${model};mode:default;effort:default`);
+    await session.close();
+  }
+  assert.equal(env.ANTHROPIC_MODEL, 'broken', 'the instance environment is not mutated');
+  await assert.rejects(adapter.start({ cwd: here }), /Could not confirm model "broken" with the API/,
+    'an unpinned session still uses the native default and reports its failure');
+});
+
 test('ClaudeAcpAdapter: full_access skips the approval prompt, and settings change on a live session', async () => {
   const adapter = new ClaudeAcpAdapter([process.execPath, fakeAcp]);
   const session = await adapter.start({ cwd: here, permissionMode: 'full_access' });

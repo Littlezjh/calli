@@ -75,6 +75,7 @@ Plan 交互参考了 [Cline 的 Plan / Act](https://docs.cline.bot/core-workflow
 - **同一个会话，两个入口。** 线程保存 agent 侧的会话 ID。网页和终端操作的是同一份会话；daemon 重启后用这个 ID 恢复。只有实际发送后才创建原生会话的 CLI，通过 `StartOptions.onSessionId` 在收到原生标识时立即保存，不用假 ID 或额外提示词预建会话。
 - **不在 agent 那边留痕迹。** 探测模型和命令用临时进程（pi 加 `--no-session`；Claude 不发消息就不会落盘）。
 - **设置按线程保存：** 权限、模型、思考强度。运行中修改会直接作用到会话上，做不到时重启会话并恢复。
+  - **Claude 新会话的模型在启动前对齐。** 显式选择的模型同时作为 SDK 启动参数和该子进程的 `ANTHROPIC_MODEL`，避免 ACP 初始化时又按原生 `settings.model` 校验另一个模型，或把同一模型的别名当成切换，再发一次有超时限制的校验请求。只覆盖本次进程，不写原生配置；未指定模型仍使用原生默认值，恢复会话沿用原有加载与设置流程。ACP 错误保留 `data.details` 中的文字原因和原生错误码，不把任意结构化载荷拼进错误提示。
   - **上次主动选择与线程设置分开。** 新会话继承目标 daemon 的 `hub_settings.draft.model.preferences`，按实例记录最后模型，并在 `perModel` 中按模型 ID 分别记思考强度、速度（空键表示原生默认模型）。不同机器使用各自数据库，实例账号不串。已有会话只用自己的设置；输入框主动改选通过线程 PATCH 的 `rememberModelChoice` 同步记偏好，普通读取、恢复历史及内部更新不改变偏好。
   - **读不改写，写只带主动改动。** `GET /api/draft-model-preferences` 只解析保存记录，不探测模型、不删除暂时不可用的值；`PATCH` 接受 `agent` 与本次修改的模型/强度/速度，校验后合并单实例字段，保留其他实例和模型。兼容旧 PUT 与旧平铺记录。前端串行保存，旧响应不能覆盖后续操作；首次加载失败明确提示并提供重试，刷新失败保留有效值。移除独立浏览器偏好；旧 `calli.agent.choice` 没有机器标识，不自动迁入另一台机器。只使用 Calli 数据，不改 agent 原生配置。
   - **参考取舍。** 借鉴 [LibreChat 按端点恢复上次模型](https://www.librechat.ai/docs/features/url_query#pick-the-endpoint-and-model)、[OpenCode 按提供方与模型保存档位](https://github.com/anomalyco/opencode/blob/101776024cc69bafb3f9dc90027ab4d1eab40a2a/packages/tui/src/model-preference.ts)，并保持 [pi 对当前会话和启动默认值的区分](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/models.md#select-a-model)。Calli 按用户选定的规则自动记住主动选择，不另外增加“保存为默认”操作。

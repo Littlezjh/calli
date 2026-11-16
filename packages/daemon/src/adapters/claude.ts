@@ -280,7 +280,12 @@ export class ClaudeAcpAdapter extends AcpAdapter {
     if (opts.probe) return {};
     const options = { ...(opts.model ? { model: opts.model } : {}), ...(opts.effort ? { effort: opts.effort } : {}) };
     return Object.keys(options).length
-      ? { meta: { claudeCode: { options } }, model: !!opts.model, effort: !!opts.effort }
+      ? {
+        meta: { claudeCode: { options } }, model: !!opts.model, effort: !!opts.effort,
+        // ACP reconciles its picker after SDK startup. Match the SDK's input so a
+        // settings alias (or another default model) does not trigger validation again.
+        ...(opts.model ? { env: { ANTHROPIC_MODEL: opts.model } } : {}),
+      }
       : {};
   }
 

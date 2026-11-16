@@ -561,7 +561,7 @@ export abstract class AcpAdapter implements AgentAdapter {
   /** Optional protocol extensions supplied by a concrete adapter. */
   protected configureSession(_session: AcpSession, _peer: JsonRpcPeer): void {}
   /** Agent-specific options that must be present when a fresh native session is created. */
-  protected initialSessionOptions(_opts: StartOptions): { meta?: Record<string, unknown>; model?: boolean; effort?: boolean } { return {}; }
+  protected initialSessionOptions(_opts: StartOptions): { meta?: Record<string, unknown>; env?: Record<string, string>; model?: boolean; effort?: boolean } { return {}; }
   abstract readonly id: string;
   abstract readonly label: string;
   abstract readonly capabilities: AgentAdapter['capabilities'];
@@ -726,8 +726,9 @@ export abstract class AcpAdapter implements AgentAdapter {
 
   /** Starts a session and also returns the config options the agent reported for it. */
   protected async open(opts: StartOptions, probe = false): Promise<{ session: AcpSession; configOptions: ConfigOption[] }> {
+    const initial = opts.resumeId ? {} : this.initialSessionOptions(opts);
     const [bin, ...args] = this.command;
-    const child = spawn(bin, args, { cwd: opts.cwd, stdio: ['pipe', 'pipe', 'pipe'], env: sessionEnvironment(this.env, opts.coordinationEnv) });
+    const child = spawn(bin, args, { cwd: opts.cwd, stdio: ['pipe', 'pipe', 'pipe'], env: sessionEnvironment({ ...this.env, ...initial.env }, opts.coordinationEnv) });
 
     // The session object is created after the peer, but the peer's handlers need it.
     // Route through a holder so both can reference each other without a cycle at construction.
@@ -767,7 +768,6 @@ export abstract class AcpAdapter implements AgentAdapter {
         clientCapabilities: { elicitation: { form: {} } },
       });
 
-      const initial = opts.resumeId ? {} : this.initialSessionOptions(opts);
       const startParams = { cwd: opts.cwd, mcpServers: [], ...(initial.meta ? { _meta: initial.meta } : {}) };
       let sessionId: string;
       let info: any;

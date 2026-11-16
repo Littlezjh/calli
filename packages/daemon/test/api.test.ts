@@ -624,6 +624,7 @@ test('Claude validates unknown model capabilities when used; known catalog restr
       return events.some(event => event.type === 'turn.error') ? events : null;
     });
     assert.equal(failed.some(event => event.type === 'message.delta'), false, 'the rejected configuration must not run a prompt');
+    if (choice.model === 'broken') assert.match(String(failed.find(event => event.type === 'turn.error')?.data.message), /Could not confirm model "broken" with the API/);
   }
   const piPlain = await api('/api/threads', {
     method: 'POST',
