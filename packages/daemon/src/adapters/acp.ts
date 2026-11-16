@@ -401,10 +401,17 @@ export class AcpSession implements AgentSession {
     if (!questions?.length || !hooks?.requestInput) return { action: 'cancel' };
     const answer = await hooks.requestInput({ id: params.toolCallId, title: params.message || '需要你的意见', questions });
     if ('cancelled' in answer) return { action: 'cancel' };
-    const content = Object.fromEntries(questions.filter(q => answer.answers[q.id]?.length).map(q => {
+    const content = Object.fromEntries(questions.flatMap(q => {
+      const entries: Array<[string, unknown]> = [];
       const a = answer.answers[q.id];
-      const type = params.requestedSchema.properties[q.id].type;
-      return [q.id, type === 'array' ? a : type === 'boolean' ? a[0] === 'true' : a[0]];
+      if (a?.length) {
+        const type = params.requestedSchema.properties[q.id].type;
+        entries.push([q.id, type === 'array' ? a : type === 'boolean' ? a[0] === 'true' : a[0]]);
+      }
+      // The choice's own free-text line goes back under its field, beside the pick it qualifies.
+      const note = q.note ? answer.answers[q.note.id] : undefined;
+      if (q.note && note?.length) entries.push([q.note.id, note[0]]);
+      return entries;
     }));
     return { action: 'accept', content };
   }

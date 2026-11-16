@@ -1275,7 +1275,9 @@ function questionTrace(item: Extract<Item, { kind: 'input' }>): Trace {
   }
   const parts = item.questions.map((q) => {
     const said = (answer.answers[q.id] ?? []).map((value) => q.options.find((o) => o.value === value)?.label ?? value).join(' · ');
-    return `${q.header || q.question}：${said}`;
+    // The choice's own free-text line reads as part of the same answer, not a question of its own.
+    const note = q.note ? (answer.answers[q.note.id] ?? [])[0] : undefined;
+    return `${q.header || q.question}：${note && said ? `${said} · ${note}` : note ?? said}`;
   });
   return { icon: 'check', text: t('trace.answered', parts) };
 }

@@ -1307,6 +1307,7 @@ export const en: Messages = {
   'sheet.question.defaultTitle': 'The agent has a question',
   'sheet.question.otherAnswer': 'Describe another answer',
   'sheet.question.typeAnswer': 'Type an answer',
+  'sheet.question.note': 'Add a note or your own answer (optional)',
   'sheet.plan.aria': 'Plan approval',
   'sheet.plan.label': 'Plan',
   'sheet.plan.title': 'Run this plan?',

@@ -64,6 +64,68 @@ for (const adapter of adapters()) {
   });
 }
 
+test('claude: the optional custom answer is asked on the choice card and returns under its own field', { timeout: 10000 }, async () => {
+  const events: EmittedEvent[] = [];
+  const s = await new ClaudeAcpAdapter(fixture('acp')).start({ cwd: here, workMode: 'plan' });
+  try {
+    const result = await s.prompt(input('plan-question'), { ...hooks(events), requestInput: async r => {
+      // One card: the choice, with the agent's optional free-text line folded into it.
+      assert.equal(r.questions.length, 1);
+      assert.equal(r.questions[0].id, 'question_0');
+      assert.deepEqual(r.questions[0].note, { id: 'question_0_custom' });
+      return { answers: { question_0: ['桌面和手机'], question_0_custom: ['补充测试'] } };
+    } });
+    assert.equal(result.stopReason, 'end_turn');
+    const text = events.filter(e => e.type === 'message.delta').map(e => e.data.text).join('');
+    assert.match(text, /"question_0":"桌面和手机"/);
+    assert.match(text, /"question_0_custom":"补充测试"/);
+  } finally { await s.close(); }
+});
+
+test('claude: independent form questions stay separate, each choice keeping its own note line', { timeout: 10000 }, async () => {
+  const events: EmittedEvent[] = [];
+  const s = await new ClaudeAcpAdapter(fixture('acp')).start({ cwd: here, workMode: 'plan' });
+  try {
+    const result = await s.prompt(input('plan-question-steps'), { ...hooks(events), requestInput: async r => {
+      assert.deepEqual(r.questions.map(q => q.id), ['question_0', 'question_1']);
+      assert.deepEqual(r.questions[0].note, { id: 'question_0_custom' });
+      assert.equal(r.questions[1].note, undefined);
+      return { answers: { question_0: ['先做桌面'], question_1: ['需要截图'] } };
+    } });
+    assert.equal(result.stopReason, 'end_turn');
+    const text = events.filter(e => e.type === 'message.delta').map(e => e.data.text).join('');
+    assert.match(text, /"question_0":"先做桌面"/);
+    assert.match(text, /"question_1":"需要截图"/);
+    assert.doesNotMatch(text, /question_0_custom/, 'the untouched note is not sent to the agent');
+  } finally { await s.close(); }
+});
+
+test('a choice with its note line is answered under both ids, and only those', async () => {
+  const events: any[] = [];
+  const pending = new UserInputs((_thread, _turn, type, data) => events.push({ type, data }));
+  const question = { id: 'question_0', question: 'Merge', options: [{ value: 'yes', label: 'Yes' }], note: { id: 'question_0_custom' } };
+  const ask = () => { const promise = pending.request('thread', 'turn', { id: 'native', title: 'Question', questions: [{ ...question }] }); return { promise, id: events.at(-1)!.data.inputId }; };
+
+  // The note alone answers the question; both ids return to the agent, the empty pick included.
+  let waiting = ask();
+  assert.equal(pending.answer(waiting.id, { answers: { question_0_custom: ['as you wish'] } }), true);
+  let settled = await waiting.promise as any;
+  assert.deepEqual(settled.answers.question_0, []);
+  assert.deepEqual(settled.answers.question_0_custom, ['as you wish']);
+
+  // A pick and its note travel together; unknown ids and bad notes are refused.
+  waiting = ask();
+  assert.equal(pending.answer(waiting.id, { answers: { question_0: ['yes'], question_0_custom: ['do it now'] } }), true);
+  settled = await waiting.promise as any;
+  assert.deepEqual(settled.answers.question_0, ['yes']);
+  assert.deepEqual(settled.answers.question_0_custom, ['do it now']);
+  waiting = ask();
+  assert.throws(() => pending.answer(waiting.id, { answers: { question_1_custom: ['x'] } }), /不存在/);
+  assert.throws(() => pending.answer(waiting.id, { answers: { question_0_custom: ['a', 'b'] } }), /格式无效/);
+  assert.throws(() => pending.answer(waiting.id, { answers: {} }), /请回答所有问题/);
+  pending.cancel('thread', 'native');
+});
+
 for (const adapter of adapters().filter(a => ['claude', 'zcode'].includes(a.id))) {
   test(`${adapter.id}: native plan approval updates the UI mode without another prompt`, { timeout: 10000 }, async () => {
     const changes: string[] = [];

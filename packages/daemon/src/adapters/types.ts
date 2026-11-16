@@ -11,6 +11,10 @@ export interface TurnInput {
 }
 
 export type WorkMode = 'execute' | 'plan';
+export interface UserQuestionNote {
+  /** The schema field the note is answered under, so the agent gets it back untouched. */
+  id: string;
+}
 export interface UserQuestion {
   id: string;
   question: string;
@@ -19,6 +23,8 @@ export interface UserQuestion {
   multiple?: boolean;
   freeText?: boolean;
   required?: boolean;
+  /** The agent's own optional free-text line for this choice ("other" answer or note), asked on the same card. */
+  note?: UserQuestionNote;
 }
 export interface UserInputRequest {
   /** Native request identity, used to coalesce reannouncements and cancellations. */

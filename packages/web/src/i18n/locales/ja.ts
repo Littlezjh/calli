@@ -1305,6 +1305,7 @@ export const ja: Messages = {
   'sheet.question.defaultTitle': 'エージェントから質問があります',
   'sheet.question.otherAnswer': '別の回答を入力',
   'sheet.question.typeAnswer': '回答を入力',
+  'sheet.question.note': '補足や自由な回答を追加（任意）',
   'sheet.plan.aria': '計画の承認',
   'sheet.plan.label': '計画',
   'sheet.plan.title': 'この計画を実行しますか？',
