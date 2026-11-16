@@ -64,3 +64,12 @@ export function takeoverMention(mentions: AgentMention[], exhausted: boolean, cu
   const [only] = mentions;
   return exhausted && mentions.length === 1 && only.kind === 'agent' && !only.host && only.id !== current ? only : null;
 }
+
+/**
+ * A handover made by hand from the dialog: a separate conversation with no method of its own.
+ * Automatic ones (resume or summary) have their own undo in the chain record.
+ */
+export function cancellableHandover(thread: Pick<Thread, 'handover' | 'archivedAt'>): boolean {
+  const link = thread.handover;
+  return Boolean(link && !thread.archivedAt && link.mode === 'branch' && !link.method && !link.automatic && !link.detached);
+}

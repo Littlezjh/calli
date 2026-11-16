@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
 import { copyClaudeAccount, startClaudeLogin } from './claude-account.js';
 import { fetchGatewayQuota } from './gateway-quota.js';
+import { glmQuotaExhausted, individualQuotaExhausted } from './quota-errors.js';
 import { claudeLiveUsage } from './session-usage.js';
 import { readTraexModelStatus } from './traex.js';
 import { ferryModelKey, readFerryQueueObservations } from './ferry.js';
@@ -333,9 +334,25 @@ export class ClaudeAcpAdapter extends AcpAdapter {
     return startClaudeLogin(this.env.CALLI_CLAUDE_BIN || claudeCli(), configDirectory(this.env, 'CLAUDE_CONFIG_DIR', ['.claude'], process.cwd()), this.env, onSuccess);
   }
 
-  /** "You've hit your session limit · resets 10:10am (UTC)", and the weekly and usage variants. */
+  /** Its own limits ("You've hit your session limit · resets 10:10am (UTC)"), the subscription's
+   * individual quota, and the GLM Coding Plan wording when it runs on a ZCode gateway. */
   planExhausted(message: string): boolean {
-    return /hit your (?:\w+ )?limit|usage limit reached/i.test(message);
+    return /hit your (?:\w+ )?limit|usage limit reached/i.test(message) || individualQuotaExhausted(message) || glmQuotaExhausted(message);
+  }
+
+  /**
+   * The gateway catalog bills by provider prefix: `zcode/…` rides the Coding Plan the GLM models
+   * exhausted, while `deepseek/…`, `relay/…` and the bridges route to separately billed providers.
+   * Plain CLI model ids carry no prefix and share whatever the account has.
+   */
+  routesThroughGateway(): boolean {
+    try { return this.gateway() !== null; } catch { return false; }
+  }
+
+  separateModelPools(from: string, to: string): boolean {
+    const pool = (id: string) => (id.includes('/') ? id.slice(0, id.indexOf('/')) : '');
+    const a = pool(from), b = pool(to);
+    return Boolean(a && b && a !== b);
   }
 
   async sessionLocation(agentSessionId: string | null, cwd: string) {

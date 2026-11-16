@@ -8,7 +8,7 @@
 - 全局阈值默认已用 90%，可设 1～99%。轮次结束强制刷新实例额度；`checkedAt` 超过 30 秒、查询失败或空数据，不触发主动交接。一次运行、待批准或待回答期间不会交接。
 - 接近阈值时原 agent 在原会话里接收 `handoverPrompt`，其回复作为摘要；摘要轮失败则用日志摘要。套餐已耗尽的 `plan_exhausted` 直接使用日志摘要，并重试失败的用户消息。图片、视频及等待中的消息保留并转交。
 - 摘要准备完毕，显示 5 秒倒计时，可取消。取消本次额度事件后不立即反复提示，观察到额度恢复才重新允许；不同会话独立去重。
-- 配置里的顺序可以是实例，也可以是实例加模型；没有配置才使用同类型其他实例优先。没配置顺序时候选还必须读得出套餐额度窗口，也就是订阅账号交给订阅账号；同一适配器下接第三方端点的桥接实例（读不出套餐）不会被默认选中，只有顺序里明确写出才会用。已知耗尽/接近阈值、未连接及无法保持来源权限级别的目标会跳过，没有可用目标时保留队列并显示停止提示。目标在倒计时结束后再次验证。
+- 配置里的顺序可以是实例，也可以是实例加模型；没有配置才使用同类型其他实例优先。没配置顺序时候选还必须读得出套餐额度窗口，也就是订阅账号交给订阅账号；同一适配器下接第三方端点的桥接实例（读不出套餐）不会被默认选中，只有顺序里明确写出才会用。走网关的实例（如 Claude magpie，网关自己报额度窗口）也不算同一种账号：默认顺序里订阅只交给订阅、网关只交给网关，由适配器的 `routesThroughGateway()` 判断；要跨过去同样得在顺序里写明。已知耗尽/接近阈值、未连接及无法保持来源权限级别的目标会跳过，没有可用目标时保留队列并显示停止提示。目标在倒计时结束后再次验证。
 - `QuotaWindow.modelIds` 由适配器提供。agy 映射 Gemini、Claude、Claude and GPT 模型组及精确模型名；TRAE 用 `config_name` 或模型标识关联。未映射窗口可以决定跨实例交接，不能据此选择同实例的另一个模型。目标模型需要有明确、健康的独立额度窗口。
 - `capabilities.modelSwitch` 表示模型切换保持原生会话；包括 agy 用原 conversation ID 重启 CLI。此时保持原线程、不写摘要，时间线记录模型切换。没有此能力则新建接手线程。已耗尽时切换模型后先重试失败轮次。
 - 协作成员迁移在接手首轮领取任务时进行，成员名字、角色和目录不变，排队消息、未完成投递及结果改到接手会话；原凭据撤销，旧会话不再投递结果。主控收到通知。主控自己交接时也迁移协作根。
@@ -25,6 +25,11 @@
 - 原 `handover-thread` 接口增加可选 `model`。原手动摘要接口仍拒绝相同实例；自动流程内部允许不支持模型保留时在同实例创建新会话。
 
 新接口延用本机鉴权和多机器代理边界。会话列表随 SSE 提供简短状态，设置页逐个展开实例时才加载模型选项。
+
+### 命令行与手机入口（2026-11-14）
+
+- `calli autohandover THREAD`：读状态；`cancel` 取消进行中的交接；`off`/`on`/`inherit` 改单线程覆盖（`inherit` 恢复继承）；`members off|on` 改协作成员整体开关（给协作根线程）；`detach` 撤销 continue 接力链（原会话恢复为独立对话）；`giveback` 把交接搬走的协作（根或成员身份，自动与手动 takeover 皆可）还给源线程，源线程重新担任根或成员、接手线程原地退休，并把源线程的自动交接关掉防止立刻再被交走。走 `CALLI_URL`/`CALLI_TOKEN`，与 `team` 命令同一凭据；测试 `packages/daemon/test/autohandover-cli.test.ts` 用假 agent 引导真实 HTTP hub 跑通全部子命令与 giveback 往返（`coordination.handbackMember` 为 `replaceHandoverMember` 的逆操作，`threads.handbackAutomaticHandover` 为入口，`POST /api/threads/:id/handback`）。
+- 手机此前只有倒计时里的一次性取消，交接与交接链只在电脑端行菜单里；现在斜杠菜单对当前线程也提供「交接」和「交接记录」（有链才出现），与电脑端同一组对话框，`App.tsx` 的 `hubActions`/`runHubAction` 与 `ThreadActions` 暴露的 `handover`/`chain`/`inChain` 接线。
 
 ## 额度读数的三个来源
 
@@ -55,15 +60,27 @@
 
 ## 套餐耗尽证据
 
-2026-10-21 只读检查本机安装 CLI，未人为耗尽真实账号：
+2026-10-21 只读检查本机安装 CLI，未人为耗尽真实账号；2026-11-13 补充本机 hub 事件日志里的真实报错（`turn.error` 原文，各出现 3–16 次）：
 
 | 适配器 | 实际内置文本 | 本阶段处理 |
 |---|---|---|
-| agy | `You have exhausted your quota on this model.` | 精确匹配该句；`fake-agy.mjs` 的 `quota-exhausted` 返回该错误 |
+| agy | `You have exhausted your quota on this model.`；另见 `Individual quota reached. Please upgrade your subscription…`（Claude/Gemini 订阅个人额度） | 精确匹配该句；`fake-agy.mjs` 的 `quota-exhausted` 返回该错误。Individual quota 文本见日志实证，一并识别，其 `Resets in 4h45m44s` 可解析为守候唤醒时间 |
 | TRAE | `You've hit your usage limit for …`、`You've hit your usage limit.` 等 usage-limit 文本 | 识别明确套餐限制；TRAE 使用的 `fake-codex.mjs` app-server 输入 `quota-exhausted` 返回相同格式 |
+| pi | `429: {"code":"1308","message":"已达到 5 小时的使用上限。您的限额将在 2026-11-10 13:27:57 重置。"}`、同格式 `1310`（每周/每月）、`insufficient_quota: upstream error: … (code=4008)` | GLM Coding Plan（BigModel/Z.ai）套餐耗尽实报；按码与措辞识别（共享 `adapters/quota-errors.ts`），消息中的重置时间按北京时间解析进守候 |
+| claude | 经 ZCode 网关时报 `Internal error: API Error: Request rejected (429) · ZCode: [1308][已达到 5 小时的使用上限。…]`；另有 `Individual quota reached…` | 原有 session/usage limit 匹配保留，补充上述两种；网关包装与 pi 同源同规则 |
 | zcode | 发现的是工作流子任务的 provider 配额说明和工具的 `quota_exceeded` | 不能证实是主会话套餐耗尽错误，不新增规则；仍可利用已报告的额度做跨实例主动交接 |
 
-Claude/Codex 原有匹配保留。不把普通 429、磁盘 quota exceeded 或图片生成额度耗尽视为模型套餐用完。真实线上耗尽响应的端到端触发未验证；上述文本证据来自安装产物，不是猜测 API 返回值。
+Claude/Codex 原有匹配保留。不把普通 429、磁盘 quota exceeded 或图片生成额度耗尽视为模型套餐用完。真实线上耗尽响应的端到端触发未验证；10-21 的文本证据来自安装产物，11-13 的文本证据来自本机 hub 事件日志，都不是猜测 API 返回值。
+
+## 网关的模型池
+
+claude 走网关时，模型 id 带 provider 前缀：`zcode/GLM-5.3` 与 `zcode/GLM-5.3-Flash` 共用 Coding Plan 套餐窗口，`deepseek/deepseek-flash`、`relay/…`、`traex-bridge/…` 分别计费。`ClaudeAcpAdapter.separateModelPools(from, to)` 据此回答两个模型是否独立池；配额窗口没有模型归属时，这是同实例换模型的唯一证据。
+
+- **选目标**：同实例目标要么窗口点名两个模型（原有规则），要么适配器说两者独立池；后者不受套餐窗口已用百分比阻挡（套餐耗尽不代表独立计费的 provider 也耗尽）。
+- **拉黑精确到池**：套餐耗尽后只拉黑出事的模型（`handover.blocks` 带 model），不连坐整个实例。摘掉整个实例会让换池的目标下一轮也进不来——这正是「GLM 超限后原地切 deepseek」此前不可用的第二处原因。
+- **形态**：仍是「同实例 + 模型」的交接，即原会话原地切模型、失败那一轮原样重发，不写摘要、不开新会话；时间线记 `handover.model`，沿用既有渲染。
+
+验证：`handover-api.test.ts` 用真实网关目录（`fixtures/model-gateway.mjs`）+ 假 acp 跑通「GLM 超限 → 切 `deepseek/deepseek-flash` → 重发成功」，断言同线程、模型切换事件、以及 agent 实际执行的模型顺序为 `zcode/GLM-5.3` → `deepseek/deepseek-flash`。
 
 ## 验证
 

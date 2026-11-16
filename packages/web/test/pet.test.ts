@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { applyPetStarter, clearPetHaze, petBustBox, nextPetFrame, petCacheKey, petCacheName, petClampPosition, petErrorDetail, petLicenseUrl, petAdvice, petBriefAdvice, petBriefWanted, petFailureKind, petTriage, petReplyParts, petRing, petSpeaksOf, parsePetPending, petDay, petGreetingLine, petReplyPreview, petThreadState, PET_GIVE_UP_MS, PET_QUIET_POLLS, readPetRouter, yawnDelay } from '../src/pet.js';
+import { t } from '../src/i18n/index.js';
 
 test('a looping clip wraps and a one-shot clip ends', () => {
   assert.equal(nextPetFrame(0, 121, true), 1);
@@ -127,6 +128,9 @@ test('a thread is read by what it needs from the person, and a team member outra
   // A stop days ago is history; one with a quota watch armed takes care of itself; done is done.
   assert.equal(petThreadState({ ...base, status: 'error', failure: { ...failure, at: '2026-11-02T10:00:00Z' } }, now), 'stale');
   assert.equal(petThreadState({ ...base, status: 'error', failure, autoHandover: { resume: { resetsAt: null } } }, now), 'parked');
+  // A transient failure the daemon retries by itself takes care of itself the same way.
+  assert.equal(petThreadState({ ...base, status: 'error', failure, autoRetry: { attempts: 0, max: 3, nextAt: '2026-11-06T12:05:00Z' } }, now), 'parked');
+  assert.equal(petAdvice({ ...base, status: 'error', failure, autoRetry: { attempts: 1, max: 3, nextAt: '2026-11-06T12:05:00Z' } }, now).why, t('pet.why.retrying'));
   assert.equal(petThreadState({ ...base, status: 'error', failure, doneAt: '2026-11-06T11:00:00Z' }, now), 'idle');
   assert.equal(petThreadState({ ...base, waiting: true, doneAt: '2026-11-06T11:00:00Z' }, now), 'waiting');
 });

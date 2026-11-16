@@ -17,6 +17,8 @@ export type EventType =
   | 'turn.phase'
   | 'turn.done'
   | 'turn.error'
+  /** The daemon resent the last failed turn by itself after a transient provider error. */
+  | 'turn.retry'
   | 'message.delta'
   /** Authoritative item text correcting its already-streamed tail. */
   | 'message.replace'

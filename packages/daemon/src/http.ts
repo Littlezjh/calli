@@ -667,6 +667,12 @@ export function createHttpServer(deps: HttpDeps): Server {
       if (method === 'PUT') return sendJson(res, 200, manager.autoHandover.configure(await readJson(req)));
     }
 
+    // Auto-advance: the hub moving threads on by themselves after an `等外部` or `进行中` report.
+    if (parts[0] === 'api' && parts[1] === 'advance' && parts[2] === 'settings' && !parts[3]) {
+      if (method === 'GET') return sendJson(res, 200, manager.autoAdvance.settings());
+      if (method === 'PUT') return sendJson(res, 200, manager.autoAdvance.configure(await readJson(req)));
+    }
+
     // Auto-compact: quota-aware context compression ahead of the handover. The agent named in the
     // settings writes the brief (a bridge to third-party models spends no official-account quota).
     if (parts.join('/') === 'api/autocompact-settings') {
@@ -1303,12 +1309,32 @@ export function createHttpServer(deps: HttpDeps): Server {
       if (method === 'GET' && sub === 'brief') return sendJson(res, 200, manager.threadBrief(threadId));
       // POST /api/threads/:id/retry: send the failed ask again, the person's 「接着做」.
       if (method === 'POST' && sub === 'retry') return sendJson(res, 200, await manager.retryFailedTurn(threadId));
+      // PATCH /api/threads/:id/auto-retry: the person's cancel of the automatic transient retry.
+      if (method === 'PATCH' && sub === 'auto-retry') {
+        const body = await readJson(req);
+        return sendJson(res, 200, manager.setAutoRetry(threadId, body.enabled));
+      }
+      // PUT /api/threads/:id/advance: the thread's own switch over the global one (null inherits).
+      if (method === 'PUT' && sub === 'advance') {
+        const body = await readJson(req);
+        const state = manager.autoAdvance.setOverride(threadId, body.enabled);
+        return sendJson(res, 200, { ...state, advance: manager.autoAdvance.view(threadId) });
+      }
+      // DELETE /api/threads/:id/advance/watch: the person's cancel of the line under the last turn.
+      if (method === 'DELETE' && sub === 'advance' && parts[4] === 'watch' && !parts[5]) {
+        manager.getThread(threadId);
+        manager.autoAdvance.drop(threadId);
+        return sendJson(res, 200, { advance: manager.autoAdvance.view(threadId) });
+      }
       if (method === 'POST' && sub === 'takeover') {
         const body = await readJson(req);
         return sendJson(res, 201, await manager.takeOver(threadId, body.agent, body.model, body.note));
       }
       if (method === 'DELETE' && sub === 'handover-link') {
-        return sendJson(res, 200, manager.detachAutomaticHandover(threadId));
+        return sendJson(res, 200, manager.detachHandover(threadId));
+      }
+      if (method === 'POST' && sub === 'handback') {
+        return sendJson(res, 200, manager.handbackAutomaticHandover(threadId));
       }
 
       if (method === 'POST' && sub === 'handover') {

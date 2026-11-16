@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { AgentInfo, Api, AutoCompactSettings, AutoHandoverView, HandoverSettings, HandoverTarget, ModelOption, Thread } from '../api';
+import type { AgentInfo, Api, AutoCompactSettings, AdvanceSettings, AutoHandoverView, HandoverSettings, HandoverTarget, ModelOption, Thread } from '../api';
 import { t } from '../i18n';
 import { SettingsSection, usePageDraft } from './PageNavigation';
 import { Popover } from './Popover';
@@ -102,6 +102,10 @@ function AddTarget({ api, agents, addLabel, add }: { api: Api; agents: AgentInfo
 export function HandoverSettingsDialog({ api, agents, onClose }: { api: Api; agents: AgentInfo[]; onClose: () => void }) {
   const [value, setValue] = useState<HandoverSettings | null>(null);
   const [compact, setCompact] = useState<AutoCompactSettings | null>(null);
+  // Auto-advance is its own setting with its own line here; it saves on toggle, not with the button.
+  const [advance, setAdvance] = useState<AdvanceSettings | null>(null);
+  const [advanceBusy, setAdvanceBusy] = useState(false);
+  const [advanceError, setAdvanceError] = useState('');
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   const [opened, setOpened] = useState('');
@@ -117,6 +121,8 @@ export function HandoverSettingsDialog({ api, agents, onClose }: { api: Api; age
     void api.handoverSettings().then(next => { setValue(next); setSaved(JSON.stringify(next)); }).catch(e => setError(String(e)));
     // Older daemons have no compression section.
     void api.autoCompactSettings().then(({ settings }) => { setCompact(settings); setSavedCompact(JSON.stringify(settings)); }).catch(() => setCompact(null));
+    // Nor an auto-advance switch: the line simply stays away.
+    void api.advanceSettings().then(setAdvance).catch(() => setAdvance(null));
   };
   useEffect(load, [api]);
   const setOrder = (id: string, list: HandoverTarget[]) => setValue(v => v && ({ ...v, orders: { ...v.orders, [id]: list } }));
@@ -165,6 +171,13 @@ export function HandoverSettingsDialog({ api, agents, onClose }: { api: Api; age
       </>}
       <div className="auto-setting-line"><span>{t('auto.resume')}</span><button aria-label={t('auto.resume')} className="auto-toggle" role="switch" aria-checked={value.resume === true} onClick={() => setValue({ ...value, resume: value.resume !== true })}>{t(value.resume === true ? 'auto.on' : 'auto.off')}</button></div>
       <p className="auto-setting-hint">{t('auto.resumeHint')}</p>
+      {advance && <>
+        <div className="auto-setting-line"><span>{t('auto.advance')}</span><button aria-label={t('auto.advance')} className="auto-toggle" role="switch" aria-checked={advance.enabled} disabled={advanceBusy} onClick={() => {
+          setAdvanceBusy(true); setAdvanceError('');
+          void api.saveAdvanceSettings({ enabled: !advance.enabled }).then(next => { setAdvance(next); }).catch(e => setAdvanceError(String(e))).finally(() => setAdvanceBusy(false));
+        }}>{t(advance.enabled ? 'auto.on' : 'auto.off')}</button></div>
+        <p className="auto-setting-hint">{advanceError ? <span role="alert" className="panel-error">{advanceError}</span> : t('auto.advanceHint')}</p>
+      </>}
       <div className="auto-orders">{agents.map(agent => {
         const order = value.orders[agent.id];
         return <section key={agent.id}>

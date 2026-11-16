@@ -185,11 +185,15 @@ export class AutoHandover {
     const order = listed ?? agents.filter(a => a.id !== thread.agent && a.adapter === kind)
       .map(a => ({ agent: a.id }));
     const model = await this.manager.handoverModel(thread.agent, thread.model);
+    const viaGateway = this.manager.handoverViaGateway(thread.agent);
     const out: HandoverTarget[] = [];
     for (const target of order) {
       // A hidden instance is out of rotation on purpose (a banned account, say); handover must not revive it.
       const agent = agents.find(a => a.id === target.agent && a.available && !a.hidden);
       if (!agent) continue;
+      // A gateway reports usage windows too, yet it is not another account of the same plan: the
+      // default order keeps a subscription's work off gateways and a gateway's off subscriptions.
+      if (!listed && this.manager.handoverViaGateway(target.agent) !== viaGateway) continue;
       // An unattended handover must not broaden the source conversation's permissions.
       if (thread.permissionMode !== 'full_access' && !agent.capabilities.permissionModes.includes(thread.permissionMode as 'ask' | 'auto_edit')) continue;
       const targetModel = await this.manager.handoverModel(target.agent, target.model);
@@ -203,10 +207,19 @@ export class AutoHandover {
       if (quota && fresh) this.recover(concrete, quota);
       if (this.isBlocked(concrete)) continue;
       const windows = quota ? instanceWindows(quota, targetModel) : [];
-      // Switching within an instance needs positive evidence of an independent, healthy model pool.
-      if (target.agent === thread.agent && (!quota || !fresh || !model || !targetModel || !quota.windows.some(w => w.modelIds?.includes(model))
-        || !quota.windows.some(w => w.modelIds?.includes(targetModel)))) continue;
-      if (windows.some(w => w.usedPercent >= this.settings().threshold)) continue;
+      // Switching within an instance needs positive evidence of an independent, healthy model
+      // pool: quota windows that name both models, or the adapter's own word that the two bill
+      // apart (a gateway whose plan and routed providers have separate billing, say).
+      const separate = target.agent === thread.agent && !!model && !!targetModel
+        && this.manager.separateModelPools(thread.agent, model, targetModel);
+      if (target.agent === thread.agent) {
+        const byWindows = Boolean(quota && fresh && model && targetModel
+          && quota.windows.some(w => w.modelIds?.includes(model))
+          && quota.windows.some(w => w.modelIds?.includes(targetModel)));
+        if (!byWindows && !separate) continue;
+        // The windows speak for the plan's own pools; a separately billed target is not bound by them.
+        if (!separate && windows.some(w => w.usedPercent >= this.settings().threshold)) continue;
+      } else if (windows.some(w => w.usedPercent >= this.settings().threshold)) continue;
       out.push(target);
       break;
     }
@@ -236,8 +249,11 @@ export class AutoHandover {
       if (!exhausted && (!near || end.type !== 'turn.done')) return 'none';
       if (episodes[episodeKey]) return 'parked';
       episodes[episodeKey] = true; this.store.saveHubSetting('handover.episodes', episodes);
-      const mapped = quota?.windows.some(w => w.modelIds?.includes(model!));
-      this.block(mapped ? source : { agent: thread.agent }, quota);
+      // The windows may not map models, but when the adapter can tell pools apart by id the model
+      // itself names the pool that ran out: block that one, not the whole instance, so a switch to
+      // a separately billed model on the same instance stays eligible next time.
+      const poolKnown = Boolean(model) && (quota?.windows.some(w => w.modelIds?.includes(model!)) || this.manager.handoverSeparatesPools(thread.agent));
+      this.block(poolKnown ? source : { agent: thread.agent }, quota);
       if (attempt.cancelled || !this.view(id).enabled || this.closed) return 'parked';
       const target = (await this.targets(id))[0];
       if (!target) { this.notices.set(id, { state: 'stopped', reason: exhausted ? 'exhausted' : 'near' }); return 'parked'; }

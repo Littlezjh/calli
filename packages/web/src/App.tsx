@@ -1226,6 +1226,8 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   const [takeoverTarget, setTakeoverTarget] = useState<{ threadId: string; target: HandoverTarget } | null>(null);
   // Arming or cancelling a "wait for the quota and continue" watch on that same turn.
   const [resumeBusy, setResumeBusy] = useState(false);
+  const [autoRetryBusy, setAutoRetryBusy] = useState(false);
+  const [advanceBusy, setAdvanceBusy] = useState(false);
   const scrollerRef = useRef<HTMLDivElement>(null);
   const mainRef = useRef<HTMLElement>(null);
   useLayoutEffect(() => {
@@ -2521,6 +2523,12 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           ...(activeCaps?.fork && !forkBlocked(selected)
             ? [{ id: 'fork', label: t('sidebar.fork'), hint: t('app.cmd.fork'), keywords: ['fork', 'branch', 'clone'] }]
             : []),
+          // The phone has no row menu, so the handover controls (including calling off an automatic
+          // takeover from the chain) reach it here; the desktop keeps them in the row menu too.
+          { id: 'handover', label: t('handover.title'), hint: t('app.cmd.handover'), keywords: ['handover', 'handoff', 'takeover', '交接'] },
+          ...(threadActions.inChain(selected)
+            ? [{ id: 'chain', label: t('handover.trail.title'), hint: t('app.cmd.chain'), keywords: ['chain', 'trail', 'history', '交接链', '接力'] }]
+            : []),
           { id: 'export', label: t('app.cmd.exportLabel'), hint: t('app.cmd.export'), keywords: ['export', 'copy'] },
           { id: 'archive', label: t('actions.archive'), hint: t('app.cmd.archive'), keywords: ['archive'] },
         ]
@@ -2548,6 +2556,8 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
     if (id === 'import') return openSettings('import');
     if (id === 'appearance') return openSettings('appearance');
     if (selected && (id === 'rename' || id === 'pin' || id === 'fork' || id === 'archive')) threadActions.run(id, selected);
+    if (selected && id === 'handover') return threadActions.handover(selected);
+    if (selected && id === 'chain') return threadActions.chain(selected);
   };
 
   // The hub has its own controls for these; going through the agent would leave them out of sync.
@@ -3377,6 +3387,28 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
                 onCancel: () => {
                   setResumeBusy(true);
                   void api.setResume(selected.id, false).catch(handleError).finally(() => setResumeBusy(false));
+                },
+              } : null}
+              autoRetry={!api.demo && selected.autoRetry ? {
+                attempts: selected.autoRetry.attempts,
+                max: selected.autoRetry.max,
+                nextAt: selected.autoRetry.nextAt,
+                busy: autoRetryBusy,
+                onCancel: () => {
+                  setAutoRetryBusy(true);
+                  void api.cancelAutoRetry(selected.id).catch(handleError).finally(() => setAutoRetryBusy(false));
+                },
+              } : null}
+              advance={!api.demo && selected.advance?.nextAt ? {
+                reason: selected.advance.reason,
+                attempts: selected.advance.attempts,
+                max: selected.advance.max,
+                nextAt: selected.advance.nextAt,
+                ...(selected.advance.what !== undefined ? { what: selected.advance.what } : {}),
+                busy: advanceBusy,
+                onCancel: () => {
+                  setAdvanceBusy(true);
+                  void api.cancelAdvanceWatch(selected.id).catch(handleError).finally(() => setAdvanceBusy(false));
                 },
               } : null}
             />

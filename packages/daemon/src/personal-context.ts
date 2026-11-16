@@ -3,13 +3,19 @@ import type { ThreadManager } from './threads.js';
 
 const KEY = 'personalContext';
 const HOUR = 60 * 60_000;
-const LABELS = { needs: '需要你', running: '在跑', review: '待验收', error: '出错停下', upcoming: '接下来' };
+const LABELS = { needs: '需要你', running: '在跑', review: '待验收', error: '出错停下', scheduled: '已安排', upcoming: '接下来' };
 type Category = keyof typeof LABELS;
 interface Entry { id: string; category: Category; title: string; note: string; agent?: string; at: string }
 interface Snapshot { threadId: string; at: string; entries: Entry[]; matters: { open: number; overdue: number } }
 const json = (value: unknown) => JSON.stringify(value).replace(/</g, '\\u003c');
 const clip = (text: string) => [...text].slice(0, 300).join('');
 const fingerprint = (entry: Entry) => json([entry.category, entry.title, entry.note, entry.agent, entry.at]);
+/** `14:20` today, `11/12 14:20` later — when an auto-advance watch will look again. */
+const clockLabel = (iso: string, now: Date) => {
+  const at = new Date(iso);
+  const hm = `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
+  return at.toDateString() === now.toDateString() ? hm : `${at.getMonth() + 1}/${at.getDate()} ${hm}`;
+};
 
 export function contextEntries(store: Store, manager: ThreadManager, threadId: string, now = new Date()) {
   const runs = manager.personal.proactive.runs();
@@ -25,12 +31,21 @@ export function contextEntries(store: Store, manager: ThreadManager, threadId: s
     if (!start || start.data.imported || start.data.fromTerminal || start.data.background || start.data.control
       || last?.data.imported || last?.data.fromTerminal) continue;
     const report = thread.report && thread.report.by !== 'user' && thread.report.at >= start.ts ? thread.report : null;
-    const category: Category | null = thread.status === 'running' ? 'running' : last.type === 'turn.error' ? 'error'
+    // A thread the hub advances by itself is arranged: not the person's, not merely running. Once
+    // its chain spent the attempts it is the person's again, with why it came back.
+    const advance = manager.autoAdvance.view(thread.id);
+    const category: Category | null = advance && advance.nextAt ? 'scheduled'
+      : advance ? 'needs'
+      : thread.status === 'running' ? 'running' : last.type === 'turn.error' ? 'error'
       : report?.stage === 'blocked' ? 'needs' : report?.stage === 'review' && thread.unread ? 'review' : null;
     if (!category) continue;
     entries.push({ id: thread.id, category, title: clip(thread.title), agent: thread.agent,
-      note: clip(category === 'error' ? String(last.data.message ?? '') : category === 'running' ? '' : report?.note ?? ''),
-      at: category === 'running' ? start.ts : report?.at ?? last.ts });
+      note: clip(advance
+        ? advance.nextAt
+          ? advance.reason === 'wait' ? `${advance.what ?? '外部条件'}；${clockLabel(advance.nextAt, now)} 再看` : `自动继续第 ${advance.attempts + 1}/${advance.max} 次；${clockLabel(advance.nextAt, now)} 再发`
+          : `自动推进 ${advance.attempts} 次仍未完成`
+        : category === 'error' ? String(last.data.message ?? '') : category === 'running' ? '' : report?.note ?? ''),
+      at: category === 'running' ? start.ts : advance?.nextAt ?? report?.at ?? last.ts });
   }
   for (const run of runs.filter(run => run.status === 'asking')) entries.push({ id: `run:${run.id}`, category: 'needs',
     title: clip(store.getTodo(run.matterId)?.text ?? run.title ?? run.threadTitle ?? '主动行动'),

@@ -237,6 +237,11 @@ export interface AutoCompactStatus { last?: { threadId: string; successorId?: st
 export interface ResumeView { origin: 'user' | 'global'; resetsAt: string | null; nextCheckAt: string; lastError?: string }
 /** A transient failure the daemon is retrying by itself (`turn.retry` marks each attempt). */
 export interface AutoRetryView { attempts: number; max: number; nextAt: string }
+/** The daemon advancing a thread by itself: an external wait or an unfinished turn. */
+export interface AdvanceView { reason: 'wait' | 'continue'; attempts: number; max: number; nextAt: string | null; what?: string }
+/** The auto-advance switch: off by default; a thread may override the global value. */
+export interface AdvanceSettings { enabled: boolean }
+export interface AdvanceState { enabled: boolean; source: 'thread' | 'global'; override: boolean | null }
 export interface AutoHandoverView {
   enabled: boolean; source: 'thread' | 'collaboration' | 'global'; override: boolean | null;
   state?: 'checking' | 'preparing' | 'countdown' | 'stopped' | 'failed';
@@ -260,6 +265,8 @@ export interface Thread {
   autoHandover?: AutoHandoverView;
   /** Present when the daemon retries this thread's transient failure; absent on older daemons. */
   autoRetry?: AutoRetryView | null;
+  /** Present when the daemon advances this thread by itself; absent on older daemons. */
+  advance?: AdvanceView | null;
   /** `doing`, on a member: its latest task while it works, the opening of its answer once it has returned. */
   coordination?: { retired?: boolean; rootId: string; children: number; paused: boolean; doing?: string; team?: { name: string; status: TeamStatus; role: string; error?: string } };
   id: string;
@@ -1827,6 +1834,11 @@ export class Api {
   setResume(id: string, armed: boolean): Promise<AutoHandoverView> { return this.request('PATCH', `/api/threads/${id}/auto-handover`, { resume: armed }); }
   /** Cancels the daemon's automatic retry of a transient failure; arming itself is automatic. */
   cancelAutoRetry(id: string): Promise<Thread> { return this.request('PATCH', `/api/threads/${id}/auto-retry`, { enabled: false }); }
+  advanceSettings(): Promise<AdvanceSettings> { return this.request('GET', '/api/advance/settings'); }
+  saveAdvanceSettings(value: AdvanceSettings): Promise<AdvanceSettings> { return this.request('PUT', '/api/advance/settings', value); }
+  setThreadAdvance(id: string, enabled: boolean | null): Promise<AdvanceState & { advance: AdvanceView | null }> { return this.request('PUT', `/api/threads/${id}/advance`, { enabled }); }
+  /** Cancels the daemon's own nudge of this thread (the line under the last turn). */
+  cancelAdvanceWatch(id: string): Promise<{ advance: AdvanceView | null }> { return this.request('DELETE', `/api/threads/${id}/advance/watch`); }
   cancelAutoHandover(id: string): Promise<AutoHandoverView> { return this.request('DELETE', `/api/threads/${id}/auto-handover`); }
   setCollaborationHandover(id: string, enabled: boolean): Promise<Coordination> { return this.request('PATCH', `/api/threads/${id}/collaboration-handover`, { enabled }); }
 
@@ -1839,6 +1851,7 @@ export class Api {
     if (note !== undefined) body.note = note;
     return this.request('POST', `/api/threads/${threadId}/takeover`, body);
   }
+  /** Unlinks a handover: a manual one leaves its chain; an automatic one splits off its source. */
   detachAutomaticHandover(threadId: string): Promise<{ detached: string[]; thread: Thread }> {
     return this.request('DELETE', `/api/threads/${threadId}/handover-link`);
   }

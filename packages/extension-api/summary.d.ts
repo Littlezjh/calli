@@ -40,6 +40,11 @@ export interface ProgressReport {
   at: string;
   /** Set when the person placed the thread from its menu rather than the agent reporting. */
   by?: 'user';
+  /**
+   * Set by `等外部`: the thread waits on an external event nobody has to tend (CI, a deployment,
+   * another session). The stage stays `doing`. Missing from daemons that predate the word.
+   */
+  wait?: { what: string; minutes?: number };
 }
 
 export interface ThreadSummary {

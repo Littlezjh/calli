@@ -1,4 +1,5 @@
 import { piUsage } from './usage.js';
+import { glmQuotaExhausted } from './quota-errors.js';
 import { cliDiagnostic, probeWithDeadline } from './diagnostics.js';
 import { isCompaction, trackCompaction } from './compaction.js';
 import { PlanReply } from './plan-reply.js';
@@ -914,6 +915,11 @@ export class PiRpcAdapter implements AgentAdapter {
 
   resumeCommand(agentSessionId: string): string {
     return `pi --session ${agentSessionId}`;
+  }
+
+  /** The GLM Coding Plan wording pi passes through: codes 1308/1310, insufficient_quota, 使用上限. */
+  planExhausted(message: string): boolean {
+    return glmQuotaExhausted(message);
   }
 
   async sessionLocation(agentSessionId: string | null, cwd: string) {

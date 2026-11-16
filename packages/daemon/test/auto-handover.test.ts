@@ -288,6 +288,24 @@ test('the default order skips a bridge without a plan; an order that names it st
   } finally { await h.close(); }
 });
 
+test('the default order keeps a subscription off a gateway that reports its own windows', async () => {
+  const h = await setup();
+  try {
+    h.manager.autoHandover.configure({ enabled: true, threshold: 90, orders: {} });
+    // The gateway is healthy and its report has windows, like a subscription's would.
+    class GatewayAdapter extends AgyAdapter { routesThroughGateway() { return true; } }
+    writeFileSync(join(h.dir, 'gw.json'), JSON.stringify({ 'Gemini Models': 10 }));
+    h.adapters.set('agy2', new GatewayAdapter([process.execPath, join(fixtures, 'fake-agy.mjs')], { FAKE_HANDOVER_QUOTA: join(h.dir, 'gw.json') }));
+    writeFileSync(join(h.dir, 'agy3.json'), JSON.stringify({ 'Gemini Models': 95 }));
+    assert.deepEqual(await h.manager.autoHandover.targets(h.thread.id), []);
+    // Another subscription account is still found, and an order that names the gateway still uses it.
+    writeFileSync(join(h.dir, 'agy3.json'), JSON.stringify({ 'Gemini Models': 10 }));
+    assert.deepEqual((await h.manager.autoHandover.targets(h.thread.id)).map(t => t.agent), ['agy3']);
+    h.manager.autoHandover.configure({ enabled: true, threshold: 90, orders: { agy: [{ agent: 'agy2' }] } });
+    assert.deepEqual((await h.manager.autoHandover.targets(h.thread.id)).map(t => t.agent), ['agy2']);
+  } finally { await h.close(); }
+});
+
 test('a stale self-report is read again, and an account whose usage cannot be read is not ruled out', async () => {
   const h = await setup();
   try {
@@ -459,5 +477,40 @@ test('takeover: an exhausted lead hands its place, failed ask and note to the ch
     // The brief leaves the full coordinates and the long synthesized summary to `calli`.
     assert.doesNotMatch(text, /Session 文件地址|# 交接摘要/);
     assert.ok(text.length < 1500, `brief handover is ${text.length} chars`);
+  } finally { await h.close(); }
+});
+
+test('a gateway adapter names its pools by model id, and a failed pool does not block the whole instance', async () => {
+  const h = await setup();
+  try {
+    // A copy of the fake gateway agent: a gateway catalog of provider-prefixed ids, whose pools
+    // the adapter tells apart the way the claude adapter does.
+    class GatewayAdapter extends AgyAdapter {
+      override models(): Promise<import('../src/adapters/types.js').ModelOption[]> {
+        return Promise.resolve([{ id: 'zcode/GLM-5.3', label: 'zcode/GLM-5.3' }, { id: 'deepseek/deepseek-flash', label: 'deepseek/deepseek-flash' }]);
+      }
+      separateModelPools(from: string, to: string): boolean {
+        const pool = (id: string) => (id.includes('/') ? id.slice(0, id.indexOf('/')) : '');
+        const a = pool(from), b = pool(to);
+        return Boolean(a && b && a !== b);
+      }
+    }
+    const gw = new GatewayAdapter([process.execPath, join(fixtures, 'fake-agy.mjs')], { FAKE_HANDOVER_QUOTA: join(h.dir, 'agy.json') });
+    h.adapters.set('agy', gw);
+    // The thread sits on the plan's model; the adapter's windows name no models at all.
+    await h.manager.updateThread(h.thread.id, { model: 'zcode/GLM-5.3' });
+    h.config([{ agent: 'agy', model: 'deepseek/deepseek-flash' }]);
+    // The plan is exhausted; the switch target bills on its own provider.
+    writeFileSync(join(h.dir, 'agy.json'), JSON.stringify({ 'Gemini Models': 95 }));
+    const targets = await h.manager.autoHandover.targets(h.thread.id);
+    assert.deepEqual(targets, [{ agent: 'agy', model: 'deepseek/deepseek-flash' }]);
+
+    // Run the exhausted turn: the pool is named by the model id, so only that pool is blocked.
+    await h.manager.startTurn(h.thread.id, { text: 'quota-exhausted' });
+    await h.done();
+    assert.equal(h.manager.getThread(h.thread.id).model, 'deepseek/deepseek-flash');
+    const blocks = h.store.hubSetting<Array<{ agent: string; model?: string }>>('handover.blocks', []);
+    assert.ok(blocks.some(b => b.model === 'zcode/GLM-5.3'), 'the failed pool is what got blocked');
+    assert.ok(!blocks.some(b => b.model === undefined), 'the whole instance is not blocked');
   } finally { await h.close(); }
 });

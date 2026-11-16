@@ -10,6 +10,9 @@ import { AutoHandover, type AutoHandoverView, type HandoverTarget, type SettledO
 import { AutoCompact } from './auto-compact.js';
 import type { HandoverLink } from './handover-mode.js';
 import { QuotaResume, type ResumeView } from './quota-resume.js';
+import { AutoRetry, type RetryView } from './auto-retry.js';
+import { AutoAdvance, type AdvanceView } from './auto-advance.js';
+import { transientError } from './proactive-advance.js';
 import type { VoiceTransport } from './voice-sessions.js';
 import { VoiceConversation } from './voice-conversation.js';
 import { turnOutcome } from './lifecycle.js';
@@ -123,6 +126,10 @@ export type ThreadView = Omit<ThreadRecord, 'worktree' | 'handover' | 'writing'>
   writing: (WritingState & { habits: string }) | null;
   handover?: (NonNullable<ThreadRecord['handover']> & { automatic: boolean; /** The source started a turn after the handover. */ sourceMoved: boolean }) | null;
   autoHandover?: AutoHandoverView;
+  /** The daemon retrying this thread's transient failure by itself; null when nothing is pending. */
+  autoRetry?: RetryView | null;
+  /** The daemon advancing this thread by itself (an external wait, an unfinished turn); null when nothing is pending. */
+  advance?: AdvanceView | null;
   /** `doing`, on a member: its latest task while it works, the opening of its answer once it has returned. */
   coordination?: { retired?: boolean; rootId: string; children: number; paused: boolean; doing?: string; team?: { name: string; status: import('./teams.js').TaskStatus; role: string; error?: string } };
   /** Working in the hub's scratch area: a thread that is in no project. */
@@ -393,11 +400,15 @@ export class ThreadManager {
     this.injections = new Injections(store);
     this.autoHandover = new AutoHandover(store, this);
     this.quotaResume = new QuotaResume(store, this, this.autoHandover);
+    this.autoRetry = new AutoRetry(store, this);
+    this.autoAdvance = new AutoAdvance(store, this);
     this.autoHandover.onSaved = settings => this.quotaResume.onSettings(settings.resume);
     this.autoCompact = new AutoCompact(store, this);
     for (const [id, adapter] of adapters) adapter.onQuotaObserved = quota => this.observeQuota(id, quota);
     this.startQuotaWatch();
     this.quotaResume.start();
+    this.autoRetry.start();
+    this.autoAdvance.start();
     this.personal = new PersonalService(store, this, adapters);
     this.lark = new LarkChannel(store, this.personal);
     this.briefs = new PersonalBriefSchedule(store, () => this.personal.review.status().quietHours, () => todoStages(this, this.listTodos()));
@@ -408,6 +419,35 @@ export class ThreadManager {
 
   /** Watches parked threads for their quota to reset, then continues them. Owned here so the HTTP layer can reach it. */
   readonly quotaResume: QuotaResume;
+
+  /** Resends turns that died of transient provider errors. Owned here so the HTTP layer can reach it. */
+  readonly autoRetry: AutoRetry;
+
+  /** Moves threads on by themselves after an `等外部` or `进行中` report. Owned here so the HTTP layer can reach it. */
+  readonly autoAdvance: AutoAdvance;
+
+  /** The watch's view for the proactive scan: whether the hub's own retry already owns a thread. */
+  autoRetryView(id: string): RetryView | null { return this.autoRetry.view(id); }
+
+  /** Marks the timeline: a transient failure was retried by the daemon itself. */
+  recordTurnRetry(id: string, attempt: number, max: number): void {
+    this.emitThreadEvent(id, null, 'turn.retry', { attempt, max });
+  }
+
+  /** The person's cancel of the automatic retry on an error card; arming itself is automatic only. */
+  setAutoRetry(id: string, enabled: unknown): ThreadView {
+    this.getThread(id);
+    if (enabled !== false) throw new HttpError(400, 'arming the automatic retry is not manual');
+    this.autoRetry.drop(id);
+    return this.threadView(id);
+  }
+
+  /** The auto-advance watch's own message: a wakeup asking after a wait, or a plain 「继续」. */
+  async sendAdvanceWake(id: string, text: string, armingTurn: string): Promise<string> {
+    const turnId = randomUUID();
+    await this.startTurn(id, { text, autoContinuation: true }, { turnId, source: { advance: armingTurn }, displayText: text, claim: () => {} }, true);
+    return turnId;
+  }
 
   /** Marks the timeline: the quota came back and the daemon resent the failed turn by itself. */
   recordQuotaResume(id: string, resetsAt: string | null): void {
@@ -1302,7 +1342,7 @@ export class ThreadManager {
     } : null;
     const failed = thread.status === 'error' ? this.store.lastTurnFailure(thread.id) : null;
     const failure = failed ? { code: failed.code, message: failed.message.slice(0, 500), at: failed.at } : null;
-    return { ...thread, failure, writing: thread.writing ? { ...thread.writing, habits: habitsPath() } : null, handover: thread.handover ? { ...thread.handover, mode: this.store.handoverMode(thread)!, automatic: thread.handover.mode === 'continue', sourceMoved: this.store.handoverSourceMoved(thread)! } : null, autoHandover: { ...this.autoHandover.view(thread.id), resume: this.quotaResume.view(thread.id) }, worktree, resumeCommand, cwdReal, waiting, waitingReason, queued, modelQueue, terminalActivity, scratch, projectGone, runningSince, coordination: this.coordination?.metadata(thread.id) };
+    return { ...thread, failure, writing: thread.writing ? { ...thread.writing, habits: habitsPath() } : null, handover: thread.handover ? { ...thread.handover, mode: this.store.handoverMode(thread)!, automatic: thread.handover.mode === 'continue', sourceMoved: this.store.handoverSourceMoved(thread)! } : null, autoHandover: { ...this.autoHandover.view(thread.id), resume: this.quotaResume.view(thread.id) }, autoRetry: this.autoRetry.view(thread.id), advance: this.autoAdvance.view(thread.id), worktree, resumeCommand, cwdReal, waiting, waitingReason, queued, modelQueue, terminalActivity, scratch, projectGone, runningSince, coordination: this.coordination?.metadata(thread.id) };
   }
 
   /**
@@ -1877,6 +1917,8 @@ export class ThreadManager {
     }
     await this.dropSession(id);
     this.quotaResume.drop(id);
+    this.autoRetry.drop(id);
+    this.autoAdvance.drop(id);
     if (opts.agentSession && thread.agentSessionId) {
       const adapter = this.adapters.get(thread.agent);
       if (!adapter?.capabilities.deleteSession || !adapter.deleteSession) {
@@ -2181,6 +2223,24 @@ export class ThreadManager {
   }
 
   /**
+   * Unlinks a handover: a manual one (made from the handover dialog) leaves its chain and stands on
+   * its own, with both conversations kept as they are; an automatic one splits as below.
+   */
+  detachHandover(threadId: string): { detached: string[]; thread: ThreadView } {
+    const selected = this.getThread(threadId);
+    const link = selected.handover;
+    const all = [...this.store.listThreads(), ...this.store.listThreads({ archived: true })];
+    const continues = all.some(thread => thread.handover?.sourceId === selected.id
+      && thread.handover.mode === 'continue' && this.store.handoverMode(thread) === 'continue');
+    if (link && link.mode !== 'continue' && !link.detached && !continues) {
+      this.store.detachHandover(selected.id);
+      this.emitThreadEvent(selected.id, null, 'thread.updated', {});
+      return { detached: [selected.id], thread: this.threadView(threadId) };
+    }
+    return this.detachAutomaticHandover(threadId);
+  }
+
+  /**
    * Restore one segment as an independent conversation. Its immediate automatic successors split
    * off together: leaving any one attached would still make the source read-only. When called on a
    * leaf, its incoming continuation is split instead. Downstream successor chains stay untouched.
@@ -2207,12 +2267,30 @@ export class ThreadManager {
     return { detached: detached.map(thread => thread.id), thread: this.threadView(threadId) };
   }
 
+  /** Gives a handover back: the taker loses the collaboration seat it gained (root or member, automatic
+   *  or manual takeover alike) and the still-retired source takes it again. The conversation chain stays
+   *  as it is; only the collaboration returns home. The source's auto handover is turned off so the move
+   *  is not repeated at once. */
+  handbackAutomaticHandover(threadId: string): { thread: ThreadView } {
+    const selected = this.getThread(threadId);
+    const sourceId = selected.handover?.sourceId;
+    if (!sourceId) throw new HttpError(409, 'this thread has no handover behind it');
+    if (!this.coordination?.metadata(sourceId)?.retired) throw new HttpError(409, 'the source thread has no collaboration seat to take back');
+    this.autoHandover.setOverride(sourceId, false);
+    if (!this.coordination.handbackMember(sourceId, threadId)) throw new HttpError(409, 'the collaboration seat cannot be handed back');
+    this.emitThreadEvent(sourceId, null, 'thread.updated', {});
+    this.emitThreadEvent(threadId, null, 'thread.updated', {});
+    return { thread: this.threadView(threadId) };
+  }
+
   /** A fresh conversation in the source's exact directory, sharing its existing worktree. No agent is started. */
   async createHandoverThread(threadId: string, agent: string, model?: string, mode?: unknown, method?: HandoverLink['method']): Promise<ThreadView> {
     const source = this.getThread(threadId);
     if (mode !== undefined && mode !== 'continue' && mode !== 'branch') throw new HttpError(400, 'invalid handover mode');
     // Whoever takes over from here, the work leaves this thread; stop waiting for its quota.
     this.quotaResume.drop(threadId);
+    this.autoRetry.drop(threadId);
+    this.autoAdvance.drop(threadId);
     const selected = mode ?? 'branch';
     // A relay between accounts of the same agent keeps the thread's model and effort: without this
     // the successor falls back to the target account's default (opus, say) and the swap quietly
@@ -2690,6 +2768,12 @@ export class ThreadManager {
 
   hasAgent(id: string): boolean { return this.adapters.has(id); }
   canSwitchHandoverModel(id: string): boolean { return this.adapters.get(id)?.capabilities.modelSwitch === true; }
+  /** Whether the adapter can tell two of its models' quota pools apart by their ids alone. */
+  handoverSeparatesPools(id: string): boolean { return this.adapters.get(id)?.separateModelPools !== undefined; }
+  /** Whether the instance reaches its models through a gateway, not the account's own plan. */
+  handoverViaGateway(id: string): boolean { return this.adapters.get(id)?.routesThroughGateway?.() === true; }
+  /** Whether two models on one instance bill independently, by the adapter's own word. */
+  separateModelPools(id: string, from: string, to: string): boolean { return this.adapters.get(id)?.separateModelPools?.(from, to) === true; }
   async handoverModel(agent: string, model?: string | null): Promise<string | undefined> {
     try {
       const adapter = this.adapters.get(agent);
@@ -2766,6 +2850,8 @@ export class ThreadManager {
     const failed = thread.status === 'error' ? this.store.lastTurnFailure(id) : null;
     if (!failed) throw new HttpError(409, 'the thread did not stop on an error');
     this.quotaResume.drop(id);
+    this.autoRetry.drop(id);
+    this.autoAdvance.drop(id);
     await this.retryAutoHandoverTurn(id, failed.turnId);
     return this.threadView(id);
   }
@@ -2783,6 +2869,8 @@ export class ThreadManager {
     if (this.running.has(id) || this.threadView(id).waiting) throw new HttpError(409, 'the thread is busy');
     this.autoHandover.cancel(id);
     this.quotaResume.drop(id);
+    this.autoRetry.drop(id);
+    this.autoAdvance.drop(id);
     // The turn that failed is carried over, so the successor picks up the ask that was cut off.
     const last = this.store.listTurns(id).at(-1)?.turnId ?? null;
     const failed = last && this.store.listTurnEvents(id, last).some(e => e.type === 'turn.error') ? last : null;
@@ -2833,6 +2921,8 @@ export class ThreadManager {
   async executeResumeHandover(id: string, target: HandoverTarget, sessionId: string, failedTurn: string | null, note?: string): Promise<ThreadView> {
     const source = this.getThread(id);
     this.quotaResume.drop(id);
+    this.autoRetry.drop(id);
+    this.autoAdvance.drop(id);
     const successor = await this.createHandoverThread(id, target.agent, target.model, 'continue', 'resume');
     this.store.updateThread(successor.id, { agentSessionId: sessionId });
     this.autoHandover.inherit(id, successor.id);
@@ -2866,6 +2956,8 @@ export class ThreadManager {
     const source = this.getThread(id);
     // The work moves; waiting for this agent's quota to come back is moot.
     this.quotaResume.drop(id);
+    this.autoRetry.drop(id);
+    this.autoAdvance.drop(id);
     const successor = await this.createHandoverThread(id, target.agent, target.model, 'continue', 'summary');
     this.autoHandover.inherit(id, successor.id);
     const adapter = this.adapters.get(target.agent)!;
@@ -3015,6 +3107,8 @@ export class ThreadManager {
     this.autoHandover.close();
     if (this.quotaWatch) clearInterval(this.quotaWatch);
     this.quotaResume.dispose();
+    this.autoRetry.dispose();
+    this.autoAdvance.dispose();
     this.coordination?.suspendAll();
     // The file mirror must finish its queued writes before callers remove the data directory.
     await this.personal.flushMirror().catch(() => undefined);
@@ -3110,6 +3204,15 @@ export class ThreadManager {
         const failed = this.store.listTurnEvents(thread.id, turnId).find(e => e.type === 'turn.error');
         if (failed?.data.code === 'plan_exhausted' && settled !== 'moved'
           && !this.running.has(thread.id) && !this.threadView(thread.id).waiting) this.quotaResume.parked(thread.id);
+        // A transient failure instead — the server out of capacity, a dropped connection: the hub
+        // retries the ask itself, visibly and a few times, before leaving the thread to the person.
+        // Coded failures (quota, permission, interruption) take their own paths above and elsewhere.
+        if (failed && !failed.data.code && settled !== 'moved' && !this.running.has(thread.id) && !this.threadView(thread.id).waiting
+          && start && !start.data.handover && !start.data.control && !start.data.imported && !start.data.fromTerminal
+          && transientError(null, String(failed.data.message ?? ''))) this.autoRetry.parked(thread.id, turnId);
+        // The agent said where the work stands: with auto-advance on, an external wait or unfinished
+        // work arms the hub to nudge the thread on by itself (it re-checks all facts itself).
+        this.autoAdvance.settled(thread.id, turnId);
         // Quota is closing in but the handover did not move the work: shrink the context while the
         // account can still answer, so the rest of the window is not spent re-reading it.
         if (settled !== 'moved') void this.autoCompact.settled(thread.id, turnId).catch(() => undefined);

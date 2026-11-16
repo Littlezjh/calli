@@ -300,6 +300,31 @@ export class CoordinationManager {
     return true;
   }
 
+  /** The inverse of replaceHandoverMember: the retired source takes its root or member seat back and the
+   *  taker retires in its place, so a collaboration an automatic handover moved away returns home. */
+  handbackMember(source: string, target: string): boolean {
+    const t = this.team(target);
+    const retired = t?.retiredMembers?.find(m => m.id === source);
+    const current = t && (t.rootId === target || t.members.some(m => m.id === target));
+    if (!t || !retired || !current) return false;
+    const name = this.name(t, target);
+    const member = t.members.find(m => m.id === target);
+    t.retiredMembers = [...t.retiredMembers!.filter(m => m.id !== source), { id: target, name }];
+    if (member) member.id = source;
+    else {
+      this.teams.delete(target); this.store.deleteCoordination(target);
+      t.rootId = source; this.teams.set(source, t);
+    }
+    this.credentials.delete(target);
+    for (const d of t.deliveries) {
+      if (d.from === target && (d.state === 'queued' || d.state === 'running')) d.from = source;
+      if (d.to === target && (d.state === 'queued' || d.state === 'running')) d.to = source;
+    }
+    this.changed(t);
+    this.manager.notifyCoordination(source);
+    return true;
+  }
+
   /** Called synchronously in the successor turn's store transaction, before its runtime starts. */
   replaceHandoverMember(source: string, target: string, turnId: string): void {
     const t = this.team(source);

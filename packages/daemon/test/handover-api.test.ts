@@ -302,6 +302,14 @@ test('manual handovers always branch without stopping work, automatic handovers 
     assert.equal(manager.threadView(next.id).autoHandover?.override, null);
     assert.equal(manager.threadView(source.id).autoHandover?.override, null);
     assert.equal((await fetch(`${base}/api/threads/${next.id}/handover-link`, { method: 'DELETE', headers: { Authorization: 'Bearer mode-token' } })).status, 409);
+    // A handover made by hand only leaves its chain: both conversations stay, nothing is archived.
+    const manualDetach = await fetch(`${base}/api/threads/${independent.id}/handover-link`, { method: 'DELETE', headers: { Authorization: 'Bearer mode-token' } });
+    assert.equal(manualDetach.status, 200);
+    assert.deepEqual((await manualDetach.json() as any).detached, [independent.id]);
+    assert.equal(store.getThread(independent.id)!.handover?.detached, true);
+    assert.equal(store.getThread(independent.id)!.archivedAt, null);
+    assert.equal(manager.threadView(continued.id).autoHandover?.override, false, 'unchanged by the manual unlink');
+    assert.equal((await fetch(`${base}/api/threads/${independent.id}/handover-link`, { method: 'DELETE', headers: { Authorization: 'Bearer mode-token' } })).status, 409);
     const forkedSource = await manager.createThread({ agent: 'source', cwd: root });
     const forkOne = await manager.createHandoverThread(forkedSource.id, 'next', undefined, 'continue');
     const forkTwo = await manager.createHandoverThread(forkedSource.id, 'next', undefined, 'continue');
@@ -358,4 +366,67 @@ test('a relay between accounts of the same agent keeps model and effort; across 
     const toPlan = await manager.createHandoverThread(routed.id, 'claude-1');
     assert.equal(toPlan.model, null);
   } finally { await manager.shutdown(); store.close(); rmSync(root, { recursive: true, force: true }); }
+});
+
+test('a gateway plan running out switches the same thread to a separately billed model and resends the ask', async () => {
+  const { modelGateway } = await import('./fixtures/model-gateway.mjs');
+  const gateway = await modelGateway();
+  const root = mkdtempSync(join(tmpdir(), 'calli-gateway-switch-'));
+  let manager: ThreadManager | undefined;
+  try {
+    gateway.state.models = [
+      { id: 'zcode/GLM-5.3', display_name: 'zcode/GLM-5.3' },
+      { id: 'deepseek/deepseek-flash', display_name: 'deepseek/deepseek-flash' },
+    ];
+    const account = join(root, 'account');
+    mkdirSync(account);
+    writeFileSync(join(account, 'settings.json'), JSON.stringify({
+      env: { ANTHROPIC_BASE_URL: gateway.url, ANTHROPIC_AUTH_TOKEN: 'gateway-test-token', CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: '1' },
+      model: 'zcode/GLM-5.3',
+    }));
+    const selected = join(root, 'models-selected.log');
+    const registry = new AgentRegistry([{
+      id: 'magpie', adapter: 'claude', label: 'Claude Code', command: [process.execPath, fixture],
+      // The fake agent's catalog mirrors the gateway's: one plan model, one routed provider.
+      env: {
+        CLAUDE_CONFIG_DIR: account, ANTHROPIC_BASE_URL: gateway.url, CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: '1',
+        FAKE_ACP_MODELS: 'zcode/GLM-5.3|GLM-5.3,deepseek/deepseek-flash|DeepSeek-V4.1-Flash', FAKE_ACP_MODEL_SELECTION_LOG: selected,
+      },
+    }], null);
+    const store = new Store(join(root, 'data'));
+    const cwd = join(root, 'project'); mkdirSync(cwd);
+    manager = new ThreadManager(store, registry.adapters, new Workdirs([cwd], null), new AttachmentStore(join(root, 'data')), () => [{ id: 'magpie', adapter: 'claude' }]);
+    Object.defineProperty(manager.autoHandover, 'delayMs', { value: 80 });
+    const adapter = registry.adapters.get('magpie')!;
+    adapter.fetchQuota = () => Promise.resolve({ windows: [], checkedAt: new Date().toISOString() });
+
+    const thread = await manager.createThread({ agent: 'magpie', cwd, model: 'zcode/GLM-5.3' });
+    store.updateThread(thread.id, { permissionMode: 'full_access' });
+    // The order names the routed model, which the adapter's ids prove bills on its own provider.
+    manager.autoHandover.configure({ enabled: true, threshold: 90, orders: { magpie: [{ agent: 'magpie', model: 'deepseek/deepseek-flash' }] } });
+    assert.deepEqual(await manager.autoHandover.targets(thread.id), [{ agent: 'magpie', model: 'deepseek/deepseek-flash' }]);
+
+    await manager.startTurn(thread.id, { text: 'out of plan' });
+    const wait = async (check: () => unknown, timeout = 20_000) => {
+      const end = Date.now() + timeout;
+      while (!check()) { if (Date.now() > end) throw new Error('timed out'); await new Promise(r => setTimeout(r, 25)); }
+    };
+    await wait(() => manager.threadView(thread.id).status === 'idle' && !manager.autoHandover.held(thread.id));
+
+    // One conversation, on the other model now, the failed ask sent again and answered.
+    assert.equal(manager.listThreads().length, 1);
+    assert.equal(manager.getThread(thread.id).model, 'deepseek/deepseek-flash');
+    const turns = store.listTurns(thread.id);
+    assert.equal(turns.length, 2);
+    assert.equal(store.listEvents(thread.id, 0, -1).filter(e => e.type === 'turn.error').length, 1);
+    const switched = store.listEvents(thread.id, 0, -1).find(e => e.type === 'handover.model');
+    assert.deepEqual({ model: switched?.data.model, previous: switched?.data.previous, reason: switched?.data.reason },
+      { model: 'deepseek/deepseek-flash', previous: 'zcode/GLM-5.3', reason: 'exhausted' });
+    // The agent really ran the resend on the routed model, not only had its name changed.
+    assert.deepEqual(readFileSync(selected, 'utf8').trim().split('\n'), ['zcode/GLM-5.3', 'deepseek/deepseek-flash']);
+  } finally {
+    await manager?.shutdown().catch(() => undefined);
+    await gateway.close();
+    rmSync(root, { recursive: true, force: true });
+  }
 });

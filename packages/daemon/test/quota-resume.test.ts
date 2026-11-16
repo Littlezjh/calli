@@ -20,17 +20,20 @@ const wait = async (check: () => unknown, timeout = 8000) => {
 };
 
 /** One daemon with fake agy agents whose quota file a test rewrites as the "provider". */
-async function setup(opts: { exhaustOnce?: boolean; exhaustDelayMs?: number } = {}) {
+async function setup(opts: { exhaustOnce?: boolean; exhaustDelayMs?: number; unreadableQuota?: boolean } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'calli-resume-test-'));
   const store = new Store(dir);
   const adapters = new Map<string, AgentAdapter>();
   const quotaFiles: Record<string, string> = {};
   for (const id of ['agy', 'agy2']) {
     // agy starts exhausted with a long-past reset; agy2 is healthy, so it can receive handovers.
+    // With `unreadableQuota`, agy's file names no windows at all: the watch must lean on the
+    // reset time the error's own wording promises instead of on a plan reading.
     quotaFiles[id] = join(dir, `quota-${id}.json`);
-    writeFileSync(quotaFiles[id], JSON.stringify({ 'Gemini Models': { used: id === 'agy' ? 100 : 10, resetsAt: '2000-01-01T00:00:00Z' } }));
+    writeFileSync(quotaFiles[id], JSON.stringify(opts.unreadableQuota && id === 'agy' ? {} : { 'Gemini Models': { used: id === 'agy' ? 100 : 10, resetsAt: '2000-01-01T00:00:00Z' } }));
     adapters.set(id, new AgyAdapter([process.execPath, join(fixtures, 'fake-agy.mjs')], {
       FAKE_HANDOVER_QUOTA: quotaFiles[id],
+      ...(opts.unreadableQuota && id === 'agy' ? { FAKE_HANDOVER_RESET_IN: '61s' } : {}),
       ...(opts.exhaustDelayMs && id === 'agy' ? { FAKE_HANDOVER_EXHAUST_DELAY_MS: String(opts.exhaustDelayMs) } : {}),
       ...(opts.exhaustOnce && id === 'agy' ? { FAKE_HANDOVER_EXHAUST_ONCE: join(dir, 'exhaust-once') } : {}),
     }));
@@ -246,5 +249,36 @@ test('a stopped thread says why, and 「接着做」 sends the failed ask again'
     const last = h.store.listTurns(h.thread.id).at(-1)!.turnId;
     const started = h.store.listTurnEvents(h.thread.id, last).find(e => e.type === 'turn.started');
     assert.equal(started?.data.text, 'quota-exhausted');
+  } finally { await h.close(); }
+});
+
+test('a quota error that promises its own reset arms on it, and past it the resend probes', async () => {
+  const h = await setup({ unreadableQuota: true });
+  try {
+    // No handover to another account: the thread parks where it is.
+    h.manager.autoHandover.configure({ enabled: false, threshold: 90, orders: {}, resume: false });
+    await h.manager.startTurn(h.thread.id, { text: 'quota-exhausted-reset' });
+    await h.idle();
+    assert.equal(h.store.lastTurnFailure(h.thread.id)!.code, 'plan_exhausted');
+    // The plan cannot be read at all; the watch leans on the reset the error itself promised.
+    const view = await h.arm(h.thread.id);
+    assert.ok(view.resetsAt, 'the message-parsed reset reaches the watch');
+    const in61s = Date.now() + 61_000;
+    assert.ok(Math.abs(Date.parse(view.resetsAt!) - in61s) < 5000, `resetsAt ~now+61s, got ${view.resetsAt}`);
+    // Past the promise, with nothing to read, the resend itself is the probe.
+    const watches = h.store.hubSetting<Record<string, { resetsAt: string; nextCheckAt: string }>>('handover.resumes', {});
+    watches[h.thread.id].resetsAt = new Date(Date.now() - 10 * 60_000).toISOString();
+    watches[h.thread.id].nextCheckAt = new Date(Date.now() - 60_000).toISOString();
+    h.store.saveHubSetting('handover.resumes', watches);
+    await h.manager.quotaResume.check();
+    await h.idle();
+    assert.ok(h.store.listEvents(h.thread.id, 0, -1).some(e => e.type === 'handover.resume'), 'the timeline marks the resume');
+    assert.equal(h.store.listTurns(h.thread.id).length, 2, 'the failed ask went out again');
+    assert.equal(h.manager.quotaResume.view(h.thread.id), null, 'the watch spent itself on the probe');
+    // The plan is still exhausted: the resent turn dies the same way, and nothing re-arms
+    // itself without the person or the global switch.
+    await h.idle();
+    assert.equal(h.store.lastTurnFailure(h.thread.id)!.code, 'plan_exhausted');
+    assert.equal(h.manager.quotaResume.view(h.thread.id), null);
   } finally { await h.close(); }
 });

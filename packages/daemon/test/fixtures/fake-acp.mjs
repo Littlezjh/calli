@@ -52,7 +52,7 @@ let backgroundWork; // the timer of work the agent started on its own
 let nextAgentRequestId = 1000;
 const awaitingInput = new Map();
 let currentMode = 'default';
-let currentModel = dsh ? '["deepseek-official","deepseek-v4-pro"]' : 'default';
+let currentModel = dsh ? '["deepseek-official","deepseek-v4-pro"]' : process.env.FAKE_ACP_MODELS?.split(',')[0]?.split('|')[0] || 'default';
 let currentEffort = dsh ? '' : 'default';
 let currentSpeed = 'off';
 // No "auto" mode on purpose: the adapter must fall back to acceptEdits for auto_edit.
@@ -96,12 +96,19 @@ const sessionInfo = () => ({
           category: 'model',
           type: 'select',
           currentValue: currentModel,
-          options: [
-            { value: 'default', name: 'Default', description: 'Big 1.0' },
-            { value: 'big', name: 'Big 1.0', description: 'For hard work' },
-            { value: 'small', name: 'Small 1.0', description: '' },
-            { value: 'broken', name: 'Broken 1.0', description: 'Not on this account' },
-          ],
+          // FAKE_ACP_MODELS replaces the catalog with comma-separated `id|Name` entries (first is
+          // current), so a test can present a gateway-style catalog of provider-prefixed models.
+          options: process.env.FAKE_ACP_MODELS
+            ? process.env.FAKE_ACP_MODELS.split(',').map((entry) => {
+              const [value, name] = entry.split('|');
+              return { value, name: name || value };
+            })
+            : [
+              { value: 'default', name: 'Default', description: 'Big 1.0' },
+              { value: 'big', name: 'Big 1.0', description: 'For hard work' },
+              { value: 'small', name: 'Small 1.0', description: '' },
+              { value: 'broken', name: 'Broken 1.0', description: 'Not on this account' },
+            ],
         },
     // Like the real agents: a model may have no effort option at all. dsh's has an empty
     // "provider default" value and only appears while a reasoning model is selected.
@@ -602,8 +609,13 @@ rl.on('line', (line) => {
       if (text.includes('flaky')) {
         return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32603, message: `Internal error: upstream connection reset (request ${Math.floor(Math.random() * 90000) + 10000})` } });
       }
-      // FAKE_ACP_PLAN_LEFT stands for another account whose plan still has room.
-      if (text.includes('out of plan') && !process.env.FAKE_ACP_PLAN_LEFT) {
+      // FAKE_ACP_PLAN_LEFT stands for another account whose plan still has room. With a
+      // gateway catalog (FAKE_ACP_MODELS), the plan owns FAKE_ACP_PLAN_PREFIX ('zcode' by
+      // default): its models run out, while a separately billed provider's do not.
+      const offPlanPool = !process.env.FAKE_ACP_MODELS
+        || !currentModel.includes('/')
+        || currentModel.startsWith((process.env.FAKE_ACP_PLAN_PREFIX ?? 'zcode') + '/');
+      if (text.includes('out of plan') && !process.env.FAKE_ACP_PLAN_LEFT && offPlanPool) {
         return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32603, message: "Internal error: You've hit your session limit · resets 10:10am (UTC)" } });
       }
       if (text.includes('slow')) {

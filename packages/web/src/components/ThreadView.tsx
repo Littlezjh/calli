@@ -2,6 +2,7 @@ import { referencePreview, splitReferences, withReferences } from '../context-re
 import { ReferenceChips } from './ContextReferences';
 import { MessageActionButton, MessageMore, PointMessageMenu, SelectMessage, useMessageGestures, type MessageAction } from './MessageActions';
 import { channelRows, hydrateHistoryFiles } from '../timeline';
+import { advanceStatus } from '../advance';
 import { ApiError, type Api } from '../api';
 import { hydrateWork, HistoryClient, type HistoryDetail, type HistoryWork, type ResourceKind, type WorkFiles } from '../history';
 import { Children, createContext, Fragment, isValidElement, memo, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type KeyboardEvent, type ReactNode } from 'react';
@@ -110,6 +111,8 @@ interface Props {
    * one is due; `onCancel` is the person's stop on the error card.
    */
   autoRetry?: { attempts: number; max: number; nextAt: string; onCancel: () => void; busy?: boolean } | null;
+  /** The daemon advancing this thread by itself: the quiet line under the last turn, with its cancel. */
+  advance?: { reason: 'wait' | 'continue'; attempts: number; max: number; nextAt: string; what?: string; onCancel: () => void; busy?: boolean } | null;
   /** The agent can end a copy at any finished turn, so every answer gets the button, not only the last. */
   forkAnyTurn?: boolean;
   /**
@@ -146,7 +149,7 @@ const RECENT_TURNS = 30;
 /** Scrolling up to within this distance of the top unfolds or fetches the earlier turns. */
 const NEAR_TOP_PX = 600;
 
-export function ThreadView({ onOpenFinds, chain = false, observeOlder = true, beforeItems, olderLabel, olderError, revealTurnId, historyApi, historyThreadId, items: originalItems, roots, loadImage, loadFile, onOpenFile, onPreview, hasOlder, loadingOlder, onLoadOlder, onFork, onQuote, onMessageContext, onHandToAssistant, forkAnyTurn, onEdit, revision = 0, takeover, resume, autoRetry, memberThreadId, onOpenMemberThread, threads, onOpenThread }: Props) {
+export function ThreadView({ onOpenFinds, chain = false, observeOlder = true, beforeItems, olderLabel, olderError, revealTurnId, historyApi, historyThreadId, items: originalItems, roots, loadImage, loadFile, onOpenFile, onPreview, hasOlder, loadingOlder, onLoadOlder, onFork, onQuote, onMessageContext, onHandToAssistant, forkAnyTurn, onEdit, revision = 0, takeover, resume, autoRetry, advance, memberThreadId, onOpenMemberThread, threads, onOpenThread }: Props) {
   const [selection, setSelection] = useState<{ text: string; turnId: string } | null>(null);
   const [contextMenu, setContextMenu] = useState<{ text: string; turnId: string; element: HTMLElement; x: number; y: number; nonce: number } | null>(null);
   useEffect(() => { setSelection(null); setContextMenu(null); }, [historyThreadId]);
@@ -502,6 +505,10 @@ export function ThreadView({ onOpenFinds, chain = false, observeOlder = true, be
         )}
         {beforeItems}
         {shown.map((g) => renderItems(g.items))}
+        {advance && <div className="advance-line">
+          <span role="status">{advanceStatus(advance)}</span>
+          <button onClick={advance.onCancel} disabled={advance.busy}>{t('view.advanceCancel')}</button>
+        </div>}
       </Pictures.Provider>
       </ThreadJump.Provider>
       </HistoryContext.Provider>

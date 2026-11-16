@@ -1,5 +1,6 @@
 import type { WorkMode } from './types.js';
 import { cliDiagnostic } from './diagnostics.js';
+import { individualQuotaExhausted } from './quota-errors.js';
 import { PlanReply } from './plan-reply.js';
 import { sessionEnvironment } from './types.js';
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
@@ -517,7 +518,7 @@ export class AgyAdapter implements AgentAdapter {
   }
 
   // Literal hard-quota message shipped in the CLI; do not classify HTTP 429 or disk quota errors.
-  planExhausted(message: string): boolean { return /You have exhausted your quota on this model\./i.test(message); }
+  planExhausted(message: string): boolean { return /You have exhausted your quota on this model\./i.test(message) || individualQuotaExhausted(message); }
 
   /** `agy -p /usage` is tab-separated: model group, window, REMAINING percent, reset ISO time. */
   async fetchQuota(): Promise<PlanQuota> {

@@ -457,6 +457,9 @@ export class ProactiveService {
       const began = Date.now();
       const outcome = turnOutcome(latest.end)!;
       const transient = outcome.outcome === 'error' && transientError(outcome.code, outcome.message ?? '');
+      // The hub's own automatic retry owns transient failures; once it gives up, the next scan
+      // stops finding a watch here and asks the person, as it always did.
+      if (transient && this.manager.autoRetryView(threadId)) continue;
       let decision: AdvanceDecision = { phase: 'unsure', line: '' };
       // The agent's own [进度] line for this turn says it best; only an unclear one goes to the model.
       const report = thread.report && !thread.report.by && Date.parse(thread.report.at) >= Date.parse(latest.start.ts) ? thread.report : null;

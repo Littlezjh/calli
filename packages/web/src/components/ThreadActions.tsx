@@ -2,12 +2,13 @@ import { useState, type ReactNode } from 'react';
 import { ApiError, type AgentInfo, type Api, type HandoverTarget, type Section, type Thread, type Todo } from '../api';
 import { copyText } from '../clipboard';
 import { folderName } from '../paths';
+import { cancellableHandover } from '../handover';
 import { ChoiceDialog, Dialog } from './Dialog';
 import { HandoverChainDialog } from './HandoverTrail';
 import { HandoverDialog } from './HandoverDialog';
 import { Menu, type MenuEntry } from './Menu';
 import { ChatQuotaMenu } from './ChatQuotaMenu';
-import { IconArchive, IconBoard, IconCheck, IconCopy, IconDot, IconEdit, IconFiles, IconFork, IconHand, IconHandover, IconList, IconPin, IconPlus, IconSparkle, IconTerminal, IconTrace, IconTrash, IconWorktree } from './icons';
+import { IconArchive, IconBack, IconBoard, IconCheck, IconCopy, IconDot, IconEdit, IconFiles, IconFork, IconHand, IconHandover, IconList, IconPin, IconPlus, IconSparkle, IconTerminal, IconTrace, IconTrash, IconWorktree } from './icons';
 import { formatList, t } from '../i18n';
 import { boardStage, threadAttention, type BoardStage } from '../sidebar';
 
@@ -152,6 +153,16 @@ export function useThreadActions(deps: Deps) {
       onError(e);
     } finally {
       onBusy(null);
+    }
+  };
+
+  // Unlinks a handover made by hand: the conversation stays where it is and leaves the chain.
+  const cancelHandover = async (thread: Thread) => {
+    if (!api) return;
+    try {
+      onThreadChange((await api.detachAutomaticHandover(thread.id)).thread);
+    } catch (e) {
+      onError(e);
     }
   };
 
@@ -312,6 +323,10 @@ export function useThreadActions(deps: Deps) {
       { id: 'handover', label: t('handover.title'), icon: IconHand, onSelect: () => setDialog({ kind: 'handover', thread }) },
       ...(chainOf(thread) ? [{ id: 'chain', label: t('handover.trail.title'), icon: IconHandover, onSelect: () => setDialog({ kind: 'chain', thread }) }] : []),
     ] },
+    // A handover made by hand can be unlinked: both conversations stay, the chain card lets go.
+    ...(cancellableHandover(thread)
+      ? [{ id: 'cancel-handover', label: t('handover.cancel'), icon: IconBack, onSelect: () => void cancelHandover(thread) }]
+      : []),
     // A phone reaches the trace from the overview instead, so the bar keeps no button of its own.
     ...(onOpenTrace ? [{ id: 'trace', label: t('trace.openTrace'), icon: IconTrace, onSelect: onOpenTrace }] : []),
     'separator',
@@ -521,6 +536,10 @@ export function useThreadActions(deps: Deps) {
     newSection: () => setDialog({ kind: 'new-section', thread: null }),
     /** Opens the handover, to pick who takes over or copy what it says. */
     handover: (thread: Thread) => setDialog({ kind: 'handover', thread }),
+    /** Opens the handover chain, where an automatic takeover can be called off. */
+    chain: (thread: Thread) => setDialog({ kind: 'chain', thread }),
+    /** Whether the thread is part of a handover chain, so the chain dialog applies to it. */
+    inChain: (thread: Thread) => Boolean(chainOf(thread)),
     /**
      * Hands the thread to `target` at once: the hub continues it in a new conversation in the same
      * place, with its queue and collaboration lead. For when the thread's own agent cannot go on, so

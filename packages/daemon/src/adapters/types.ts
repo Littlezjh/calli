@@ -418,6 +418,20 @@ export interface AgentAdapter {
    * so the hub can offer another agent to take over. Agents word this differently; each says its own.
    */
   planExhausted?(message: string): boolean;
+  /**
+   * Whether two models on this instance bill from independent quota pools, judging by their ids
+   * alone — a gateway whose plan models and routed providers bill separately, say. Switching a
+   * thread's model within its own instance is only offered with evidence like this, where the
+   * quota windows cannot name per-model pools. Returning false (or not defining this) keeps the
+   * windows as the only evidence.
+   */
+  separateModelPools?(from: string, to: string): boolean;
+  /**
+   * Whether this instance reaches its models through a gateway rather than the account's own
+   * subscription. Both may report usage windows, so automatic handover asks this to keep the
+   * default order from moving work between a subscription and a gateway.
+   */
+  routesThroughGateway?(): boolean;
   /** Read-only location of this instance's native session, without starting an agent. */
   sessionLocation?(agentSessionId: string | null, cwd: string): Promise<{
     configDir: string;

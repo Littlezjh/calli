@@ -53,7 +53,7 @@ if (!args.includes('-p=') || flag('--input-format') !== 'stream-json' || flag('-
   process.exit(2);
 }
 
-const conversation = flag('--conversation') ?? (process.env.FAKE_HANDOVER_EXHAUST_ONCE ? `agy-conv-${process.pid}` : 'agy-conv-1');
+const conversation = flag('--conversation') ?? (process.env.FAKE_HANDOVER_EXHAUST_ONCE || process.env.FAKE_TRANSIENT_ONCE ? `agy-conv-${process.pid}` : 'agy-conv-1');
 const model = flag('--model') ?? 'default';
 const fullAccess = args.includes('--dangerously-skip-permissions');
 const mode = fullAccess ? 'always-proceed' : (flag('--mode') ?? 'request-review');
@@ -66,6 +66,8 @@ const result = (fields) => out({ event: 'result', result: { conversation_id: con
 setTimeout(() => out({ event: 'init', conversation_id: conversation, init: { cwd: process.cwd(), tools: [], permission_mode: mode } }), 10);
 
 let waiting = false;
+let advanceIndex = 0;
+let advanceScript = '';
 process.on('SIGINT', () => {
   if (waiting) result({ status: 'ERROR', response: 'partial', error: 'interrupted' });
   process.exit(1);
@@ -111,6 +113,38 @@ function runTurn(text) {
     return;
   }
   const body = text.replace(/<calli-context>[\s\S]*?<\/calli-context>/g, '').split(/<calli-(?:coordination|team|tools|todo|progress)>/)[0].trim();
+  // FAKE_AGY_ADVANCE names a script file consumed one line per turn, in order: "wait:<what>[:<minutes>]"
+  // ends the reply with a `[进度] 等外部` line, "doing:<note>" with `[进度] 进行中`, "review" / "blocked"
+  // with their stages, "error:<message>" fails the turn, "plain:<text>" answers with no progress
+  // line, and "slow" stalls until interrupted. Rewriting the file starts it over, so a test can
+  // script the replies that are still to come.
+  if (process.env.FAKE_AGY_ADVANCE) {
+    const text = readFileSync(process.env.FAKE_AGY_ADVANCE, 'utf8');
+    const entries = text.split('\n').map(l => l.trim()).filter(Boolean);
+    if (text !== advanceScript) { advanceScript = text; advanceIndex = 0; }
+    if (advanceIndex >= entries.length) advanceIndex = 0;
+    const entry = entries[advanceIndex++];
+    if (entry !== undefined) {
+      const colon = entry.indexOf(':');
+      const kind = colon >= 0 ? entry.slice(0, colon) : entry;
+      const rest = colon >= 0 ? entry.slice(colon + 1) : '';
+      if (kind === 'slow') { waiting = true; return; }
+      if (kind === 'error') { result({ status: 'ERROR', error: rest || 'boom' }); return; }
+      // A trailing ":<n>" on a wait is the minutes the note should promise.
+      const waitNote = (() => {
+        const m = /^(.*?)(?::(\d+))?$/.exec(rest);
+        return m && m[2] ? `${m[1]}，约 ${m[2]} 分钟` : rest;
+      })();
+      const reply = kind === 'wait' ? `还没好。\n[进度] 等外部：${waitNote}`
+        : kind === 'doing' ? `在忙。\n[进度] 进行中：${rest || '还在做'}`
+        : kind === 'review' ? `做完了。\n[进度] 待验收：${rest || '请检查'}`
+        : kind === 'blocked' ? `卡住了。\n[进度] 需要你：${rest || '缺信息'}`
+        : rest;
+      step({ step_index: stepIndex++, state: 'DONE', step_type: 'agent_response', text_delta: reply });
+      result({ status: 'SUCCESS', response: reply, num_turns: 1 });
+      return;
+    }
+  }
   if (body.startsWith('provider-error:')) {
     result({ status: 'ERROR', error: body.slice('provider-error:'.length).trim() });
     return;
@@ -135,6 +169,27 @@ function runTurn(text) {
     return;
   }
   if (exhaustTrigger) { exhaustNow(); return; }
+  // A quota error that promises its own reset in the wording the subscriptions use, for the
+  // resume watch's message-parsed hint; FAKE_HANDOVER_RESET_IN controls how far out it points.
+  if (body === 'quota-exhausted-reset') {
+    const in_ = process.env.FAKE_HANDOVER_RESET_IN ?? '61s';
+    result({ status: 'ERROR', error: `Individual quota reached. Please upgrade your subscription to increase your limits. Resets in ${in_}.` });
+    return;
+  }
+  // A transient provider failure, worded like the real gateways (no capacity on the server). With
+  // FAKE_TRANSIENT_ONCE naming a marker file it happens once per conversation, so a test can watch
+  // the daemon retry the same ask; without it every matching ask fails, until the retries give up.
+  if (body === 'no-capacity') {
+    const transientFail = () => result({ status: 'ERROR', error: 'API error (attempt 2): UNAVAILABLE (code 503): No capacity available for model gemini-3.8-flash-high on the server' });
+    const marker = process.env.FAKE_TRANSIENT_ONCE;
+    if (!marker) { transientFail(); return; }
+    const seen = existsSync(marker) ? readFileSync(marker, 'utf8') : '';
+    if (!seen.includes(conversation)) {
+      writeFileSync(marker, seen + conversation + '\n');
+      transientFail();
+      return;
+    }
+  }
   if ((body === 'quota-near' || body.startsWith('[协作消息') && body.endsWith('quota-near')) && process.env.FAKE_HANDOVER_QUOTA) writeFileSync(process.env.FAKE_HANDOVER_QUOTA, JSON.stringify({ 'Gemini Models': 95, 'Claude Models': 20 }));
   if (text.startsWith('请写一份交接摘要') && process.env.FAKE_HANDOVER_SUMMARY_FAIL) return result({ status: 'ERROR', error: 'summary failed' });
   const coordinated = coordinationFixture(text);
