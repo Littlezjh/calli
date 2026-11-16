@@ -508,6 +508,9 @@ export class Store {
       CREATE INDEX IF NOT EXISTS idx_events_conversation_starts ON events(thread_id, seq) WHERE type IN ('turn.started', 'voice.message');
       CREATE INDEX IF NOT EXISTS idx_events_turn_lifecycle ON events(thread_id, seq) WHERE type IN ('turn.started', 'turn.done', 'turn.error');
       CREATE INDEX IF NOT EXISTS idx_events_tool_starts ON events(ts) WHERE type = 'tool.start';
+      -- Covers history paging, which reads everything but data: a cold cache then walks this
+      -- compact index instead of seeking into 5GB of interleaved event bodies.
+      CREATE INDEX IF NOT EXISTS idx_events_cover ON events(thread_id, seq, type, ts, turn_id);
       DROP INDEX IF EXISTS idx_events_tool_ids;
     `);
     // Migration: add pinned column if it doesn't exist
