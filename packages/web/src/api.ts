@@ -1846,9 +1846,11 @@ export class Api {
     return this.request('POST', `/api/threads/${threadId}/handover-thread`, { agent, model, mode });
   }
   /** Hands the thread to `target` now: its conversation, queue and any collaboration lead. */
-  takeOver(threadId: string, target: string | HandoverTarget, note?: string): Promise<Thread> {
-    const body: HandoverTarget & { note?: string } = typeof target === 'string' ? { agent: target } : { ...target };
+  takeOver(threadId: string, target: string | HandoverTarget, note?: string, summary?: 'source' | HandoverTarget): Promise<Thread> {
+    const body: HandoverTarget & { note?: string; summary?: 'source' | HandoverTarget } = typeof target === 'string' ? { agent: target } : { ...target };
     if (note !== undefined) body.note = note;
+    // Who writes the brief, when the person chose: the thread's own agent, or another reading the record.
+    if (summary !== undefined) body.summary = summary;
     return this.request('POST', `/api/threads/${threadId}/takeover`, body);
   }
   /** Unlinks a handover: a manual one leaves its chain; an automatic one splits off its source. */

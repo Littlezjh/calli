@@ -2734,7 +2734,7 @@ export class ThreadManager {
   async handoverSummary(
     threadId: string,
     turnId: string | null,
-    opts: { carryFailed?: boolean; compress?: boolean } = {},
+    opts: { carryFailed?: boolean; compress?: boolean | HandoverTarget[] } = {},
   ): Promise<{ pending: true } | { summary: string; source: 'agent' | 'log' }> {
     const thread = this.threadView(threadId);
     const events = this.listEventsSince(threadId, 0);
@@ -2761,7 +2761,7 @@ export class ThreadManager {
     const retryStart = failedTurn ? this.store.listTurnEvents(threadId, failedTurn).find(e => e.type === 'turn.started') : undefined;
     const retry = opts.carryFailed && retryStart ? String(retryStart.data.displayText ?? retryStart.data.text ?? '') : '';
     // The source could not write its own summary: another agent reads the record, when one is set up for that.
-    const written = opts.compress ? await this.autoCompact.summarizeForHandover(threadId) : null;
+    const written = opts.compress ? await this.autoCompact.summarizeForHandover(threadId, Array.isArray(opts.compress) ? opts.compress : undefined) : null;
     const brief = [context, written, synthesizeBrief(events)].filter(Boolean).join('\n\n');
     return { summary: retry ? `${brief}\n\n## 继续未完成的这一轮\n\n${retry}` : brief, source: 'log' };
   }
@@ -2860,12 +2860,18 @@ export class ThreadManager {
    * The person hands the thread to `agent` now, because its own agent cannot go on (its plan ran
    * out). Same path as an automatic handover, without asking the source for a summary first: the
    * successor takes over the conversation, its queue and, in a collaboration, its place.
+   * `summary` names who writes the brief when the person chose: `source` asks the thread's own agent
+   * in a summary turn first, an agent target compresses the record; either way the brief goes over,
+   * not a copy of the conversation. Without it the configured method decides.
    */
-  async takeOver(id: string, agent: unknown, model: unknown, note: unknown): Promise<ThreadView> {
+  async takeOver(id: string, agent: unknown, model: unknown, note: unknown, summary?: unknown): Promise<ThreadView> {
     const thread = this.getThread(id);
     if (typeof agent !== 'string' || !this.adapters.has(agent) || agent === thread.agent && !model) throw new HttpError(400, 'invalid handover target');
     if (model !== undefined && typeof model !== 'string') throw new HttpError(400, 'invalid model');
     if (note !== undefined && (typeof note !== 'string' || note.length > 20_000)) throw new HttpError(400, 'invalid note');
+    const writer = summary as HandoverTarget | 'source' | undefined;
+    if (writer !== undefined && writer !== 'source' && (!writer || typeof writer !== 'object' || typeof writer.agent !== 'string' || !this.adapters.has(writer.agent)
+      || writer.model !== undefined && (typeof writer.model !== 'string' || !writer.model || writer.model.length > 200))) throw new HttpError(400, 'invalid summary writer');
     if (this.running.has(id) || this.threadView(id).waiting) throw new HttpError(409, 'the thread is busy');
     this.autoHandover.cancel(id);
     this.quotaResume.drop(id);
@@ -2875,11 +2881,12 @@ export class ThreadManager {
     const last = this.store.listTurns(id).at(-1)?.turnId ?? null;
     const failed = last && this.store.listTurnEvents(id, last).some(e => e.type === 'turn.error') ? last : null;
     const target = { agent, ...(model ? { model } : {}) };
-    if (this.autoHandover.settings().method === 'resume' && await this.canResumeHandover(id, agent, failed)) {
+    if (writer === 'source') return this.executeAutoHandover(id, target, await this.autoHandoverSummary(id, agent, false), failed, note?.trim());
+    if (!writer && this.autoHandover.settings().method === 'resume' && await this.canResumeHandover(id, agent, failed)) {
       const sessionId = await this.importHandoverSession(id, agent);
       if (sessionId) return this.executeResumeHandover(id, target, sessionId, failed, note?.trim());
     }
-    const result = await this.handoverSummary(id, null, { compress: true });
+    const result = await this.handoverSummary(id, null, { compress: writer ? [{ agent: writer.agent, ...(writer.model ? { model: writer.model } : {}) }] : true });
     if (!('summary' in result)) throw new HttpError(409, 'handover summary unavailable');
     return this.executeAutoHandover(id, target, result.summary, failed, note?.trim());
   }

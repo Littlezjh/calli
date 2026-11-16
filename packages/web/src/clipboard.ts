@@ -39,6 +39,32 @@ export function quoteMarkdown(text: string): string {
     .join('\n');
 }
 
+const COPIED_QUOTE = 'calli.copiedQuote';
+
+/** A message copied as a quote, remembered so pasting it into a box brings back a quote, not plain lines. */
+export interface CopiedQuote { text: string; threadId?: string; turnId?: string }
+
+export function rememberCopiedQuote(quote: CopiedQuote): void {
+  try { localStorage.setItem(COPIED_QUOTE, JSON.stringify(quote)); } catch { /* storage off: paste stays plain */ }
+}
+
+/**
+ * What a paste quotes, when it is a quote: the message this page last copied as one (with where it
+ * came from), or any text made only of Markdown `> ` lines, such as a quote copied from another app.
+ */
+export function pastedQuote(pasted: string): CopiedQuote | null {
+  const plain = pasted.replace(/\r\n?/g, '\n').trim();
+  if (!plain) return null;
+  try {
+    const copied = JSON.parse(localStorage.getItem(COPIED_QUOTE) ?? 'null') as CopiedQuote | null;
+    if (copied && typeof copied.text === 'string' && (plain === quoteMarkdown(copied.text) || plain === copied.text.trim())) return copied;
+  } catch { /* unreadable: fall through to the plain form */ }
+  const lines = plain.split('\n');
+  if (!lines.every(line => line.startsWith('>'))) return null;
+  const text = lines.map(line => line.replace(/^>\s?/, '')).join('\n').trim();
+  return text ? { text } : null;
+}
+
 /**
  * Copies text with an HTML twin, so a rich editor (Lark, Slack, Notion, mail) pastes the formatted
  * version and a plain one gets the text. The copy event works on plain http and keeps the click's

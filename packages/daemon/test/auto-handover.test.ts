@@ -8,6 +8,7 @@ import type { AddressInfo } from 'node:net';
 import { Store } from '../src/store.js';
 import { ThreadManager } from '../src/threads.js';
 import { AttachmentStore } from '../src/attachments.js';
+import { Workdirs } from '../src/workdirs.js';
 import { AgyAdapter } from '../src/adapters/agy.js';
 import { TraexAcpAdapter } from '../src/adapters/traex.js';
 import type { AgentAdapter, PlanQuota } from '../src/adapters/types.js';
@@ -39,7 +40,7 @@ async function setup(summaryFail = false, hidden?: string) {
   writeFileSync(join(dir, 'bridge.json'), '{}');
   adapters.set('bridge', new AgyAdapter([process.execPath, join(fixtures, 'fake-agy.mjs')], { FAKE_HANDOVER_QUOTA: join(dir, 'bridge.json') }));
   const kinds: Record<string, string> = { other: 'traex' };
-  const manager = new ThreadManager(store, adapters, [dir], new AttachmentStore(dir), () => [...adapters.keys()].map(id => ({ id, adapter: kinds[id] ?? 'agy', ...(id === hidden ? { hidden: true } : {}) })));
+  const manager = new ThreadManager(store, adapters, new Workdirs([dir], join(dir, 'dirs.json'), join(dir, 'scratch')), new AttachmentStore(dir), () => [...adapters.keys()].map(id => ({ id, adapter: kinds[id] ?? 'agy', ...(id === hidden ? { hidden: true } : {}) })));
   Object.defineProperty(manager.autoHandover, 'delayMs', { value: 80 });
   const team = new CoordinationManager(store, manager, join(dir, 'calli.sock'));
   const server = createHttpServer({ manager, token: 'test-token', webDir: null, version: 'test' });
@@ -477,6 +478,36 @@ test('takeover: an exhausted lead hands its place, failed ask and note to the ch
     // The brief leaves the full coordinates and the long synthesized summary to `calli`.
     assert.doesNotMatch(text, /Session 文件地址|# 交接摘要/);
     assert.ok(text.length < 1500, `brief handover is ${text.length} chars`);
+  } finally { await h.close(); }
+});
+
+test('takeover: the person picks who writes the summary, the source or another agent', async () => {
+  const h = await setup();
+  try {
+    await h.manager.startTurn(h.thread.id, { text: 'first task' }); await h.done();
+    for (const summary of ['own', { agent: 'missing' }, { agent: 'agy3', model: 5 }]) {
+      assert.equal((await h.api(`/api/threads/${h.thread.id}/takeover`, 'POST', { agent: 'agy2', summary })).status, 400);
+    }
+    // The source writes it: a summary turn runs in the source first, and its words go over.
+    const res = await h.api(`/api/threads/${h.thread.id}/takeover`, 'POST', { agent: 'agy2', summary: 'source' });
+    assert.equal(res.status, 201);
+    const next = await res.json() as { id: string; agent: string };
+    assert.equal(next.agent, 'agy2'); await h.done(next.id);
+    const sourceStarts = h.store.listEvents(h.thread.id, 0, -1).filter(e => e.type === 'turn.started');
+    assert.equal(sourceStarts.at(-1)!.data.handover, 'agy2');
+    const brief = String(h.store.listEvents(next.id, 0, -1).find(e => e.type === 'turn.started')!.data.text);
+    assert.match(brief, new RegExp(`calli history ${h.thread.id}`));
+    assert.doesNotMatch(brief, /从记录整理/);
+
+    // Another agent writes it: the record is compressed by the named agent, the source is not asked.
+    const other = await h.manager.createThread({ agent: 'agy', cwd: h.dir, model: 'gemini-pro' });
+    await h.manager.startTurn(other.id, { text: 'second task' }); await h.done(other.id);
+    const res2 = await h.api(`/api/threads/${other.id}/takeover`, 'POST', { agent: 'agy2', summary: { agent: 'agy3' } });
+    assert.equal(res2.status, 201);
+    const next2 = await res2.json() as { id: string };
+    await h.done(next2.id);
+    assert.ok(!h.store.listEvents(other.id, 0, -1).some(e => e.type === 'turn.started' && e.data.handover));
+    assert.match(String(h.store.listEvents(next2.id, 0, -1).find(e => e.type === 'turn.started')!.data.text), /## 进度（由 \S+ 从记录整理）/);
   } finally { await h.close(); }
 });
 

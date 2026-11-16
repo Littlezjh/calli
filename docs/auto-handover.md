@@ -31,6 +31,16 @@
 - `calli autohandover THREAD`：读状态；`cancel` 取消进行中的交接；`off`/`on`/`inherit` 改单线程覆盖（`inherit` 恢复继承）；`members off|on` 改协作成员整体开关（给协作根线程）；`detach` 撤销 continue 接力链（原会话恢复为独立对话）；`giveback` 把交接搬走的协作（根或成员身份，自动与手动 takeover 皆可）还给源线程，源线程重新担任根或成员、接手线程原地退休，并把源线程的自动交接关掉防止立刻再被交走。走 `CALLI_URL`/`CALLI_TOKEN`，与 `team` 命令同一凭据；测试 `packages/daemon/test/autohandover-cli.test.ts` 用假 agent 引导真实 HTTP hub 跑通全部子命令与 giveback 往返（`coordination.handbackMember` 为 `replaceHandoverMember` 的逆操作，`threads.handbackAutomaticHandover` 为入口，`POST /api/threads/:id/handback`）。
 - 手机此前只有倒计时里的一次性取消，交接与交接链只在电脑端行菜单里；现在斜杠菜单对当前线程也提供「交接」和「交接记录」（有链才出现），与电脑端同一组对话框，`App.tsx` 的 `hubActions`/`runHubAction` 与 `ThreadActions` 暴露的 `handover`/`chain`/`inChain` 接线。
 
+### 消息菜单里的「自动交接」（2026-11-16）
+
+账号没额度时，之前只有出错卡片上的一键接手，或线程菜单里要手动复制的交接。现在每条消息的「更多」菜单最后一项是「自动交接」：选接手的智能体，再选摘要由谁写，点「开始交接」，由 hub 完成整个交接。
+
+- 摘要「原智能体写」：先在原会话跑一轮交接摘要（与自动交接的摘要轮相同），写不出时退回压缩智能体或日志整理。线程停在出错状态时默认选「其他智能体写」，原账号多半已没额度。
+- 摘要「其他智能体写」：由所选智能体读 hub 记录压缩成摘要（`autoCompact.summarizeForHandover` 接受指定智能体），不花原账号额度。默认是设置里的第一个压缩智能体，没设置就是接手的智能体本身。
+- 接口：`POST /api/threads/:id/takeover` 增加可选 `summary: 'source' | { agent, model? }`；给了它就一定带摘要交接，不走复制会话。不给时行为不变。
+- 参考：Claude Code 的 `/compact` 是原 agent 自己压缩、LibreChat/Open WebUI 是同一对话里直接换模型；这里两者都给，因为原账号没额度时它自己写不了。
+- 验证：`auto-handover.test.ts` 新增一项覆盖参数校验与两种写法；`packages/e2e/takeover-shots.mjs` 用真实 daemon、假 agent 和无头 Chromium 拍菜单、弹窗（桌面/手机 × 亮/暗）并真实走完一次交接。未在实体手机上看过。
+
 ## 额度读数的三个来源
 
 参考 magpie（yetone/magpie）的三层方案，同名常量与解析对齐：

@@ -6,6 +6,7 @@ import { cancellableHandover } from '../handover';
 import { ChoiceDialog, Dialog } from './Dialog';
 import { HandoverChainDialog } from './HandoverTrail';
 import { HandoverDialog } from './HandoverDialog';
+import { TakeoverDialog } from './TakeoverDialog';
 import { Menu, type MenuEntry } from './Menu';
 import { ChatQuotaMenu } from './ChatQuotaMenu';
 import { IconArchive, IconBack, IconBoard, IconCheck, IconCopy, IconDot, IconEdit, IconFiles, IconFork, IconHand, IconHandover, IconList, IconPin, IconPlus, IconSparkle, IconTerminal, IconTrace, IconTrash, IconWorktree } from './icons';
@@ -72,6 +73,8 @@ type DialogState =
   | { kind: 'delete-section'; section: Section }
   /** Get source-session coordinates and progress for another agent to continue in the same directory. */
   | { kind: 'handover'; thread: Thread }
+  /** Hand the thread over now, choosing who takes over and who writes the summary. */
+  | { kind: 'takeover'; thread: Thread }
   /** The audit trail of a handover chain this thread belongs to. */
   | { kind: 'chain'; thread: Thread };
 
@@ -480,6 +483,12 @@ export function useThreadActions(deps: Deps) {
       dialogNode = (
         <HandoverDialog api={api} thread={thread} agents={agents} onOpen={onThreadOpen} onClose={close} />
       );
+    } else if (dialog.kind === 'takeover') {
+      const { thread } = dialog;
+      dialogNode = (
+        <TakeoverDialog api={api} thread={thread} agents={agents} onClose={close}
+          onTakeOver={async (target, summary) => onThreadOpen(await api.takeOver(thread.id, target, undefined, summary))} />
+      );
     } else if (dialog.kind === 'chain') {
       const record = chainOf(dialog.thread);
       const { thread } = dialog;
@@ -536,6 +545,8 @@ export function useThreadActions(deps: Deps) {
     newSection: () => setDialog({ kind: 'new-section', thread: null }),
     /** Opens the handover, to pick who takes over or copy what it says. */
     handover: (thread: Thread) => setDialog({ kind: 'handover', thread }),
+    /** Opens the handover started by hand: who takes over, and who writes its summary. */
+    autoHandover: (thread: Thread) => setDialog({ kind: 'takeover', thread }),
     /** Opens the handover chain, where an automatic takeover can be called off. */
     chain: (thread: Thread) => setDialog({ kind: 'chain', thread }),
     /** Whether the thread is part of a handover chain, so the chain dialog applies to it. */

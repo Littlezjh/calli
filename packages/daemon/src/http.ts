@@ -1328,7 +1328,7 @@ export function createHttpServer(deps: HttpDeps): Server {
       }
       if (method === 'POST' && sub === 'takeover') {
         const body = await readJson(req);
-        return sendJson(res, 201, await manager.takeOver(threadId, body.agent, body.model, body.note));
+        return sendJson(res, 201, await manager.takeOver(threadId, body.agent, body.model, body.note, body.summary));
       }
       if (method === 'DELETE' && sub === 'handover-link') {
         return sendJson(res, 200, manager.detachHandover(threadId));

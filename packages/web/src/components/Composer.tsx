@@ -10,7 +10,8 @@ import { sizeLabel } from '../files';
 import { mentionAt } from '../mentions';
 import { takeoverMention } from '../handover';
 import { MAX_IMAGES, prepareImage, restoreImage, type PreparedImage } from '../images';
-import { channelRows, splitNotes, withNotes, type Note } from '../timeline';
+import { channelRows, splitNotes, withNotes, type Note, type NoteSource } from '../timeline';
+import { pastedQuote } from '../clipboard';
 import { Popover } from './Popover';
 import { ComposerMenu, goalMenuActions, type GoalAction, type GoalCapability, type WritingMode } from './ComposerMenu';
 import { GoalCard } from './GoalCard';
@@ -208,6 +209,11 @@ interface Props {
   onNoteConsumed?: (id: string) => void;
   /** Told which notes are in the box, so their passages can stay highlighted in the conversation. */
   onNotesChange?: (notes: DraftNote[]) => void;
+  /**
+   * Where a pasted quote came from, as the agent of this box can read it: another thread on this hub.
+   * Without it a pasted quote goes along as text only.
+   */
+  quoteSource?: (threadId: string, turnId: string) => NoteSource | undefined;
   /** The thread's latest message from the user, as it was sent; null when there is none or it is not known yet. */
   lastSent?: { turnId: string; text: string } | null;
 }
@@ -264,6 +270,7 @@ export function Composer({
   note,
   onNoteConsumed,
   onNotesChange,
+  quoteSource,
   lastSent = null,
   mentionOptions = [],
   collaboration,
@@ -971,7 +978,14 @@ export function Composer({
     if (files.length) {
       e.preventDefault();
       void addFiles(files);
+      return;
     }
+    // A quote pasted whole becomes a quote above the input, as quoting from this thread would.
+    const quote = pastedQuote(e.clipboardData.getData('text/plain'));
+    if (!quote) return;
+    e.preventDefault();
+    const source = quote.threadId && quote.turnId ? quoteSource?.(quote.threadId, quote.turnId) : undefined;
+    setNotes(prev => [...prev, { id: noteId(), quote: quote.text, comment: '', ...(source ? { source } : {}) }]);
   };
 
   const hasFiles = (e: DragEvent) => [...e.dataTransfer.types].includes('Files');

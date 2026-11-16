@@ -12,7 +12,7 @@ import { threadLinkIndex, threadMentions, trimAutolinkJunk, type ThreadLinkIndex
 import { placeImages, stripPaths } from '../image-places';
 import { highlightLanguage, languageName } from '../code-language';
 import { enlargeMermaidDiagram, renderMermaidDiagram } from '../mermaid';
-import { copyRich, copyText, quoteMarkdown } from '../clipboard';
+import { copyRich, copyText, quoteMarkdown, rememberCopiedQuote } from '../clipboard';
 import { flushSync } from 'react-dom';
 import { createRoot } from 'react-dom/client';
 import { diffLines, numberLines } from '../diff';
@@ -95,6 +95,8 @@ interface Props {
   onQuote?: (text: string, turnId: string, threadId?: string) => void;
   onMessageContext?: (text: string, turnId: string, threadId?: string) => Promise<void>;
   onHandToAssistant?: (text: string, turnId: string, threadId?: string) => Promise<void>;
+  /** Hands the whole thread to another agent, offered last in a message's menu. */
+  onAutoHandover?: () => void;
   /**
    * When the last turn failed because the agent's plan ran out: hand the thread to another agent.
    * `label` names the quota-aware one-click target when one is available; `choose` opens the handover to pick another.
@@ -149,18 +151,19 @@ const RECENT_TURNS = 30;
 /** Scrolling up to within this distance of the top unfolds or fetches the earlier turns. */
 const NEAR_TOP_PX = 600;
 
-export function ThreadView({ onOpenFinds, chain = false, observeOlder = true, beforeItems, olderLabel, olderError, revealTurnId, historyApi, historyThreadId, items: originalItems, roots, loadImage, loadFile, onOpenFile, onPreview, hasOlder, loadingOlder, onLoadOlder, onFork, onQuote, onMessageContext, onHandToAssistant, forkAnyTurn, onEdit, revision = 0, takeover, resume, autoRetry, advance, memberThreadId, onOpenMemberThread, threads, onOpenThread }: Props) {
+export function ThreadView({ onOpenFinds, chain = false, observeOlder = true, beforeItems, olderLabel, olderError, revealTurnId, historyApi, historyThreadId, items: originalItems, roots, loadImage, loadFile, onOpenFile, onPreview, hasOlder, loadingOlder, onLoadOlder, onFork, onQuote, onMessageContext, onHandToAssistant, onAutoHandover, forkAnyTurn, onEdit, revision = 0, takeover, resume, autoRetry, advance, memberThreadId, onOpenMemberThread, threads, onOpenThread }: Props) {
   const [selection, setSelection] = useState<{ text: string; turnId: string } | null>(null);
   const [contextMenu, setContextMenu] = useState<{ text: string; turnId: string; element: HTMLElement; x: number; y: number; nonce: number } | null>(null);
   useEffect(() => { setSelection(null); setContextMenu(null); }, [historyThreadId]);
   const actionsFor = (text: string, turnId: string, element?: HTMLElement): MessageAction[] => [
     { key: 'copy', label: t('view.copyAnswer'), icon: IconCopy, run: async () => { if (!await copyText(text)) throw new Error(t('view.copyFailed')); } },
-    { key: 'copyQuote', label: t('view.copyQuote'), icon: IconClipboard, run: async () => { if (!await copyRich(quoteMarkdown(text), quoteHtml(text))) throw new Error(t('view.copyFailed')); } },
+    { key: 'copyQuote', label: t('view.copyQuote'), icon: IconClipboard, run: async () => { if (!await copyRich(quoteMarkdown(text), quoteHtml(text))) throw new Error(t('view.copyFailed')); rememberCopiedQuote({ text, turnId, ...(historyThreadId ? { threadId: historyThreadId } : {}) }); } },
     ...(onQuote ? [{ key: 'quote', label: t('references.quote'), icon: IconQuote, run: () => onQuote(text, turnId, historyThreadId) }] : []),
     ...(onHandToAssistant ? [{ key: 'assistant', label: t('messageActions.assistant'), icon: IconSparkle, run: () => onHandToAssistant(text, turnId, historyThreadId) }] : []),
     ...(onMessageContext ? [{ key: 'context', label: t('messageActions.context'), icon: IconPaperclip, run: () => onMessageContext(text, turnId, historyThreadId) }] : []),
     { key: 'select', label: t('messageActions.select'), icon: IconRead, run: () => setSelection({ text, turnId }) },
     ...(element?.querySelector('.message-edit-btn') ? [{ key: 'edit', label: t('view.editMessage'), icon: IconEdit, run: () => element.querySelector<HTMLButtonElement>('.message-edit-btn')?.click() }] : []),
+    ...(onAutoHandover ? [{ key: 'handover', label: t('takeover.title'), icon: IconHand, run: onAutoHandover }] : []),
   ];
   const gestures = useMessageGestures((element, x, y) => {
     const item = originalItems.find(item => item.key === element.dataset.messageKey);

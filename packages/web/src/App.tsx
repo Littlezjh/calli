@@ -3323,6 +3323,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
                 setMessageReference({ draftKey, value, nonce: Date.now() });
               } : undefined}
               onHandToAssistant={!demo ? async (text, turnId, threadId) => setAssistantMessage(await messageSnapshot(text, turnId, threadId)) : undefined}
+              onAutoHandover={!demo && !selected.archivedAt ? () => threadActions.autoHandover(selected) : undefined}
               historyThreadId={selected.id}
               items={threadItems}
               revealTurnId={jump?.threadId === selected.id ? jump.turnId : undefined}
@@ -3515,6 +3516,8 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           note={noteSignal?.draftKey === composerDraftKey ? noteSignal.note : null}
           onNoteConsumed={consumeNote}
           onNotesChange={onNotesChange}
+          // A quote copied in another thread here carries where to read it in full; one from this thread needs nothing.
+          quoteSource={(threadId, turnId) => threadId !== selectedId && threads.some(x => x.id === threadId) ? { threadId, turnId, elsewhere: true } : undefined}
           lastSent={selected ? lastSent : null}
         />}
         </>}

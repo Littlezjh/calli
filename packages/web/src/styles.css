@@ -15297,3 +15297,10 @@ body:has(.settings-page, .action-sheet) .pet { display: none; }
   .preview-send-notes { margin-left: auto; }
   .preview-actions .ghost { padding: 0 5px; }
 }
+
+.takeover-fields {
+  min-width: 0;
+  margin: 0 0 4px;
+  padding: 0;
+  border: 0;
+}
