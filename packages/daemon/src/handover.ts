@@ -1,4 +1,5 @@
 import { replaceMessageTail, type StoredEvent } from './events.js';
+import type { InjectionGate } from './injections.js';
 
 /**
  * Handing a thread's task to another agent: the successor gets a brief that points at the source —
@@ -95,12 +96,90 @@ export function handoverBrief(info: {
     '# 接手',
     '',
     `你接手 ${info.from} 在 hub 线程 ${info.threadId} 里的任务，看不到原对话。需要时自己读（找不到 calli 就用 "$CALLI_BIN_DIR/calli"）：`,
-    '- `calli handover`：来源会话信息',
-    `- \`calli history ${info.threadId}\`：按轮读问答和工具调用，按返回的 command 翻页`,
+    '- `calli handover`：接力链信息——返回的 segments 按时间列出全部更早的接手段，不止直接来源',
+    `- \`calli history ${info.threadId}\`：按轮读问答和工具调用，按返回的 command 翻页；链上任一段的 id 同样可用`,
     '',
     `工作目录 ${place}。沿用它和未提交的改动，先用 git status、git diff 对齐现状再继续。`,
     ...(info.lead ? ['', '你现在是本次协作的主控：成员的结果会投给你，用 `calli status` 查看成员和未交回的任务。'] : []),
   ].join('\n');
+}
+
+/** The mark of the chain block, which rides with a turn like the other protocol blocks. */
+export const HANDOVER_CHAIN_MARK = '<calli-handover>';
+
+/** One member of a handover chain, as the successor's outline shows it. */
+export interface ChainSegment {
+  id: string;
+  title: string;
+  updatedAt: string;
+  archived: boolean;
+  preview?: string | null;
+}
+
+/**
+ * The handover chain a thread belongs to, oldest first, ending at the thread itself. A detached
+ * edge ends the walk — beyond it the conversations are separate tasks — and so does an ancestor
+ * the hub no longer has: a segment the successor cannot read is not listed.
+ */
+export function chainSegments<M extends { id: string; title: string; updatedAt: string; archivedAt?: string | null; preview?: string | null; handover?: { sourceId: string; detached?: boolean } | null }>(
+  thread: M,
+  byId: (id: string) => M | undefined,
+): ChainSegment[] {
+  const segments: ChainSegment[] = [];
+  const seen = new Set<string>();
+  for (let at: M | undefined = thread; at && !seen.has(at.id);) {
+    seen.add(at.id);
+    segments.unshift({ id: at.id, title: at.title, updatedAt: at.updatedAt, archived: Boolean(at.archivedAt), preview: at.preview ?? null });
+    const link: M['handover'] = at.handover;
+    at = link && !link.detached ? byId(link.sourceId) : undefined;
+  }
+  return segments;
+}
+
+/** How many segments an outline lists before it points at `calli handover` for the rest. */
+const OUTLINE_SEGMENTS = 8;
+
+/**
+ * A few lines naming every segment of the chain — what each was about, when it last moved — so
+ * the successor knows the way back without reading anything. The details stay behind
+ * `calli history`, as everywhere else: the outline orients, it does not retell.
+ */
+export function chainOutlineText(segments: ChainSegment[], currentId: string): string {
+  // The current segment is always listed, however long the chain: it is the one the reader is in.
+  const head = segments.slice(0, OUTLINE_SEGMENTS - 1);
+  const shown = segments.some((s) => s.id === currentId && !head.some((h) => h.id === currentId))
+    ? [...head, segments.find((s) => s.id === currentId)!]
+    : segments.slice(0, OUTLINE_SEGMENTS);
+  const lines = shown.map((s) => {
+    const title = trunc(s.title.replace(/(?:（接手）)+$/, ''), 36);
+    // The current segment carries no preview or date of its own: those change with every turn,
+    // which would make the block look new and ride along every time. What the reader is in, it knows.
+    if (s.id === currentId) return `- ${s.id} · ${title}（当前）`;
+    const date = s.updatedAt.slice(5, 10).replace('-', '/');
+    const preview = s.preview ? ` · ${trunc(s.preview.replace(/\s+/g, ' '), 24)}` : '';
+    return `- ${s.id} · ${title} · ${date}${preview}${s.archived ? '（已归档）' : ''}`;
+  });
+  return [
+    `## 接力链（共 ${segments.length} 段，最早在前）`,
+    ...lines,
+    ...(segments.length > shown.length ? [`…还有 ${segments.length - shown.length} 段未列出，\`calli handover\` 列出全部`] : []),
+    '任一段都能用 `calli history <段id>` 读全文。',
+  ].join('\n');
+}
+
+/**
+ * The chain block: appended to a handover brief, and re-attached as an injection when the agent
+ * may no longer have it in view (a new session, a compaction), so a successor many segments in
+ * never loses the way back to what was done before it.
+ */
+export function handoverChainBlock(outline: string): string {
+  return `${HANDOVER_CHAIN_MARK}\n本任务是一条接力链：更早的段由别的会话承担，你接的是最后一段。它们做过什么见下面的大纲，细节用 \`calli history <段id>\` 按需读。\n${outline}\n</calli-handover>`;
+}
+
+/** `gate` leaves the block out when the agent has it in view already. */
+export function handoverChainInstructions(text: string, block: string, gate?: InjectionGate): string {
+  if (text.includes(HANDOVER_CHAIN_MARK) || gate?.('handover', block) === false) return text;
+  return `${text}\n\n${block}`;
 }
 
 /**
@@ -109,6 +188,8 @@ export function handoverBrief(info: {
  * preview starts after it and skips the headings of the sections.
  */
 export function handoverPreview(text: string, limit = 160): string {
+  // The chain block is protocol, like the lead-in: what the fold shows of the task is the rest.
+  text = text.replace(/<calli-handover>[\s\S]*?<\/calli-handover>/, '').trim();
   const lines = text.split('\n');
   const lead = text.startsWith('# 接手') ? lines.findIndex((line) => line.startsWith('工作目录')) : -1;
   const body = lines.slice(lead + 1)

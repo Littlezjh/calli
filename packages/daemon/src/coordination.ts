@@ -325,8 +325,9 @@ export class CoordinationManager {
     return true;
   }
 
-  /** Called synchronously in the successor turn's store transaction, before its runtime starts. */
-  replaceHandoverMember(source: string, target: string, turnId: string): void {
+  /** Called synchronously in the successor turn's store transaction, before its runtime starts.
+   * A null `turnId` moves the seat before any turn of the successor, as a handover by hand does. */
+  replaceHandoverMember(source: string, target: string, turnId: string | null): void {
     const t = this.team(source);
     const member = t?.members.find(m => m.id === source);
     if (!t || !member && t.rootId !== source) return;
@@ -345,7 +346,9 @@ export class CoordinationManager {
       if (d.from === source && (d.state === 'queued' || d.state === 'running')) d.from = target;
       if (d.to !== source || d.state !== 'queued' && d.state !== 'running') continue;
       d.to = target;
-      if (d.state === 'running') d.turnId = turnId;
+      // A turn-less move (a handover by hand, before any turn of the successor) has no turn to
+      // rebind: the delivery keeps running under the turn it already has.
+      if (d.state === 'running' && turnId) d.turnId = turnId;
     }
     if (member) this.enqueue(t, target, t.rootId, `成员 ${member.name} 已从 ${before.agent} 交接给 ${after.agent}`, 'result', `handover:${source}:${target}`);
     this.changed(t);

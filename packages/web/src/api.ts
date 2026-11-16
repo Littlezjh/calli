@@ -1797,8 +1797,12 @@ export class Api {
    * the copy ends where that turn ended.
    */
   /** With `turnId` the copy ends where that turn ended; with `worktree` it runs in a git worktree of its own. */
-  forkThread(threadId: string, opts: { turnId?: string; worktree?: boolean } = {}): Promise<Thread> {
-    const body = { ...(opts.turnId ? { turnId: opts.turnId } : {}), ...(opts.worktree ? { worktree: true } : {}) };
+  forkThread(threadId: string, opts: { turnId?: string; worktree?: boolean; agent?: string } = {}): Promise<Thread> {
+    const body = {
+      ...(opts.turnId ? { turnId: opts.turnId } : {}),
+      ...(opts.worktree ? { worktree: true } : {}),
+      ...(opts.agent ? { agent: opts.agent } : {}),
+    };
     return this.request('POST', `/api/threads/${threadId}/fork`, Object.keys(body).length ? body : undefined);
   }
 
@@ -1842,8 +1846,9 @@ export class Api {
   cancelAutoHandover(id: string): Promise<AutoHandoverView> { return this.request('DELETE', `/api/threads/${id}/auto-handover`); }
   setCollaborationHandover(id: string, enabled: boolean): Promise<Coordination> { return this.request('PATCH', `/api/threads/${id}/collaboration-handover`, { enabled }); }
 
-  createHandoverThread(threadId: string, agent: string, model?: string, mode?: 'continue' | 'branch'): Promise<Thread> {
-    return this.request('POST', `/api/threads/${threadId}/handover-thread`, { agent, model, mode });
+  createHandoverThread(threadId: string, agent: string, model?: string, mode?: 'continue' | 'branch', takeTeam?: boolean): Promise<Thread> {
+    // The team moves with the conversation unless the person said no; only a refusal is sent.
+    return this.request('POST', `/api/threads/${threadId}/handover-thread`, { agent, model, mode, ...(takeTeam === false ? { takeTeam: false } : {}) });
   }
   /** Hands the thread to `target` now: its conversation, queue and any collaboration lead. */
   takeOver(threadId: string, target: string | HandoverTarget, note?: string, summary?: 'source' | HandoverTarget): Promise<Thread> {

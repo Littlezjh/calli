@@ -8,6 +8,7 @@ import { HandoverChainDialog } from './HandoverTrail';
 import { HandoverDialog } from './HandoverDialog';
 import { TakeoverDialog } from './TakeoverDialog';
 import { Menu, type MenuEntry } from './Menu';
+import { AgentPicker } from './Pickers';
 import { ChatQuotaMenu } from './ChatQuotaMenu';
 import { IconArchive, IconBack, IconBoard, IconCheck, IconCopy, IconDot, IconEdit, IconFiles, IconFork, IconHand, IconHandover, IconList, IconPin, IconPlus, IconSparkle, IconTerminal, IconTrace, IconTrash, IconWorktree } from './icons';
 import { formatList, t } from '../i18n';
@@ -68,6 +69,7 @@ type DialogState =
   | { kind: 'delete-worktree'; thread: Thread; agentSession: boolean; changes: number; commits: number }
   /** Where the copy should run: beside the original, or in a git worktree of its own. */
   | { kind: 'fork'; thread: Thread; turnId?: string; branch: string | null; changes: number }
+  | { kind: 'fork-agent'; thread: Thread }
   | { kind: 'new-section'; thread: Thread | null }
   | { kind: 'rename-section'; section: Section }
   | { kind: 'delete-section'; section: Section }
@@ -116,6 +118,8 @@ export function useThreadActions(deps: Deps) {
   };
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [dialog, setDialog] = useState<DialogState | null>(null);
+  // The agent chosen in the fork-to-another-agent dialog; kept between opens of the same kind.
+  const [forkAgentPick, setForkAgentPick] = useState<string>('');
 
   const patch = async (thread: Thread, body: Parameters<Api['updateThread']>[1], then?: () => void) => {
     if (!api) return;
@@ -132,11 +136,11 @@ export function useThreadActions(deps: Deps) {
   //
   // `where` is left out when the user has not been asked yet. They are asked only when there is
   // something to choose: the agent can move a copy, and the thread stands in a git repository.
-  const fork = async (thread: Thread, turnId?: string, where?: 'here' | 'worktree') => {
+  const fork = async (thread: Thread, turnId?: string, where?: 'here' | 'worktree', agent?: string) => {
     if (!api) return;
-    const blocked = forkBlocked(thread, turnId);
+    const blocked = forkBlocked(thread, agent ? undefined : turnId);
     if (blocked) return onError(blocked);
-    if (!where && agents.find((a) => a.id === thread.agent)?.capabilities.forkInto) {
+    if (!agent && !where && agents.find((a) => a.id === thread.agent)?.capabilities.forkInto) {
       // An older daemon has no such question to answer; then the copy is made in place, as before.
       const options = await api.forkOptions(thread.id).catch(() => null);
       if (options?.worktree.available) {
@@ -145,7 +149,10 @@ export function useThreadActions(deps: Deps) {
     }
     onBusy({ threadId: thread.id, message: where === 'worktree' ? t('actions.forkingWorktree') : t('actions.forking') });
     try {
-      const copy = await api.forkThread(thread.id, { turnId, worktree: where === 'worktree' });
+      // To another agent the whole conversation goes over; a turn of arrival is its own agent's to ask.
+      const copy = agent
+        ? await api.forkThread(thread.id, { agent })
+        : await api.forkThread(thread.id, { turnId, worktree: where === 'worktree' });
       onThreadOpen(copy);
     } catch (e) {
       // The agent keeps its own record of the conversation. A turn it has no record of (one that
@@ -425,6 +432,9 @@ export function useThreadActions(deps: Deps) {
       );
     } else if (dialog.kind === 'fork') {
       const { thread, turnId, branch, changes } = dialog;
+      // Another agent of the same kind can take the whole conversation: offered when one exists.
+      const kind = agents.find((a) => a.id === thread.agent)?.adapter;
+      const elsewhere = kind !== undefined && agents.some((a) => a.id !== thread.agent && a.adapter === kind && a.available && !a.hidden);
       dialogNode = (
         <ChoiceDialog
           title={t('actions.forkTitle')}
@@ -436,13 +446,37 @@ export function useThreadActions(deps: Deps) {
               label: t('actions.forkWorktree'),
               hint: t('actions.forkWorktreeHint', branch, changes),
             },
+            ...(elsewhere ? [{ id: 'agent', icon: <IconHandover size={18} />, label: t('actions.forkAgent'), hint: t('actions.forkAgentHint') }] : []),
           ]}
           onPick={(id) => {
             close();
-            void fork(thread, turnId, id === 'worktree' ? 'worktree' : 'here');
+            if (id === 'agent') setDialog({ kind: 'fork-agent', thread });
+            else void fork(thread, turnId, id === 'worktree' ? 'worktree' : 'here');
           }}
           onCancel={close}
         />
+      );
+    } else if (dialog.kind === 'fork-agent') {
+      const { thread } = dialog;
+      const [picked, setPicked] = [forkAgentPick, setForkAgentPick];
+      const kind = agents.find((a) => a.id === thread.agent)?.adapter;
+      dialogNode = (
+        <Dialog
+          title={t('actions.forkAgentTitle')}
+          message={t('actions.forkAgentNote')}
+          confirmLabel={t('actions.forkAgentGo')}
+          confirmDisabled={!picked || !agents.some((a) => a.id === picked && a.available && !a.hidden)}
+          onConfirm={() => {
+            const agent = picked;
+            close();
+            if (agent) void fork(thread, undefined, undefined, agent);
+          }}
+          onCancel={close}
+        >
+          <fieldset className="handover-successor">
+            <AgentPicker api={api} agents={agents.filter((a) => a.adapter === undefined || kind === undefined || a.adapter === kind)} value={picked ?? ''} onChange={setPicked} />
+          </fieldset>
+        </Dialog>
       );
     } else if (dialog.kind === 'new-section') {
       const { thread } = dialog;

@@ -48,7 +48,7 @@ import { findFiles, listDir, readText, type Listing, type TextFile } from './bro
 import { referencedFile } from './artifacts.js';
 import { imagePathNote, isVideoType, MAX_IMAGES, sniffImageType, sniffSvg, type AttachmentStore, type StoredAttachment, type StoredVideo } from './attachments.js';
 import { HttpError } from './errors.js';
-import { handoverBrief, handoverPrompt, synthesizeBrief, turnMessage } from './handover.js';
+import { chainOutlineText, chainSegments, handoverBrief, handoverChainBlock, handoverChainInstructions, handoverPrompt, synthesizeBrief, turnMessage, type ChainSegment } from './handover.js';
 import { McpManager } from './mcp.js';
 import { SkillsManager } from './skills.js';
 import { isWithinWorkdirs, Workdirs } from './workdirs.js';
@@ -711,13 +711,21 @@ export class ThreadManager {
    * conversation; the hub copies the event log and the images. With `turnId` the copy ends where
    * that turn ended, on both sides; without it, or when that turn is the last, it is the whole thread.
    */
-  async forkThread(id: string, opts: { turnId?: string; worktree?: boolean } = {}): Promise<ThreadView> {
+  async forkThread(id: string, opts: { turnId?: string; worktree?: boolean; agent?: string } = {}): Promise<ThreadView> {
     const thread = this.getThread(id);
     const adapter = this.adapters.get(thread.agent);
-    if (!adapter?.capabilities.fork || !adapter.forkSession) throw new HttpError(400, `${thread.agent} cannot fork a conversation`);
+    // A fork to another agent carries the whole conversation over, the way a resume handover does,
+    // instead of copying it in the source agent's own format.
+    const across = Boolean(opts.agent && opts.agent !== thread.agent);
+    if (!adapter) throw new HttpError(400, `no such agent: ${thread.agent}`);
+    if (!across && (!adapter.capabilities.fork || !adapter.forkSession)) throw new HttpError(400, `${thread.agent} cannot fork a conversation`);
     if (!thread.agentSessionId) throw new HttpError(400, 'there is nothing to fork yet; send a message first');
     const running = this.running.has(id);
     if (running && !opts.turnId) throw new HttpError(409, 'wait for the running turn to finish before forking');
+    if (across) {
+      if (!(await this.canForkAcross(id, opts.agent!))) throw new HttpError(400, `${thread.agent}'s conversation cannot be copied to ${opts.agent}`);
+      if (opts.turnId) throw new HttpError(400, 'a fork to another agent copies the whole conversation; ask for no particular turn');
+    }
 
     // Where the hub's copy stops, and which of its turns that is. Null: the whole thread.
     let cut: { upToSeq: number; hubIndex: number; hubKeys: string[] } | null = null;
@@ -749,6 +757,7 @@ export class ThreadManager {
     try {
       const forkRef = cut ? await this.agentForkRef(thread, adapter, cut.hubIndex, cut.hubKeys) : undefined;
       if (opts.worktree) {
+        if (across && !this.adapters.get(opts.agent!)?.capabilities.forkInto) throw new HttpError(400, WORKTREE_REFUSALS.agent);
         const plan = await this.worktreePlan(thread);
         if (!plan.checkout) throw new HttpError(400, WORKTREE_REFUSALS[plan.reason]);
         const tree = await addWorktree(plan.checkout, copyId.slice(0, 8)).catch((err) => {
@@ -760,7 +769,13 @@ export class ThreadManager {
         if (!isWithinWorkdirs(cwd, this.workdirs)) throw new HttpError(400, WORKTREE_REFUSALS.outside_workdirs);
         worktree = { root: tree.root, branch: tree.branch, of: thread.worktree?.of ?? thread.cwd };
       }
-      forkedSessionId = await adapter.forkSession(thread.agentSessionId, thread.cwd, forkRef, added ? cwd : undefined);
+      if (across) {
+        forkedSessionId = await this.importHandoverSession(id, opts.agent!) ?? '';
+        if (!forkedSessionId) throw new HttpError(502, `could not copy the conversation of ${thread.agent} to ${opts.agent}`);
+      } else {
+        // Not across: the guard above made sure the source agent can copy its own conversation.
+        forkedSessionId = await adapter.forkSession!(thread.agentSessionId, thread.cwd, forkRef, added ? cwd : undefined);
+      }
     } catch (err) {
       await undoWorktree();
       if (err instanceof HttpError) throw err;
@@ -768,19 +783,29 @@ export class ThreadManager {
     }
 
     this.attachments.copyThread(thread.id, copyId);
+    // Another agent has names of its own for models and effort levels; a relay between accounts of
+    // the same kind keeps them, across kinds the target starts on its own default.
+    const acrossModel = across ? (await this.handoverModel(opts.agent!, thread.model)) ?? null : thread.model;
+    // A fork taken from the middle of a relay chain keeps the way back: through this link the chain
+    // outline rides along and `calli history` reaches every earlier segment. Detaching stands it alone.
+    const sourceSeq = this.store.listEvents(thread.id, 0, -1).at(-1)?.seq ?? 0;
+    const chainLink = thread.handover && !thread.handover.detached
+      ? { sourceId: thread.id, title: thread.title, agent: thread.agent, mode: 'branch' as const, method: 'resume' as const, sourceSeq }
+      : undefined;
     try {
       this.store.transaction(() => {
         this.store.createThread({
           id: copyId,
-          agent: thread.agent,
+          agent: across ? opts.agent! : thread.agent,
           cwd,
           title: `${thread.title}（分叉）`,
           permissionMode: thread.permissionMode,
           workMode: thread.workMode,
           speed: thread.speed,
-          model: thread.model,
-          effort: thread.effort,
+          model: acrossModel,
+          effort: across ? null : thread.effort,
           forkedFrom: thread.id,
+          ...(chainLink ? { handover: chainLink } : {}),
           worktree,
         });
         this.store.updateThread(copyId, { agentSessionId: forkedSessionId, sectionId: thread.sectionId }, { touch: true });
@@ -2284,7 +2309,7 @@ export class ThreadManager {
   }
 
   /** A fresh conversation in the source's exact directory, sharing its existing worktree. No agent is started. */
-  async createHandoverThread(threadId: string, agent: string, model?: string, mode?: unknown, method?: HandoverLink['method']): Promise<ThreadView> {
+  async createHandoverThread(threadId: string, agent: string, model?: string, mode?: unknown, method?: HandoverLink['method'], takeTeam = true): Promise<ThreadView> {
     const source = this.getThread(threadId);
     if (mode !== undefined && mode !== 'continue' && mode !== 'branch') throw new HttpError(400, 'invalid handover mode');
     // Whoever takes over from here, the work leaves this thread; stop waiting for its quota.
@@ -2316,6 +2341,9 @@ export class ThreadManager {
     }, source.worktree, { sourceId: source.id, title: source.title, agent: source.agent, mode: selected,
       sourceSeq: this.store.history.latest(source.id), ...(method ? { method } : {}) });
     this.personal.inherit(source.id, successor.id);
+    // A collaboration's members answer its lead: by default the successor takes the seat, so the
+    // team and its open deliveries move with the conversation instead of being left behind.
+    if (takeTeam && this.coordination?.metadata(source.id)) this.coordination.replaceHandoverMember(source.id, successor.id, null);
     return successor;
   }
 
@@ -2633,8 +2661,13 @@ export class ThreadManager {
     // Writing mode's way of working for its stage; an edit the person made is mentioned once.
     const writing = !slashCommand && rawText ? thread.writing : null;
     const written = writing ? writingInstructions(discoverable, writing) : discoverable;
+    // A thread taken over from another carries its chain. The outline is attached when the agent
+    // may no longer have it in view — a fresh session, a compaction, enough turns — so the way
+    // back to earlier segments never vanishes, whatever became of the handover brief itself.
+    const chain = !bare && !slashCommand && Boolean(rawText) && thread.handover && !thread.handover.detached ? this.handoverChain(thread) : [];
+    const chained = chain.length > 1 ? handoverChainInstructions(written, handoverChainBlock(chainOutlineText(chain, thread.id)), gate) : written;
     const askProgress = !bare && !slashCommand && Boolean(rawText) && this.progressWanted();
-    const text = askProgress ? progressInstructions(written, gate) : written;
+    const text = askProgress ? progressInstructions(chained, gate) : chained;
 
     if (rawImages.length > 0) {
       await this.checkImages(thread.agent, thread.model, rawImages);
@@ -2726,6 +2759,17 @@ export class ThreadManager {
   }
 
   /**
+   * The handover chain of a thread, oldest first, ending at the thread itself. The archive is
+   * included: a chain often reaches back through quiet segments, and the successor can read those too.
+   */
+  private handoverChain(thread: { id: string }): ChainSegment[] {
+    const all = [...this.store.listThreads(), ...this.store.listThreads({ archived: true })];
+    const byId = new Map(all.map((t) => [t.id, t]));
+    const self = byId.get(thread.id);
+    return self ? chainSegments(self, (id) => byId.get(id)) : [];
+  }
+
+  /**
    * The handover summary: what the agent wrote in its handover turn, or — when the turn failed or
    * none was run — one the hub synthesizes from the event log, which holds the whole process.
    * `brief` is for a successor the hub starts itself: it can read the source with `calli`, so it gets
@@ -2744,8 +2788,12 @@ export class ThreadManager {
       ? { root: checkout.top, branch: checkout.branch, main: checkout.main }
       : thread.worktree ? { root: thread.worktree.root, branch: thread.worktree.branch, main: thread.worktree.of } : null;
     // The brief of the auto handover: the successor reads the source itself with `calli`, so it gets
-    // where to look and how, plus a few lines of where things stood — not a retelling.
+    // where to look and how, plus a few lines of where things stood — not a retelling. When this
+    // handover extends a chain, the outline of every earlier segment rides along as its block: the
+    // injection gate then knows it was read, so it is re-attached only when it may be out of view.
+    const chain = this.handoverChain(thread);
     const context = handoverBrief({ threadId, from: adapter?.label ?? thread.agent, cwd: thread.cwd, worktree, lead: this.coordination?.leads(threadId) })
+      + (chain.length > 1 ? `\n\n${handoverChainBlock(chainOutlineText(chain, thread.id))}` : '')
       + this.personal.context(threadId);
     if (turnId) {
       const turnEvents = events.filter((e) => e.turnId === turnId);
@@ -2906,6 +2954,20 @@ export class ThreadManager {
     const agents = await this.listAgents();
     const kind = (agent: string) => agents.find(a => a.id === agent)?.adapter;
     return kind(thread.agent) !== undefined && kind(thread.agent) === kind(target);
+  }
+
+  /**
+   * Whether a fork could carry this thread's conversation to another agent as a copy that stands on
+   * its own: the same gate as a resume handover, except a collaboration's seat is not at stake — a
+   * fork never moves the team, so a lead may be forked without a turn to resend.
+   */
+  private async canForkAcross(id: string, targetId: string): Promise<boolean> {
+    const thread = this.getThread(id);
+    if (targetId === thread.agent || !thread.agentSessionId || !this.adapters.get(thread.agent)?.sessionLocation || !this.adapters.get(targetId)?.importSession) return false;
+    if ((this.store.lastContextUsed(id) ?? 0) > RESUME_HANDOVER_MAX_CONTEXT) return false;
+    const agents = await this.listAgents();
+    const kind = (agent: string) => agents.find(a => a.id === agent)?.adapter;
+    return kind(thread.agent) !== undefined && kind(thread.agent) === kind(targetId);
   }
 
   /** Copies the thread's conversation into `target`'s account; null when it cannot be read or written. */

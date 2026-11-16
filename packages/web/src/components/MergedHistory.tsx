@@ -53,7 +53,8 @@ export function MergedHistory({ api, thread, merged, ready, agentLabel, laterOf,
     const oldest = segments[0];
     const target = oldest?.thread ?? thread;
     const same = Boolean(oldest?.page.hasOlder);
-    const id = same ? target.id : (target.handover?.mode === 'continue' ? target.handover.sourceId : undefined);
+    // Any live link walks up, whatever way the handover was made: the chain reads as one conversation.
+    const id = same ? target.id : (target.handover && !target.handover.detached ? target.handover.sourceId : undefined);
     if (!id) return;
     // Broken/cyclic metadata must not repeatedly insert the same conversation.
     if (!same && [thread.id, ...segments.map(s => s.thread.id)].includes(id)) { setError('missing'); return; }

@@ -993,7 +993,9 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
     : t('pet.name');
   const latestSegment = selected ? latestHandoverThread(selected, threads) : null;
   const viewingEarlier = Boolean(selected && latestSegment && latestSegment.id !== selected.id);
-  const mergedHandover = !api.demo && singleSegmentId !== selectedId && Boolean(selected?.handover?.mode === 'continue' || viewingEarlier);
+  // Any thread that continues another one by a live link reads as one conversation, its ancestors
+  // folded in above — a relay made by hand reads the same way as an automatic one.
+  const mergedHandover = !api.demo && singleSegmentId !== selectedId && Boolean((selected?.handover && !selected.handover.detached) || viewingEarlier);
   const selectDraftAgent = (id: string, list = agents) => {
     const caps = list.find(item => item.id === id)?.capabilities;
     setDraftAgent(id);

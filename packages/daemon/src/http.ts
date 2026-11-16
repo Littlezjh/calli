@@ -1297,7 +1297,8 @@ export function createHttpServer(deps: HttpDeps): Server {
 
       if (method === 'POST' && sub === 'handover-thread') {
         const body = await readJson(req);
-        return sendJson(res, 201, await manager.createHandoverThread(threadId, body.agent, body.model, body.mode));
+        // `takeTeam` (default true) moves a collaboration's members to the successor with the conversation.
+        return sendJson(res, 201, await manager.createHandoverThread(threadId, body.agent, body.model, body.mode, undefined, body?.takeTeam !== false));
       }
       // POST /api/threads/:id/autotitle: the person's 「重新取名」, through the 自动取名 extension.
       if (method === 'POST' && sub === 'autotitle') {
@@ -1559,7 +1560,8 @@ export function createHttpServer(deps: HttpDeps): Server {
       if (method === 'GET' && sub === 'fork-options') return sendJson(res, 200, await manager.forkOptions(threadId));
 
       if (method === 'POST' && sub === 'fork') {
-        // An empty body copies the whole thread; `turnId` names the turn the copy ends with.
+        // An empty body copies the whole thread; `turnId` names the turn the copy ends with;
+        // `agent` hands the copy to another agent, its whole conversation carried over.
         const body = await readJson(req);
         return sendJson(
           res,
@@ -1567,6 +1569,7 @@ export function createHttpServer(deps: HttpDeps): Server {
           await manager.forkThread(threadId, {
             ...(typeof body?.turnId === 'string' ? { turnId: body.turnId } : {}),
             worktree: body?.worktree === true,
+            ...(typeof body?.agent === 'string' && body.agent ? { agent: body.agent } : {}),
           }),
         );
       }
