@@ -31,19 +31,24 @@ test('Claude forks compacted history in desktop and phone layouts, in light and 
       }
     }
     const db = new DatabaseSync(join(daemon.dataDir, 'hub.db'), { readOnly: true });
-    const prompts = db.prepare("SELECT data FROM events WHERE thread_id = ? AND type = 'turn.started' ORDER BY seq").all(source.id).map(row => JSON.parse(row.data).text);
+    const starts = db.prepare("SELECT data, ts FROM events WHERE thread_id = ? AND type = 'turn.started' ORDER BY seq").all(source.id);
+    const ends = db.prepare("SELECT ts FROM events WHERE thread_id = ? AND type = 'turn.done' ORDER BY seq").all(source.id);
+    const prompts = starts.map(row => JSON.parse(row.data).text);
+    const answerTime = i => new Date((Date.parse(starts[i].ts) + Date.parse(ends[i].ts)) / 2).toISOString();
     db.close();
-    // Persist full history while the fake ACP replay exposes only the summary and last question.
+    // A native prefix is absent from the hub, while ACP replay exposes only its compacted tail.
     const records = [
-      { uuid: 'u1', parentUuid: null, type: 'user', message: { content: prompts[0] } },
-      { uuid: 'a1', parentUuid: 'u1', type: 'assistant', message: { id: 'm1b' } },
+      { uuid: 'legacy-user', parentUuid: null, type: 'user', message: { content: 'native prompt before the hub' } },
+      { uuid: 'legacy-answer', parentUuid: 'legacy-user', type: 'assistant', message: { id: 'legacy-answer' } },
+      { uuid: 'u1', parentUuid: 'legacy-answer', type: 'user', message: { content: prompts[0] } },
+      { uuid: 'a1', parentUuid: 'u1', type: 'assistant', timestamp: answerTime(0), message: { id: 'm1b' } },
       { uuid: 'u2', parentUuid: 'a1', type: 'user', message: { content: prompts[1] } },
-      { uuid: 'a2', parentUuid: 'u2', type: 'assistant', message: { id: 'm1a' } },
+      { uuid: 'a2', parentUuid: 'u2', type: 'assistant', timestamp: answerTime(1), message: { id: 'm1a' } },
       { uuid: 'compact', parentUuid: null, logicalParentUuid: 'not-persisted', type: 'system', subtype: 'compact_boundary',
         compactMetadata: { preservedSegment: { tailUuid: 'a2' } } },
       { uuid: 'summary', parentUuid: 'compact', type: 'user', isCompactSummary: true, message: { content: 'compaction summary' } },
       { uuid: 'u3', parentUuid: 'summary', type: 'user', message: { content: prompts[2] } },
-      { uuid: 'a3', parentUuid: 'u3', type: 'assistant', message: { id: 'm2' } },
+      { uuid: 'a3', parentUuid: 'u3', type: 'assistant', timestamp: answerTime(2), message: { id: 'm2' } },
     ];
     writeFileSync(join(project, 'hist-compacted.jsonl'), records.map(record => JSON.stringify(record)).join('\n') + '\n');
     for (const mobile of [false, true]) for (const colorScheme of ['light', 'dark']) {

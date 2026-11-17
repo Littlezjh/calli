@@ -1362,6 +1362,55 @@ test('fork: completed Claude background replies work while a later prompt runs, 
   assert.equal((await (await api(`/api/threads/${source.id}`)).json()).status, 'running');
 });
 
+// Native-only prompts and compactions can make a legacy session disagree with the hub's log.
+test('fork: legacy Claude history mismatch recovers reply and menu boundaries by time', async (t) => {
+  const configDir = join(dataDir, 'fork-legacy-mismatch');
+  const nativeDir = join(configDir, 'projects', 'fixture-project');
+  mkdirSync(nativeDir, { recursive: true });
+  const adapters = (manager as unknown as { adapters: Map<string, AgentAdapter> }).adapters;
+  const original = adapters.get('claude')!;
+  const adapter = new ClaudeAcpAdapter([process.execPath, join(here, 'fixtures', 'fake-acp.mjs')], {
+    CLAUDE_CONFIG_DIR: configDir, FAKE_ACP_FORK_DIR: nativeDir, FAKE_ACP_SESSION: 'legacy-mismatch-source',
+  });
+  adapters.set('claude', adapter);
+  t.after(() => adapters.set('claude', original));
+  const source = await newThread({ agent: 'claude' });
+  t.after(async () => { await api(`/api/threads/${source.id}/cancel`, { method: 'POST' }); });
+  for (const text of ['first question', 'second question']) {
+    await api(`/api/threads/${source.id}/turns`, { method: 'POST', body: JSON.stringify({ text }) });
+    await waitFor(async () => (await (await api(`/api/threads/${source.id}`)).json()).status === 'idle' || null);
+  }
+  const starts = store.listEventsOfType(source.id, 'turn.started');
+  await api(`/api/threads/${source.id}/turns`, { method: 'POST', body: JSON.stringify({ text: 'slow later prompt' }) });
+  await waitFor(async () => (await events(source.id)).find(event => event.type === 'message.delta' && String(event.data.text).includes('slow later prompt')));
+  const path = join(nativeDir, 'legacy-mismatch-source.jsonl');
+  const records = readFileSync(path, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+  records[0].parentUuid = 'native-only-answer';
+  const next = records.findIndex(record => record.uuid === 'live-2-user');
+  records[next].parentUuid = 'legacy-compact';
+  records.splice(next, 0, { uuid: 'legacy-compact', parentUuid: null, logicalParentUuid: 'not-persisted',
+    type: 'system', subtype: 'compact_boundary', compactMetadata: { preservedSegment: { tailUuid: 'live-1-answer' } } });
+  records.unshift(
+    { uuid: 'native-only-user', parentUuid: null, type: 'user', message: { content: 'native history predating the hub' } },
+    { uuid: 'native-only-answer', parentUuid: 'native-only-user', type: 'assistant', message: { id: 'native-only-answer' } },
+  );
+  writeFileSync(path, records.map(record => JSON.stringify(record)).join('\n') + '\n');
+  const boundaries = await adapter.loadForkHistory('legacy-mismatch-source', workdir);
+  assert.equal(matchTurns(boundaries.map(turn => turn.text.trim()), starts.map(event => String(event.data.text).trim()), 3), null);
+  // Older daemons did not persist native IDs. Recover from the recorded completion interval.
+  store.db.prepare("UPDATE events SET data = json_remove(data, '$.forkRef') WHERE thread_id = ? AND type = 'turn.done'").run(source.id);
+  for (const body of [{ turnId: starts[1].turnId }, {}]) {
+    const response = await api(`/api/threads/${source.id}/fork`, { method: 'POST', body: JSON.stringify(body) });
+    assert.equal(response.status, 201, await response.clone().text());
+    const copy = await response.json() as { id: string; agentSessionId: string };
+    assert.equal(copy.agentSessionId, 'legacy-mismatch-source-fork-at-live-2-answer');
+    const copied = await events(copy.id);
+    assert.deepEqual(copied.filter(event => event.type === 'turn.started').map(event => event.data.text), ['first question', 'second question']);
+    assert.equal(copied.some(event => String(event.data.text).includes('slow later prompt')), false);
+    assert.equal((await (await api(`/api/threads/${source.id}`)).json()).status, 'running');
+  }
+});
+
 test('fork works for pi too, and agents say whether they can import and fork', async () => {
   const thread = await newThread({ agent: 'pi' });
   await api(`/api/threads/${thread.id}/turns`, { method: 'POST', body: JSON.stringify({ text: 'hi' }) });

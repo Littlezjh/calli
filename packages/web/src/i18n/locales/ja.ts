@@ -2282,7 +2282,7 @@ export const ja: Messages = {
   'actions.forkingSnapshot': '直近の完了した回答からフォーク中。元のスレッドは実行を続けます…',
   'actions.forkingWorktree': 'worktree を作成してフォーク中…',
   'actions.forking': 'フォーク中…',
-  'actions.forkMismatch': 'このターンはエージェント自身の記録と一致しないため、ここからはフォークできません。最後の回答からスレッド全体をフォークできます',
+  'actions.forkMismatch': 'この返信の分岐位置を確認できませんでした。元のスレッドは変更されていません。別の完了済みの返信から再試行してください。',
   'actions.undo': '元に戻す',
   'actions.archivedNotice': (title: string) => `「${title}」をアーカイブしました`,
   'actions.copyFailed': 'コピーに失敗しました。テキストを選択して手動でコピーしてください',

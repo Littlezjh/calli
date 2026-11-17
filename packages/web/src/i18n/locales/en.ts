@@ -2286,7 +2286,7 @@ export const en: Messages = {
   'actions.forkingSnapshot': 'Forking from the latest completed reply; the original keeps running…',
   'actions.forkingWorktree': 'Creating a worktree and forking…',
   'actions.forking': 'Forking…',
-  'actions.forkMismatch': 'This turn does not match the agent\'s own records, so it cannot be forked from here; you can fork the whole thread from the last answer',
+  'actions.forkMismatch': 'The fork boundary for this reply could not be confirmed. The original thread is unchanged; try another completed reply.',
   'actions.undo': 'Undo',
   'actions.archivedNotice': (title: string) => `Archived “${title}”`,
   'actions.copyFailed': 'Copying failed; select the text and copy it by hand',

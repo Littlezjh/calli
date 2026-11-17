@@ -2284,7 +2284,7 @@ export const zh = {
   'actions.forkingSnapshot': '正在从最近已完成的回复分叉，原线程继续运行…',
   'actions.forkingWorktree': '正在新建工作树并分叉…',
   'actions.forking': '正在分叉…',
-  'actions.forkMismatch': '这一轮在 agent 自己的记录里对不上，没法从这里分叉；可以从最后一条回答分叉整个线程',
+  'actions.forkMismatch': '这条回复的分叉边界暂时无法确认，原线程不受影响；可以换一条已完成的回复重试',
   'actions.undo': '撤销',
   'actions.archivedNotice': (title: string) => `已归档“${title}”`,
   'actions.copyFailed': '复制失败，请手动选中文字复制',
