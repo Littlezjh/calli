@@ -881,6 +881,8 @@ export interface QuotaWindow {
   label: string;
   /** What the window covers, when the agent splits by model group. */
   scope?: string;
+  /** Exact model IDs covered by this scoped window; absent means the scope is unmapped. */
+  modelIds?: string[];
   /** How much of the window is used, 0 to 100. */
   usedPercent: number;
   /** When the window resets, if the agent said so. ISO. */

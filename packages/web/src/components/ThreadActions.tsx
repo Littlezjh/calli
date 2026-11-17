@@ -83,9 +83,9 @@ type DialogState =
 export type ThreadAction = 'rename' | 'pin' | 'fork' | 'archive' | 'restore' | 'delete';
 
 /** Why a thread cannot be forked right now, or null when it can. */
-export function forkBlocked(thread: Thread, turnId?: string): string | null {
+export function forkBlocked(thread: Thread, _turnId?: string): string | null {
   if (!thread.agentSessionId) return t('actions.forkEmpty');
-  if (thread.status === 'running' && !turnId) return t('actions.forkRunning');
+  // The daemon selects the latest completed boundary when the source thread is still running.
   return null;
 }
 
@@ -138,7 +138,8 @@ export function useThreadActions(deps: Deps) {
   // something to choose: the agent can move a copy, and the thread stands in a git repository.
   const fork = async (thread: Thread, turnId?: string, where?: 'here' | 'worktree', agent?: string) => {
     if (!api) return;
-    const blocked = forkBlocked(thread, agent ? undefined : turnId);
+    if (agent && thread.status === 'running') return onError(t('actions.forkAgentRunning'));
+    const blocked = forkBlocked(thread, turnId);
     if (blocked) return onError(blocked);
     if (!agent && !where && agents.find((a) => a.id === thread.agent)?.capabilities.forkInto) {
       // An older daemon has no such question to answer; then the copy is made in place, as before.
@@ -147,7 +148,7 @@ export function useThreadActions(deps: Deps) {
         return setDialog({ kind: 'fork', thread, turnId, branch: options.worktree.branch ?? null, changes: options.worktree.changes ?? 0 });
       }
     }
-    onBusy({ threadId: thread.id, message: where === 'worktree' ? t('actions.forkingWorktree') : t('actions.forking') });
+    onBusy({ threadId: thread.id, message: where === 'worktree' ? t('actions.forkingWorktree') : thread.status === 'running' && !turnId ? t('actions.forkingSnapshot') : t('actions.forking') });
     try {
       // To another agent the whole conversation goes over; a turn of arrival is its own agent's to ask.
       const copy = agent
@@ -157,7 +158,9 @@ export function useThreadActions(deps: Deps) {
     } catch (e) {
       // The agent keeps its own record of the conversation. A turn it has no record of (one that
       // never reached it, say) is not a place its copy can stop.
-      if (turnId && e instanceof Error && /own history|cannot stop a copy|whole conversation/.test(e.message)) {
+      if (e instanceof Error && /no completed turn/.test(e.message)) return onError(t('actions.forkNoCompleted'));
+      if (e instanceof Error && /wait for this turn to finish/.test(e.message)) return onError(t('actions.forkRunning'));
+      if (e instanceof Error && /own history|cannot stop a copy|whole conversation/.test(e.message)) {
         return onError(t('actions.forkMismatch'));
       }
       onError(e);
@@ -446,7 +449,7 @@ export function useThreadActions(deps: Deps) {
               label: t('actions.forkWorktree'),
               hint: t('actions.forkWorktreeHint', branch, changes),
             },
-            ...(elsewhere ? [{ id: 'agent', icon: <IconHandover size={18} />, label: t('actions.forkAgent'), hint: t('actions.forkAgentHint') }] : []),
+            ...(elsewhere && thread.status !== 'running' ? [{ id: 'agent', icon: <IconHandover size={18} />, label: t('actions.forkAgent'), hint: t('actions.forkAgentHint') }] : []),
           ]}
           onPick={(id) => {
             close();
