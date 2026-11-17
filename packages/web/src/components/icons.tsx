@@ -20,6 +20,10 @@ export const AgentMark = ({ path, size = 16 }: { path: string; size?: number }) 
   </svg>
 );
 
+export const IconLock = (p: { size?: number }) => (
+  <Svg {...p}><rect x="5" y="10" width="14" height="11" rx="3" /><path d="M8 10V7a4 4 0 0 1 8 0v3" /></Svg>
+);
+
 export const IconMenu = (p: { size?: number }) => (
   <Svg {...p}>
     <path d="M4 7h16M4 12h16M4 17h10" />

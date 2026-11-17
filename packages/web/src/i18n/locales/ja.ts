@@ -808,6 +808,9 @@ export const ja: Messages = {
   'extensions.perm.memory.read.hint': "このマシンの対応インスタンスの既存メモリを読み取ります。複数のプロジェクトの内容を含む場合があります。同じ保存先を使うインスタンスは閲覧範囲を共有します。変更や生成は行いません。",
   // Shared words
   'common.close': '閉じる',
+  'composer.sessionInUseTitle': '別のアプリで開かれています',
+  'composer.sessionInUseMessage': '続けるには、先にそちらで会話を閉じてください。',
+  'composer.forkSession': 'チャットを分岐',
   'common.cancel': 'キャンセル',
   'common.unknown': '不明',
 

@@ -406,6 +406,8 @@ export interface AgentAdapter {
    * so the hub can offer another agent to take over. Agents word this differently; each says its own.
    */
   planExhausted?(message: string): boolean;
+  /** Whether the native session explicitly refused another writer. */
+  sessionInUse?(message: string): boolean;
   /** Read-only location of this instance's native session, without starting an agent. */
   sessionLocation?(agentSessionId: string | null, cwd: string): Promise<{
     configDir: string;

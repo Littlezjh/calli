@@ -420,6 +420,8 @@ export function ThreadView({ onOpenFinds, chain = false, observeOlder = true, be
             </div>
           );
         case 'error': {
+          // The current writer conflict owns the composer; older conflicts remain quiet history.
+          if (item.sessionInUse) return item === items[items.length - 1] ? null : <div key={item.key} className="row session-in-use-history">{item.message}</div>;
           // A plan that ran out is a system line, like the fork mark: centered between hairlines,
           // no box. The conclusion leads, the agent's raw words shrink to one faint line, and every
           // way on is a text link.

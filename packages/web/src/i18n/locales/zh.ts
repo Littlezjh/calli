@@ -810,6 +810,9 @@ export const zh = {
   'extensions.perm.memory.read.hint': "读取当前机器上支持的实例的已有记忆，可能包含跨项目内容。共用存储的实例共享这一读取范围，不修改或生成记忆。",
   // Shared words
   'common.close': '关闭',
+  'composer.sessionInUseTitle': '已在另一个应用中打开',
+  'composer.sessionInUseMessage': '请先在那边关闭会话，才能在这里继续。',
+  'composer.forkSession': '创建聊天分叉',
   'common.cancel': '取消',
   'common.unknown': '未知',
 

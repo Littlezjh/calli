@@ -810,6 +810,9 @@ export const en: Messages = {
   'extensions.perm.memory.read.hint': "Read existing memory from supported instances on this machine, including cross-project content. Instances sharing a store share this read scope. Does not modify or generate memory.",
   // Shared words
   'common.close': 'Close',
+  'composer.sessionInUseTitle': 'Open in another app',
+  'composer.sessionInUseMessage': 'Close the session there before continuing here.',
+  'composer.forkSession': 'Fork conversation',
   'common.cancel': 'Cancel',
   'common.unknown': 'Unknown',
 

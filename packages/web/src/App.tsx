@@ -1,4 +1,5 @@
 import { GitPanel } from './components/GitPanel';
+import { SessionInUseNotice } from './components/SessionInUseNotice';
 import { SettingsPage, type SettingsGroup } from './components/SettingsPage';
 import { AssistantSettingsPage, assistantTitle } from './components/AssistantSettingsPage';
 import { PageNavigation, SettingsSection, usePageNavigation } from './components/PageNavigation';
@@ -2788,6 +2789,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   // When the thread's agent has run out of plan, the one-click takeover must use the
   // daemon's quota-aware order, not just the next visible instance in the list.
   const lastItem = timeline.items[timeline.items.length - 1];
+  const sessionInUse = selected?.status === 'error' && selected.failure?.code === 'session_in_use';
   const outOfPlan = Boolean(selected && !running && lastItem?.kind === 'error' && lastItem.planExhausted
     && (!selected.coordination || selected.coordination.rootId === selected.id));
   useEffect(() => {
@@ -3513,6 +3515,10 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           attachBlocked={capsOf(latestSegment.agent)?.images ? null : t('app.noImages', agentLabel(latestSegment.agent))}
           onLatest={() => pick(latestSegment.id)} onRefresh={() => { setSingleSegmentId(null); void refreshThreads(); }} onError={handleError}
           note={noteSignal?.draftKey === composerDraftKey ? noteSignal.note : null} onNotesChange={onNotesChange}
+        /> : sessionInUse && selected ? <SessionInUseNotice key={selected.id}
+          onRetry={async () => { await api.retryThread(selected.id); await refreshThreads(); }}
+          onFork={activeCaps?.fork ? () => threadActions.run('fork', selected) : undefined}
+          onError={handleError}
         /> : <Composer
           draftKey={composerDraftKey}
           voiceControls={voice.state.active ? <VoiceControls session={voice.state} onMute={voice.toggleMute} onStop={() => void voice.stop()} /> : undefined}

@@ -41,6 +41,7 @@ const appendRollout = (text) => {
   if (path) appendFileSync(path, JSON.stringify({ timestamp: new Date().toISOString(), type: 'event_msg', payload: { type: 'user_message', message: text } }) + '\n');
 };
 let nextTurnSeq = 1;
+const writerLocked = id => process.env.FAKE_CODEX_WRITER_LOCK && existsSync(process.env.FAKE_CODEX_WRITER_LOCK) && (!process.env.FAKE_CODEX_WRITER_LOCK_THREAD || process.env.FAKE_CODEX_WRITER_LOCK_THREAD === id);
 let billedTokens = 900000;
 let nextServerRequestId = 1000;
 let voiceAfterPrompt = Boolean(process.env.FAKE_CODEX_VOICE_AFTER_PROMPT);
@@ -614,6 +615,7 @@ rl.on('line', (line) => {
       ensureRollout();
       return out({ jsonrpc: '2.0', id: msg.id, result: { thread: { id: threadId, cwd: '/tmp/one' }, model: currentModel, reasoningEffort: currentEffort, sandbox: { type: 'readOnly' }, approvalPolicy: currentApproval, approvalsReviewer: currentApprovalsReviewer } });
     case 'thread/resume':
+      if (writerLocked(msg.params.threadId)) return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32600, message: `thread ${msg.params.threadId} already has an active writer` } });
       currentWebSearch = msg.params?.config?.web_search ?? null;
       threadId = msg.params?.threadId ?? threadId;
       if (typeof msg.params?.sandbox === 'string') currentSandbox = msg.params.sandbox.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
@@ -621,6 +623,7 @@ rl.on('line', (line) => {
       if (typeof msg.params?.approvalsReviewer === 'string') currentApprovalsReviewer = msg.params.approvalsReviewer;
       return out({ jsonrpc: '2.0', id: msg.id, result: { thread: { id: msg.params?.threadId ?? threadId, cwd: '/tmp/one' }, model: currentModel, reasoningEffort: currentEffort, sandbox: { type: 'readOnly' }, approvalPolicy: currentApproval, approvalsReviewer: currentApprovalsReviewer } });
     case 'turn/start': {
+      if (writerLocked(threadId) && process.env.FAKE_CODEX_WRITER_LOCK_PHASE === 'prompt') return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32600, message: `thread ${threadId} already has an active writer` } });
       if (activeTurn) return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32602, message: 'ActiveTurnNotSteerable' } });
       applyTurnOverrides(msg.params ?? {});
       if (msg.params?.collaborationMode) {
