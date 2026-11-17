@@ -2551,14 +2551,6 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   };
 
   const permission = selected ? selected.permissionMode : draftPermission;
-  // A remembered model can be gone from the instance's list (an update, a removed plan): fall
-  // back to its default rather than offering a model that cannot be started.
-  const draftModels = modelsByAgent[draftAgent];
-  useEffect(() => {
-    if (draftModels?.length && draftModel && !draftModels.some((m) => m.id === draftModel || (!draftEffort && m.efforts?.some((e) => `${m.id}-${e}` === draftModel)))) {
-      setDraftModel(null);
-    }
-  }, [draftModels, draftModel, draftEffort]);
   const model = selected ? selected.model : draftTeam ? draftTeamDefinition?.entryModel ?? null : draftModel;
   const effort = selected ? selected.effort : draftEffort;
   const speed = selected ? selected.speed ?? null : draftSpeed;

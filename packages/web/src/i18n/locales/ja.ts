@@ -2276,7 +2276,10 @@ export const ja: Messages = {
 
   // Thread actions
   'actions.forkEmpty': 'まだフォークできる会話がありません。先にメッセージを送ってください',
-  'actions.forkRunning': 'このターンが終わってからフォークしてください',
+  'actions.forkRunning': 'この回答はまだ完了していません。以前の完了した回答からフォークできます',
+  'actions.forkAgentRunning': '別の agent に分岐するには、このターンの完了を待ってください',
+  'actions.forkNoCompleted': 'まだ完了した回答がありません。元のスレッドは実行を続けます',
+  'actions.forkingSnapshot': '直近の完了した回答からフォーク中。元のスレッドは実行を続けます…',
   'actions.forkingWorktree': 'worktree を作成してフォーク中…',
   'actions.forking': 'フォーク中…',
   'actions.forkMismatch': 'このターンはエージェント自身の記録と一致しないため、ここからはフォークできません。最後の回答からスレッド全体をフォークできます',

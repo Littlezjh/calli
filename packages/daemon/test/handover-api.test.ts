@@ -566,6 +566,12 @@ test('a fork can carry the whole conversation to another agent, keeping the way 
     const rootFork = await manager.forkThread(original.id);
     assert.equal(rootFork.handover ?? null, null);
     assert.equal(rootFork.forkedFrom, original.id);
+
+    // A cross-account import cannot trim the writer's live tip; leave that source running.
+    await manager.startTurn(successor.id, { text: 'slow later turn' });
+    await assert.rejects(manager.forkThread(successor.id, { agent: 'claude-1' }), /wait for the running turn/);
+    assert.equal(manager.threadView(successor.id).status, 'running');
+
   } finally { await manager.shutdown(); store.close(); rmSync(root, { recursive: true, force: true }); }
 });
 
