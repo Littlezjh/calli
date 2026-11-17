@@ -3354,7 +3354,7 @@ export class ThreadManager {
           message,
           ...(code ? { code, ...(code === 'permission_refused' ? { refused: result.refused ?? [] } : {}) } : {}),
         });
-        if (code === 'session_in_use') await this.dropSession(thread.id);
+        if (code === 'session_in_use') await this.dropSession(thread.id, 'session_in_use');
       } else {
         this.emitThreadEvent(thread.id, turnId, 'turn.done', { stopReason: result.stopReason });
         if (result.stopReason !== 'cancelled' && this.reportTurns.has(turnId)) this.recordProgress(thread.id, turnId);
