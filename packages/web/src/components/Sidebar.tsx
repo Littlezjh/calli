@@ -500,16 +500,17 @@ export function Sidebar({
     return sameDay ? hm : `${d.getMonth() + 1}/${d.getDate()} ${hm}`;
   };
   const labelOf = new Map((merged ?? []).map((s) => [s.hostId, s.label]));
-  const offlineOf = new Map((merged ?? []).filter(s => s.state === 'offline').map(s => [s.hostId, t('sidebar.merged.offline', s.label, clock(s.at))]));
+  const unavailableOf = new Map((merged ?? []).filter(s => s.state === 'offline' || s.state === 'failed')
+    .map(s => [s.hostId, s.state === 'offline' ? t('sidebar.merged.offline', s.label, clock(s.at)) : t('sidebar.merged.failed', s.label, clock(s.at))]));
   const agentsOf = new Map((merged ?? []).map((s) => [s.hostId, s.agents ? new Map(s.agents.map((a) => [a.id, a])) : null]));
   const groups = mergedModel ? (
     <nav className="thread-groups activity merged" aria-label={t('sidebar.merged.label')}>
-      {mergedModel.notes.filter(n => n.state !== 'offline').map((n) => (
+      {mergedModel.notes.filter(n => n.state === 'loading').map((n) => (
         <p key={n.hostId ?? ''} className={`merged-note ${n.state}`} role={n.state === 'loading' ? 'status' : undefined}>
-          {n.state === 'loading' ? t('sidebar.merged.loading', n.label) : t('sidebar.merged.failed', n.label, clock(n.at))}
+          {t('sidebar.merged.loading', n.label)}
         </p>
       ))}
-      {mergedModel.count === 0 && !mergedModel.notes.some((n) => n.state === 'loading') && (offlineOf.size ? <p className="group-empty">{t('sidebar.hostDown')}</p> : empty)}
+      {mergedModel.count === 0 && !mergedModel.notes.some((n) => n.state === 'loading') && (unavailableOf.size ? [...unavailableOf].map(([id, message]) => <p key={id ?? ''} className="group-empty">{message}</p>) : empty)}
       {mergedModel.groups.map((g) => (
         <section key={g.key} className="thread-group" aria-label={g.label}>
           <div className="group-label">{g.label}</div>
@@ -518,7 +519,7 @@ export function Sidebar({
               {entry(thread, {
                 // The hub's own machine is the usual one; only threads elsewhere are named.
                 label: on === null ? undefined : labelOf.get(on),
-                offline: offlineOf.get(on),
+                offline: unavailableOf.get(on),
                 open: on === hostId ? undefined : () => onOpenElsewhere?.(on, thread.id),
                 agents: on === hostId ? undefined : agentsOf.get(on) ?? null,
               })}
