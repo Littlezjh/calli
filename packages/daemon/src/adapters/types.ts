@@ -446,6 +446,8 @@ export interface AgentAdapter {
    * default order from moving work between a subscription and a gateway.
    */
   routesThroughGateway?(): boolean;
+  /** Whether the native session explicitly refused another writer. */
+  sessionInUse?(message: string): boolean;
   /** Read-only location of this instance's native session, without starting an agent. */
   sessionLocation?(agentSessionId: string | null, cwd: string): Promise<{
     configDir: string;

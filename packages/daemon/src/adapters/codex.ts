@@ -1199,6 +1199,10 @@ export class CodexAppServerAdapter implements AgentAdapter {
     return /hit your (?:\w+ )?limit|usage limit/i.test(message);
   }
 
+  sessionInUse(message: string): boolean {
+    return /\bthread [a-z0-9_-]+ already has an active writer\b/i.test(message);
+  }
+
   async sessionLocation(agentSessionId: string | null, cwd: string) {
     const configDir = configDirectory(this.env, 'CODEX_HOME', ['.codex'], cwd);
     const matches = (name: string, id: string) => name.startsWith('rollout-') && name.endsWith(`-${id}.jsonl`);

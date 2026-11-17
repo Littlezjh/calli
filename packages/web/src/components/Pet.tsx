@@ -428,7 +428,7 @@ interface Props {
   onExplore?: () => void;
   /** A pile is spread out on the desk: she steps back so she does not cover it. */
   spreadOpen: boolean;
-  /** The desk is the one page she shows on even when her presence is "off". */
+  /** Whether the current page is the desk. */
   desk: boolean;
   /** Where the default spot is: clear of the composer on a thread, the corner anywhere else. */
   place: 'corner' | 'thread';
@@ -479,16 +479,17 @@ function adviceLine(advice: PetAdvice): string {
 /** The companion and the way to talk to the Router, on every page. Nothing here until she has been asked for. */
 export function Pet(props: Props) {
   const { api, onStatusChange } = props;
+  const presence = usePetPresence();
   const [status, setStatus] = useState<PetStatus | null>(null);
   const [installError, setInstallError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (api.demo) return;
+    if (api.demo || presence === 'off') return;
     let gone = false;
     // Without a reading she stays away: the desk does not need her to work.
     void api.pet().then((next) => { if (!gone) setStatus(next); }).catch(() => undefined);
     return () => { gone = true; };
-  }, [api]);
+  }, [api, presence]);
 
   const statusListener = useRef(onStatusChange);
   statusListener.current = onStatusChange;
@@ -496,7 +497,7 @@ export function Pet(props: Props) {
     if (status) statusListener.current?.(status);
   }, [status]);
 
-  const installing = Boolean(status?.installing);
+  const installing = Boolean(status?.installing) && presence !== 'off';
   useEffect(() => {
     if (!installing) return;
     let gone = false;
@@ -532,35 +533,36 @@ export function Pet(props: Props) {
     observer.observe(el);
     window.addEventListener('resize', place);
     return () => { observer.disconnect(); window.removeEventListener('resize', place); };
-  }, [status?.installed, props.place]);
+  }, [status?.installed, props.place, presence]);
 
-  if (api.demo || !status) return null;
-  if (status.installed) return <PetCompanion {...props} status={status} />;
+  if (api.demo || !status || presence === 'off') return null;
+  if (status.installed) return <PetCompanion {...props} status={status} presence={presence} />;
 
   const error = status.installing ? null : installError ?? status.error;
+  const close = <button type="button" className="pet-install-close" aria-label={t('pet.close')} title={t('pet.close')} onClick={() => savePetPresence('off')}>{t('common.close')}</button>;
   return createPortal(
     <div className="pet pet-away" ref={awayRef}>
       {error ? (
         <div className="pet-summon-failed" role="alert">
           <div className="pet-summon-why"><strong>{t('pet.installFailed')}</strong><div className="pet-say-actions"><PetDetail text={petErrorDetail(error)} /></div></div>
           <button type="button" className="pet-summon" onClick={install}>{t('pet.retry')}</button>
+          {close}
         </div>
       ) : status.installing ? (
-        <div className="pet-summon pet-summoning" role="status"><span className="spinner" />{t('pet.installing')}</div>
+        <div className="pet-install-actions"><div className="pet-summon pet-summoning" role="status"><span className="spinner" />{t('pet.installing')}</div>{close}</div>
       ) : (
-        <button type="button" className="pet-summon" onClick={install}>{t('pet.summon')}</button>
+        <div className="pet-install-actions"><button type="button" className="pet-summon" onClick={install}>{t('pet.summon')}</button>{close}</div>
       )}
     </div>,
     document.body,
   );
 }
 
-function PetCompanion({ api, status, greeting, spreadOpen, desk, place, threads, onOpenThread, onConfigure, onChat, todos, onOpenTodo, setupNeeded, onExplore, setupNotice }: Props & { status: PetStatus }) {
+function PetCompanion({ api, status, presence, greeting, spreadOpen, desk, place, threads, onOpenThread, onConfigure, onChat, todos, onOpenTodo, setupNeeded, onExplore, setupNotice }: Props & { status: PetStatus; presence: PetPresence }) {
   const visible = usePageVisible();
   const still = useReducedMotion();
   const narrow = useIsNarrow();
   const touch = useIsTouch();
-  const presence = usePetPresence();
   const rootRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLButtonElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -1143,9 +1145,6 @@ function PetCompanion({ api, status, greeting, spreadOpen, desk, place, threads,
       </div>
     );
   };
-
-  // "Off" leaves the desk to her: nowhere else does she show.
-  if (presence === 'off' && !desk) return null;
 
   // A pile spread out has the floor: what she volunteers waits, what the person asked for stays.
   const bubble = compose || panel || (spreadOpen && say?.kind === 'greeting') ? null : say;
