@@ -459,6 +459,7 @@ export const en: Messages = {
   "pet.installing": "Downloading the assistant…",
   "pet.installFailed": "The assistant didn't finish downloading",
   "pet.retry": "Retry",
+  "pet.close": "Close assistant",
   "pet.calm1": "Nothing urgent today. Take your time.",
   "pet.calm2": "The desk is clear. What would you like to move forward?",
   "pet.calm3": "Nothing is chasing you. Have some water.",

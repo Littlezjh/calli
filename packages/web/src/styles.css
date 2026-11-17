@@ -13638,11 +13638,28 @@ body:has(.app .dialog-scrim, .app .selection-menu) .pet { visibility: hidden; }
 button.pet-summon { cursor: pointer; }
 button.pet-summon:hover { background: var(--surface-2); color: var(--text); }
 .pet-summoning .spinner { width: 12px; height: 12px; border-width: 1.5px; }
+.pet-install-actions { display: flex; align-items: center; gap: 8px; }
+.pet-install-close {
+  flex: none;
+  min-height: 32px;
+  padding: 0 10px;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.pet-install-close:hover { background: var(--surface-2); color: var(--text); }
+@media (pointer: coarse), (max-width: 640px) {
+  .pet-install-close { min-width: 44px; min-height: 44px; }
+}
 .pet-summon-failed {
   display: flex;
   align-items: center;
-  gap: 12px;
-  width: min(320px, calc(100vw - 32px));
+  gap: 8px;
+  width: min(340px, calc(100vw - 32px));
   padding: 10px 10px 10px 14px;
   border: 1px solid var(--border);
   border-radius: var(--radius);

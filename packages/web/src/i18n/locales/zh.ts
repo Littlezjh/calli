@@ -459,6 +459,7 @@ export const zh = {
   "pet.installing": "助手下载中…",
   "pet.installFailed": "助手没下载下来",
   "pet.retry": "重试",
+  "pet.close": "关闭助手",
   "pet.calm1": "今天没有急事，慢慢来。",
   "pet.calm2": "桌面很清爽。想推进点什么？",
   "pet.calm3": "没有事在催你，喝口水吧。",

@@ -457,6 +457,7 @@ export const ja: Messages = {
   "pet.installing": "アシスタントをダウンロード中…",
   "pet.installFailed": "アシスタントをダウンロードできませんでした",
   "pet.retry": "再試行",
+  "pet.close": "アシスタントを閉じる",
   "pet.calm1": "今日は急ぎの件はありません。ゆっくりどうぞ。",
   "pet.calm2": "デスクはすっきりしています。何を進めますか？",
   "pet.calm3": "せかすものはありません。お水でもどうぞ。",
