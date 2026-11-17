@@ -2028,6 +2028,7 @@ export const ja: Messages = {
   'pickers.defaultEffort': '既定の強さ',
   'pickers.backToEffort': '思考の強さに戻る',
   'pickers.chooseModel': 'モデルを選ぶ',
+  'pickers.refreshModels': 'モデル一覧を更新',
   'pickers.modelLoad': (percent: number) => `負荷${percent}%`,
   'pickers.modelLoadUnknown': '負荷未提供',
   'pickers.modelLoadFailed': '負荷取得失敗',

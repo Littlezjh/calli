@@ -2030,6 +2030,7 @@ export const en: Messages = {
   'pickers.defaultEffort': 'Default effort',
   'pickers.backToEffort': 'Back to thinking effort',
   'pickers.chooseModel': 'Choose model',
+  'pickers.refreshModels': 'Refresh model list',
   'pickers.modelLoad': (percent: number) => `Load ${percent}%`,
   'pickers.modelLoadUnknown': 'Load unavailable',
   'pickers.modelLoadFailed': 'Load read failed',

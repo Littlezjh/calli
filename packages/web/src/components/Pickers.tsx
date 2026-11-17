@@ -287,7 +287,7 @@ export function ModelPicker(props: ModelProps) {
   );
 }
 
-function ModelControl({ models, model, efforts, effort, onModel, onEffort, speed, onSpeed }: ModelProps) {
+function ModelControl({ models, model, efforts, effort, onModel, onEffort, speed, onSpeed, onOpen }: ModelProps) {
   const levels = effortsForModel(models, model, efforts);
   const selectedModel = resolveModel(models, model);
   const loadPercent = selectedModel?.loadPercent;
@@ -316,6 +316,7 @@ function ModelControl({ models, model, efforts, effort, onModel, onEffort, speed
       <div className="model-list-head">
         {(levels.length > 0 || canAccelerate) && <button type="button" className="icon-btn model-back" aria-label={t('pickers.backToEffort')} onClick={() => setShowModels(false)}><IconChevron size={16} /></button>}
         <span>{t('pickers.chooseModel')}</span>
+        {onOpen && <button type="button" className="icon-btn model-refresh" aria-label={t('pickers.refreshModels')} title={t('pickers.refreshModels')} onClick={onOpen}><IconRefresh size={15} /></button>}
       </div>
       <div className="pop-scroll">
         {modelRows(models, now).map((row) => (

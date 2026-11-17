@@ -517,6 +517,8 @@ export class AgyAdapter implements AgentAdapter {
     quota: true,
   };
   private modelCache: { at: number; models: ModelOption[] } | null = null;
+  private modelGeneration = 0;
+  onModelsChanged?: (models: ModelOption[]) => void;
   private readonly commandCache = new Map<string, { at: number; value: Promise<{ cli: AgyCliCommand[]; list: SlashCommand[] }> }>();
 
   constructor(
@@ -533,7 +535,14 @@ export class AgyAdapter implements AgentAdapter {
   }
 
   startLogin(onSuccess: (account?: string) => Promise<void>) {
-    return startAgyLogin(this.command, this.env, onSuccess);
+    return startAgyLogin(this.command, this.env, async account => {
+      this.modelCache = null;
+      this.modelGeneration++;
+      this.commandCache.clear();
+      await onSuccess(account);
+      // Catalog propagation can lag behind OAuth. Do not turn a model lookup failure into a login failure.
+      void this.models(true).catch(() => {});
+    });
   }
 
   async available(): Promise<boolean> {
@@ -558,14 +567,18 @@ export class AgyAdapter implements AgentAdapter {
   }
 
   async models(refresh = false): Promise<ModelOption[]> {
-    if (refresh) this.modelCache = null;
+    if (refresh) { this.modelCache = null; this.modelGeneration++; }
     if (this.modelCache && Date.now() - this.modelCache.at < MODELS_TTL_MS) return this.modelCache.models;
+    const generation = this.modelGeneration;
     const [bin, ...base] = this.command;
     const stdout = await new Promise<string>((resolve, reject) => {
       execFile(bin, [...base, 'models'], { timeout: 30_000, env: { ...process.env, ...this.env } }, (err, out) => (err ? reject(err) : resolve(out)));
     });
     const models = parseAgyModels(stdout);
-    if (models.length > 0) this.modelCache = { at: Date.now(), models };
+    if (generation === this.modelGeneration) {
+      if (models.length > 0) this.modelCache = { at: Date.now(), models };
+      if (refresh) this.onModelsChanged?.(models);
+    }
     return models;
   }
 

@@ -9,6 +9,7 @@ import type { Server } from 'node:http';
 import { AgentRegistry } from '../src/agents.js';
 import { startClaudeLogin } from '../src/adapters/claude-account.js';
 import { startAgyLogin } from '../src/adapters/agy-account.js';
+import { AgyAdapter } from '../src/adapters/agy.js';
 import { AttachmentStore } from '../src/attachments.js';
 import { createHttpServer } from '../src/http.js';
 import { Store } from '../src/store.js';
@@ -275,4 +276,53 @@ test('agy account API treats empty optional configuration as absent without chan
       assert.equal(readFileSync(mcp, 'utf8'), mcpText);
     }
   } finally { writeFileSync(settings, original[0]); writeFileSync(mcp, original[1]); }
+});
+
+test('agy login refreshes a cached catalog and publishes newly available models without changing the default', async () => {
+  const instance = await registry.createAccount({ adapter: 'agy', sourceId: 'agy' });
+  const file = join(root, 'agy-models.json');
+  const old = [{ id: 'gemini-3.8-flash-high', label: 'Gemini 3.8 Flash (High)' }];
+  const current = [...old, { id: 'gemini-4-argon-high', label: 'Gemini 4 Argon (High)' }, { id: 'claude-sonnet-5-5-high', label: 'Claude Sonnet 5.5 (High)' }];
+  writeFileSync(file, JSON.stringify({ models: old }));
+  writeFileSync(join(instance.env!.CALLI_AGY_HOME, 'antigravity-oauth-token'), 'previous fixture login');
+  const adapter = new AgyAdapter(instance.command!, { ...instance.env!, FAKE_AGY_MODELS_FILE: file });
+  assert.deepEqual((await adapter.models()).map(m => m.id), old.map(m => m.id));
+  writeFileSync(file, JSON.stringify({ models: current }));
+  const pushed: string[][] = [];
+  adapter.onModelsChanged = models => pushed.push(models.map(m => m.id));
+  const login = adapter.startLogin(async () => {});
+  await waitFor(() => login.state(), state => state.status === 'waiting'); login.submit('test-agy-code');
+  await waitFor(() => login.state(), state => state.status === 'success');
+  await waitFor(() => pushed, list => list.length > 0);
+  assert.deepEqual(pushed.at(-1), current.map(m => m.id));
+  assert.deepEqual((await adapter.models()).map(m => m.id), current.map(m => m.id));
+  const settings = join(instance.env!.CALLI_AGY_HOME, 'settings.json');
+  assert.equal(readFileSync(settings, 'utf8'), '{}\n');
+  const failedLookup = join(root, 'failed-model-lookup');
+  writeFileSync(file, JSON.stringify({ error: true, startedFile: failedLookup }));
+  const retry = adapter.startLogin(async () => {});
+  await waitFor(() => retry.state(), state => state.status === 'waiting'); retry.submit('test-agy-code');
+  await waitFor(() => retry.state(), state => state.status === 'success');
+  await waitFor(() => existsSync(failedLookup), Boolean);
+  writeFileSync(file, JSON.stringify({ models: current }));
+  assert.deepEqual((await adapter.models(true)).map(m => m.id), current.map(m => m.id));
+});
+
+test('agy explicit catalog refresh publishes metadata and an older request cannot replace it', async () => {
+  const file = join(root, 'agy-models-race.json');
+  const old = [{ id: 'gemini-old', label: 'Old model' }];
+  const current = [{ id: 'gemini-current', label: 'Current model' }];
+  const command = [process.execPath, fileURLToPath(new URL('./fixtures/fake-agy.mjs', import.meta.url))];
+  const started = join(root, 'stale-model-lookup');
+  writeFileSync(file, JSON.stringify({ models: old, delayMs: 400, startedFile: started }));
+  const adapter = new AgyAdapter(command, { FAKE_AGY_MODELS_FILE: file });
+  const pushed: string[][] = [];
+  adapter.onModelsChanged = models => pushed.push(models.map(m => m.id));
+  const stale = adapter.models();
+  await waitFor(() => existsSync(started), Boolean);
+  writeFileSync(file, JSON.stringify({ models: current }));
+  assert.deepEqual((await adapter.models(true)).map(m => m.id), ['gemini-current']);
+  await stale;
+  assert.deepEqual((await adapter.models()).map(m => m.id), ['gemini-current']);
+  assert.deepEqual(pushed, [['gemini-current']]);
 });

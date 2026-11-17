@@ -2030,6 +2030,7 @@ export const zh = {
   'pickers.defaultEffort': '默认强度',
   'pickers.backToEffort': '返回思考强度',
   'pickers.chooseModel': '选择模型',
+  'pickers.refreshModels': '刷新模型列表',
   'pickers.modelLoad': (percent: number) => `负载${percent}%`,
   'pickers.modelLoadUnknown': '负载未提供',
   'pickers.modelLoadFailed': '负载读取失败',

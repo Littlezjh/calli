@@ -37,6 +37,14 @@ if (process.env.FAKE_AGY_ACCOUNT_CHECK === '1') {
 }
 
 if (args[0] === 'models') {
+  if (process.env.FAKE_AGY_MODELS_FILE) {
+    const catalog = JSON.parse(readFileSync(process.env.FAKE_AGY_MODELS_FILE, 'utf8'));
+    if (catalog.startedFile) writeFileSync(catalog.startedFile, 'started');
+    if (catalog.delayMs) await new Promise(resolve => setTimeout(resolve, catalog.delayMs));
+    if (catalog.error) { process.stderr.write('fixture model catalog unavailable\n'); process.exit(1); }
+    for (const model of catalog.models) process.stdout.write(`${model.id}\t${model.label}\n`);
+    process.exit(0);
+  }
   if (process.env.FAKE_HANDOVER_QUOTA) { process.stdout.write('gemini-pro\tGemini Pro\nclaude-sonnet\tClaude Sonnet\n'); process.exit(0); }
   process.stderr.write('Fetching available models...\n');
   process.stdout.write('fast-low\tFast (Low)\nfast-high\tFast (High)\nnot a model line\nbig-thinking\tBig (Thinking)\n');
