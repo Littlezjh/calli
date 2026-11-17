@@ -258,6 +258,9 @@ export interface SystemPrompt {
   source: string;
 }
 
+/** A past turn as far as forking needs it: what was asked, and where a copy ending with it stops. */
+export type ForkPoint = Pick<HistoryTurn, 'text' | 'forkRef'>;
+
 /** One past exchange, in the shape a live turn would have produced. */
 export interface HistoryTurn {
   text: string;
@@ -474,6 +477,13 @@ export interface AgentAdapter {
   getSession?(agentSessionId: string): Promise<AgentSessionSummary | null>;
   /** The past turns of a conversation. Reading must not change the conversation. With capabilities.history. */
   loadHistory?(agentSessionId: string, cwd: string): Promise<HistoryTurn[]>;
+  /**
+   * Every turn of the conversation with the place a copy stops at its end, for an agent whose
+   * loadHistory shows only part of it (Claude's replay starts at the last compaction). Used to
+   * line the hub's turns up with the agent's before forking. Null when it cannot be read; then
+   * loadHistory is used, as it is for an agent without this.
+   */
+  forkPoints?(agentSessionId: string, cwd: string): Promise<ForkPoint[] | null>;
   /**
    * Folders outside the thread's directory where the agent keeps files it made for this session.
    * Images in them may be shown in the thread, like images in the thread's own directory.

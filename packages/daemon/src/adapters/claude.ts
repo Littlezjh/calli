@@ -16,9 +16,10 @@ import { CLAUDE_ICON } from './icons.js';
 import { titlePlan } from './plans.js';
 import type { JsonRpcPeer } from './jsonrpc.js';
 import { installJsonMcpServer, jsonMcpServers, removeJsonMcpServer } from '../mcp-format.js';
+import { claudeForkPoints } from './claude-history.js';
 import { configDirectory, findSessionFile, quoteArg } from './session-location.js';
 import { claudeSystemPromptLine, scanJsonl } from './system-prompt.js';
-import type { DiscoveredAccount, McpServerInfo, ModelOption, PermissionMode, PlanQuota, QuotaWindow, SkillDir, SlashCommand, StartOptions, SystemPrompt } from './types.js';
+import type { DiscoveredAccount, ForkPoint, McpServerInfo, ModelOption, PermissionMode, PlanQuota, QuotaWindow, SkillDir, SlashCommand, StartOptions, SystemPrompt } from './types.js';
 
 /**
  * Claude Code, through the ACP bridge this repo ships with (`@agentclientprotocol/claude-agent-acp`).
@@ -369,6 +370,13 @@ export class ClaudeAcpAdapter extends AcpAdapter {
       sessionPath,
       ...(agentSessionId ? { resumeCommand: `env CLAUDE_CONFIG_DIR=${quoteArg(configDir)} ${quoteArg(this.env.CALLI_CLAUDE_BIN || claudeCli())} --resume ${quoteArg(agentSessionId)}` } : {}),
     };
+  }
+
+  /** Read from the session file: the replay would start at the last compaction. */
+  async forkPoints(agentSessionId: string, cwd: string): Promise<ForkPoint[] | null> {
+    const { sessionPath } = await this.sessionLocation(agentSessionId, cwd);
+    if (!sessionPath) return null;
+    return claudeForkPoints(await readFile(sessionPath, 'utf8'));
   }
 
   /**

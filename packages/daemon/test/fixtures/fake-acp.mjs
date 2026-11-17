@@ -285,7 +285,13 @@ rl.on('line', async (line) => {
       // a refused one is reported through the bridge as an informational warning on the next turn.
       if (process.env.FAKE_CLAUDE_REFUSED_MODEL && !process.env.ANTHROPIC_MODEL) refusedModelWarning = `Model "${process.env.FAKE_CLAUDE_REFUSED_MODEL}" is restricted by your organization's settings. Using fallback instead.`;
       const replay = (u) => out({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: msg.params.sessionId, update: u } });
-      if (String(msg.params.sessionId).startsWith('hist-')) {
+      if (String(msg.params.sessionId).includes('compacted')) {
+        // Like Claude after a compaction: only what followed it is replayed, starting with its own summary.
+        replay({ sessionUpdate: 'user_message_chunk', messageId: 'c0', content: { type: 'text', text: 'This session is being continued from a previous conversation that ran out of context.' } });
+        replay({ sessionUpdate: 'agent_message_chunk', messageId: 'c0a', content: { type: 'text', text: 'ok' } });
+        replay({ sessionUpdate: 'user_message_chunk', messageId: 'u2', content: { type: 'text', text: 'second question' } });
+        replay({ sessionUpdate: 'agent_message_chunk', messageId: 'm2', content: { type: 'text', text: 'second answer' } });
+      } else if (String(msg.params.sessionId).startsWith('hist-')) {
         // A two-turn conversation, replayed the way the real agent does: all of it before the response.
         replay({ sessionUpdate: 'user_message_chunk', messageId: 'u1', content: { type: 'text', text: 'first ' } });
         replay({ sessionUpdate: 'user_message_chunk', messageId: 'u1', content: { type: 'text', text: 'question' } });

@@ -1414,6 +1414,24 @@ test('fork at a turn: the copy ends where that turn ended, on the hub and on the
   const afterStop = (await (await forkAt(claude.id, claudeFirst.turnId!)).json()) as Record<string, any>;
   assert.equal(afterStop.agentSessionId, 'hist-interrupted-fork-at-m1b');
 
+  // After a compaction Claude replays only what followed it, but its session file has every turn, so
+  // a copy can still stop at a turn from before it.
+  const sessions = join(process.env.HOME!, '.claude', 'projects', '-work');
+  mkdirSync(sessions, { recursive: true });
+  const line = (entry: Record<string, unknown>) => JSON.stringify(entry);
+  writeFileSync(join(sessions, 'hist-compacted.jsonl'), [
+    line({ type: 'user', uuid: 'a1', parentUuid: null, message: { role: 'user', content: 'first question' } }),
+    line({ type: 'assistant', uuid: 'a2', parentUuid: 'a1', message: { id: 'm1b', role: 'assistant', content: [{ type: 'text', text: 'first answer' }] } }),
+    line({ type: 'system', subtype: 'compact_boundary', uuid: 'b1', parentUuid: null, logicalParentUuid: 'not-in-the-file' }),
+    line({ type: 'user', uuid: 'b2', parentUuid: 'b1', isCompactSummary: true, message: { role: 'user', content: 'This session is being continued from a previous conversation' } }),
+    line({ type: 'user', uuid: 'b3', parentUuid: 'b2', message: { role: 'user', content: 'second question' } }),
+    line({ type: 'assistant', uuid: 'b4', parentUuid: 'b3', message: { id: 'm2', role: 'assistant', content: [{ type: 'text', text: 'second answer' }] } }),
+  ].join('\n') + '\n');
+  store.updateThread(claude.id, { agentSessionId: 'hist-compacted' });
+  const acrossCompaction = (await (await forkAt(claude.id, claudeFirst.turnId!)).json()) as Record<string, any>;
+  assert.equal(acrossCompaction.agentSessionId, 'hist-compacted-fork-at-m1b');
+  assert.deepEqual((await turnsOf(acrossCompaction.id)).map((e) => e.data.text), ['first question']);
+
   const agents = (await (await api('/api/agents')).json()) as Array<{ id: string; capabilities: { forkAt: boolean } }>;
   assert.deepEqual(agents.map((a) => [a.id, a.capabilities.forkAt]).sort(), [['agy', false], ['claude', true], ['pi', true]]);
 });

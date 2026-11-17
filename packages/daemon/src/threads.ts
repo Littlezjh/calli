@@ -885,7 +885,7 @@ export class ThreadManager {
       // A second app-server can briefly see the active writer's history one turn behind. Only
       // retry that prefix case; a real text disagreement still fails immediately.
       if (delayMs) await new Promise((resolve) => setTimeout(resolve, delayMs));
-      const agentTurns = await adapter.loadHistory(thread.agentSessionId, thread.cwd);
+      const agentTurns = (await adapter.forkPoints?.(thread.agentSessionId, thread.cwd)) ?? await adapter.loadHistory(thread.agentSessionId, thread.cwd);
       const matched = matchTurns(agentTurns.map((t) => turnKey(t.text)), hubKeys, ThreadManager.SYNC_SKIP_TOLERANCE);
       const agentIndex = matched?.hubToAgent[hubIndex] ?? -1;
       if (agentIndex < 0) {
