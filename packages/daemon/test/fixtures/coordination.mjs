@@ -38,7 +38,7 @@ export function coordinationFixture(text) {
   }
   if (body.endsWith('CALLI_REPORT')) return '文档审查完成。\n\n已检查接口约定、目录分工和异常处理。建议补充重启后的恢复步骤，测试覆盖其余预期行为。';
   if (body === 'CALLI_ENV' || body.endsWith('\nCALLI_ENV')) return `calli-ready:${Boolean(process.env.CALLI_TEAM_SOCKET && process.env.CALLI_TEAM_KEY)};cwd:${process.cwd()}`;
-  if (body === 'CALLI_HANDOVER_ENV') {
+  if (body === 'CALLI_HANDOVER_ENV' || body.startsWith('CALLI_HANDOVER_ENV\n')) {
     const ready = Boolean(process.env.CALLI_HANDOVER_SOCKET && process.env.CALLI_HANDOVER_KEY);
     return `handover-ready:${ready};collaboration:${Boolean(process.env.CALLI_TEAM_SOCKET && process.env.CALLI_TEAM_KEY)};${ready ? execFileSync('calli', ['handover'], { encoding: 'utf8' }).trim() : ''}`;
   }

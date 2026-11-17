@@ -205,7 +205,7 @@ function turnPart(raw: unknown): TurnPart | null {
   if (!raw || typeof raw !== 'object') return null;
   const { kind, text, count } = raw as Record<string, unknown>;
   if (kind === 'person') return typeof text === 'string' ? { kind, text } : null;
-  if (kind === 'lark' || kind === 'worker') return { kind, count: typeof count === 'number' && Number.isFinite(count) ? count : 0 };
+  if (kind === 'lark' || kind === 'worker' || kind === 'meeting-prep') return { kind, count: typeof count === 'number' && Number.isFinite(count) ? count : 0 };
   return null;
 }
 
@@ -223,6 +223,7 @@ export function turnChannel(raw: unknown): TurnChannel | null {
 export function channelLabel(kind: string, count: number): string | null {
   if (kind === 'lark') return t('view.channelLark', count);
   if (kind === 'worker') return t('view.channelWorker', count);
+  if (kind === 'meeting-prep') return t('view.channelMeetingPrep', count);
   return null;
 }
 
@@ -237,6 +238,7 @@ export type Item =
   | { kind: 'notice'; key: string; turnId: string; text: string; confirmation: boolean }
   | { kind: 'model-switch'; key: string; turnId: string; model: string; previous: string; reason: string }
   | { kind: 'quota-resume'; key: string; turnId: string | null; resetsAt?: string }
+  | { kind: 'turn-retry'; key: string; turnId: string | null; attempt: number; max: number }
   | { kind: 'proposal'; key: string; turnId: string; id: string; text: string; done: boolean }
   /**
    * A question or plan approval the agent asked. `ended` on a cancelled answer means the turn ran
@@ -295,7 +297,7 @@ export type Item =
   /** The row under a finished answer. `text` is what "copy" copies; `at` is when the turn ended, where the hub saw it end. */
   | { kind: 'actions'; key: string; turnId: string; text: string; at?: string }
   /** `planExhausted`: the agent's account ran out of usage, so another agent can be asked to take over. */
-  | { kind: 'error'; key: string; turnId: string | null; message: string; sessionInUse?: boolean; planExhausted?: boolean; /** The raw agent text of a plan-exhausted failure, shown as the quiet card's second line. */ detail?: string }
+  | { kind: 'error'; key: string; turnId: string | null; message: string; summary?: string; sessionInUse?: boolean; planExhausted?: boolean; /** Raw provider text, rendered only when details are opened. */ detail?: string }
   /** Where a fork begins: above it is the conversation it was copied from, below it its own. `branch` when it got a worktree. */
   | { kind: 'fork'; key: string; turnId: null; branch?: string };
 
@@ -311,6 +313,26 @@ export function errorText(data: Record<string, any>): string {
     return t('timeline.error.permissionRefused', Array.isArray(data.refused) && data.refused.length ? formatList(data.refused.map(String)) : '');
   }
   return String(data.message ?? 'error');
+}
+
+/** Presentation only: provider-neutral hints never decide whether a turn should be retried. */
+export function errorSummary(data: Record<string, any>): string {
+  if (data.code === 'plan_exhausted') return t('timeline.error.planExhaustedTitle');
+  if (data.code === 'permission_refused') return t('timeline.error.permissionTitle');
+  if (data.code === 'interrupted') return t('timeline.error.interruptedTitle');
+  const text = String(data.message ?? '');
+  // Require a status label or a leading status, rather than mistaking a path or model number for HTTP.
+  const status = text.match(/\b(?:http|status|code|error)(?:\s+code)?["':=\s(]*([45]\d{2})\b/i)?.[1]
+    ?? text.match(/^\s*([45]\d{2})\b/)?.[1];
+  let summary = t('timeline.error.failedTitle');
+  if (!/\b(?:disk|storage)\b/i.test(text) && /insufficient_quota|quota (?:exceeded|exhausted)|exhausted your quota|usage limit|insufficient (?:credits|balance)|credit balance.*too low/i.test(text)) summary = t('timeline.error.planExhaustedTitle');
+  else if (status === '401' || status === '403' || /unauthorized|invalid[_ ]api[_ ]key|authentication[_ ](?:error|failed)/i.test(text)) summary = t('timeline.error.authTitle');
+  else if (/context_length_exceeded|maximum context length|context (?:window|length).*(?:exceed|limit)/i.test(text)) summary = t('timeline.error.contextTitle');
+  else if (status === '429' || /rate[_ -]?limit|too many requests/i.test(text)) summary = t('timeline.error.rateTitle');
+  else if (status === '503' || status === '529' || /no capacity|overloaded|service unavailable/i.test(text)) summary = t('timeline.error.busyTitle');
+  else if (status?.startsWith('5')) summary = t('timeline.error.serviceTitle');
+  else if (/timed? ?out|timeout|ECONNRESET|ECONNREFUSED|fetch failed|socket hang up|connection (?:reset|lost)|network error/i.test(text)) summary = t('timeline.error.connectionTitle');
+  return status ? t('timeline.error.withStatus', summary, status) : summary;
 }
 
 export interface Timeline {
@@ -354,13 +376,15 @@ export interface Note {
   source?: NoteSource;
 }
 
-export interface NoteSource { threadId: string; turnId: string }
+/** Where a passage came from: the earlier part of a handover chain, or (`elsewhere`) another thread. */
+export interface NoteSource { threadId: string; turnId: string; elsewhere?: boolean }
 
 const NOTE_HEAD = /^\[注释 (\d+)\]$/;
 const NOTE_FILE = '文件：';
 const NOTE_COMMENT = '评论：';
-const NOTE_SOURCE_LINE = /^来源：交接前的会话，原文和上下文用 calli history (\S+) --turn (\S+) 读$/;
-const sourceLine = (source: NoteSource) => `来源：交接前的会话，原文和上下文用 calli history ${source.threadId} --turn ${source.turnId} 读`;
+const NOTE_ELSEWHERE = '另一个会话';
+const NOTE_SOURCE_LINE = /^来源：(交接前的会话|另一个会话)，原文和上下文用 calli history (\S+) --turn (\S+) 读$/;
+const sourceLine = (source: NoteSource) => `来源：${source.elsewhere ? NOTE_ELSEWHERE : '交接前的会话'}，原文和上下文用 calli history ${source.threadId} --turn ${source.turnId} 读`;
 
 /**
  * A message with numbered notes in front, in plain text any agent reads and can refer back to
@@ -406,7 +430,7 @@ export function splitNotes(text: string): { notes: Note[]; body: string } {
     while (i < lines.length && lines[i].startsWith('>')) quoted.push(lines[i++].replace(/^>\s?/, ''));
     let comment = '';
     if (i < lines.length && lines[i].startsWith(NOTE_COMMENT)) comment = lines[i++].slice(NOTE_COMMENT.length).trim();
-    notes.push({ quote: quoted.join('\n').trim(), comment, ...(file ? { file } : {}), ...(found ? { source: { threadId: found[1], turnId: found[2] } } : {}) });
+    notes.push({ quote: quoted.join('\n').trim(), comment, ...(file ? { file } : {}), ...(found ? { source: { threadId: found[2], turnId: found[3], ...(found[1] === NOTE_ELSEWHERE ? { elsewhere: true } : {}) } } : {}) });
     end = i;
   }
   if (notes.length === 0) return { notes, body: text };
@@ -595,6 +619,7 @@ export function buildTimeline(events: StoredEvent[], speech: readonly VoiceTrans
     if (ev.type === 'agent.notice') { items.push({ kind: 'notice', key, turnId: turn, text: String(ev.data.text ?? ''), confirmation: Boolean(ev.data.confirmation) }); continue; }
     if (ev.type === 'handover.model') { items.push({ kind: 'model-switch', key, turnId: turn, model: String(ev.data.model ?? ''), previous: String(ev.data.previous ?? ''), reason: String(ev.data.reason ?? 'near') }); continue; }
     if (ev.type === 'handover.resume') { items.push({ kind: 'quota-resume', key, turnId: turn, ...(ev.data.resetsAt ? { resetsAt: String(ev.data.resetsAt) } : {}) }); continue; }
+    if (ev.type === 'turn.retry') { items.push({ kind: 'turn-retry', key, turnId: turn, attempt: Number(ev.data.attempt ?? 1) || 1, max: Number(ev.data.max ?? 1) || 1 }); continue; }
     // Keep complete events received after a historical snapshot. They also hydrate deferred
     // entries when expanded, including updates for tools whose starts predate this connection.
     if (ev.type === 'tool.update' || ev.type === 'tool.end') {
@@ -904,7 +929,7 @@ export function buildTimeline(events: StoredEvent[], speech: readonly VoiceTrans
 
       case 'turn.error':
         closeTurn(ev.ts);
-        items.push({ kind: 'error', key, turnId: turn, message: errorText(ev.data), ...(ev.data.code === 'session_in_use' ? { sessionInUse: true } : {}), ...(ev.data.code === 'plan_exhausted' ? { planExhausted: true, detail: String(ev.data.message ?? '').replace(/^Internal error:\s*/, '') } : {}) });
+        items.push({ kind: 'error', key, turnId: turn, message: errorText(ev.data), summary: errorSummary(ev.data), detail: String(ev.data.message ?? ''), ...(ev.data.code === 'session_in_use' ? { sessionInUse: true } : {}), ...(ev.data.code === 'plan_exhausted' ? { planExhausted: true } : {}) });
         running = false;
         break;
 

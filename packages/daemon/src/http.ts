@@ -17,6 +17,7 @@ import { refuse, type Desktop } from './desktop.js';
 import { HttpError } from './errors.js';
 import type { ExtensionHost } from './extension-host.js';
 import type { HostRegistry } from './hosts.js';
+import { PREVIEW_PICKER } from './preview-picker.js';
 import { checkGrant, cookieValue, LEGACY_PREVIEW_COOKIE, makeGrant, PREVIEW_COOKIE, readPreviewFile } from './preview.js';
 import type { Scheduler } from './scheduler.js';
 import type { TerminalEvent, TerminalManager } from './terminals.js';
@@ -28,6 +29,7 @@ import type { VoiceService } from './voice-service.js';
 import { sendToolArtifact } from './borrowing-server.js';
 import { PetService } from './pets.js';
 import { todoStages } from './todo-stage.js';
+import { teamMessage } from './teams.js';
 
 export interface HttpDeps {
   push?: PushService;
@@ -300,6 +302,7 @@ export function createHttpServer(deps: HttpDeps): Server {
       return;
     }
 
+    if (path === '/api/preview-bridge.js' && method === 'GET') { res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' }); res.end(PREVIEW_PICKER); return; }
     if (path === '/api/health') return sendJson(res, 200, { ok: true, version });
     // A machine that connects out to this hub, with its own join token rather than the hub's.
     if (path.startsWith('/api/relay/') && hosts && !trusted) return hosts.relay.handle(req, res, path);
@@ -331,7 +334,11 @@ export function createHttpServer(deps: HttpDeps): Server {
     if (path === '/api/draft-model-preferences') {
       if (method === 'GET') return sendJson(res, 200, await manager.draftModelPreferences());
       if (method === 'PUT') return sendJson(res, 200, await manager.saveDraftModelPreferences(await readJson(req)));
+      if (method === 'PATCH') return sendJson(res, 200, await manager.patchDraftModelPreference(await readJson(req)));
     }
+    if (path === '/api/personal/plan' && method === 'GET') return sendJson(res, 200, await manager.personal.plan.get(url.searchParams.get('range') ?? 'day'));
+    // POST /api/personal/agent: switch her agent in place; a conversation under way is handed over.
+    if (path === '/api/personal/agent' && method === 'POST') return sendJson(res, 200, await manager.personal.switchAgent(await readJson(req)));
     if (path === '/api/personal/settings') {
       if (method === 'GET') return sendJson(res, 200, await manager.personal.settingsView());
       if (method === 'PUT') { manager.personal.putSettings(await readJson(req)); return sendJson(res, 200, await manager.personal.settingsView()); }
@@ -346,6 +353,7 @@ export function createHttpServer(deps: HttpDeps): Server {
     if (parts[1] === 'personal' && parts[2] === 'proactive' && parts[3] === 'runs' && parts[4] && parts.length === 6) {
       if (parts[5] === 'diff' && method === 'GET') return sendJson(res, 200, await manager.personal.proactive.diff(parts[4]));
       if (['merge', 'discard', 'revert'].includes(parts[5]) && method === 'POST') return sendJson(res, 200, await manager.personal.proactive.act(parts[4], parts[5] as 'merge' | 'discard' | 'revert'));
+      if (parts[5] === 'start' && method === 'POST') return sendJson(res, 200, await manager.personal.proactive.startDispatch(parts[4]));
       if (parts[5] === 'answer' && method === 'POST') return sendJson(res, 200, await manager.personal.proactive.answer(parts[4], (await readJson(req))?.answer));
       if (parts[5] === 'close-matter' && method === 'POST') return sendJson(res, 200, manager.personal.proactive.closeMatter(parts[4]));
       if (parts[5] === 'dismiss' && method === 'POST') return sendJson(res, 200, manager.personal.proactive.dismiss(parts[4]));
@@ -659,6 +667,12 @@ export function createHttpServer(deps: HttpDeps): Server {
       if (method === 'PUT') return sendJson(res, 200, manager.autoHandover.configure(await readJson(req)));
     }
 
+    // Auto-advance: the hub moving threads on by themselves after an `等外部` or `进行中` report.
+    if (parts[0] === 'api' && parts[1] === 'advance' && parts[2] === 'settings' && !parts[3]) {
+      if (method === 'GET') return sendJson(res, 200, manager.autoAdvance.settings());
+      if (method === 'PUT') return sendJson(res, 200, manager.autoAdvance.configure(await readJson(req)));
+    }
+
     // Auto-compact: quota-aware context compression ahead of the handover. The agent named in the
     // settings writes the brief (a bridge to third-party models spends no official-account quota).
     if (parts.join('/') === 'api/autocompact-settings') {
@@ -878,6 +892,15 @@ export function createHttpServer(deps: HttpDeps): Server {
       return sendJson(res, 200, await manager.worktreeOptions(url.searchParams.get('cwd')));
     }
 
+    if (path === '/api/thread-warmups' && method === 'POST') {
+      return sendJson(res, 202, await manager.warmDraft(await readJson(req)));
+    }
+    if (parts[1] === 'thread-warmups' && parts[2] && !parts[3] && method === 'DELETE') {
+      await manager.cancelWarmDraft(parts[2]);
+      res.writeHead(204).end();
+      return;
+    }
+
     // GET /api/threads, POST /api/threads
     if (path === '/api/threads') {
       if (method === 'GET') {
@@ -891,6 +914,7 @@ export function createHttpServer(deps: HttpDeps): Server {
           await manager.createThread({
             agent: body.agent,
             cwd: body.cwd,
+            warmupId: typeof body.warmupId === 'string' ? body.warmupId : undefined,
             title: body.title,
             workMode: body.workMode,
             permissionMode: body.permissionMode,
@@ -1068,7 +1092,10 @@ export function createHttpServer(deps: HttpDeps): Server {
       const teams = manager.coordination?.definitions;
       if (!teams) throw new HttpError(501, '团队服务未启用');
       const id = parts[2], sub = parts[3];
-      if (!id && method === 'GET') return sendJson(res, 200, teams.list().map(({ id, name, description, entry, members }) => ({ id, name, description, entry, memberCount: members.length })));
+      if (!id && method === 'GET') return sendJson(res, 200, teams.list().map(({ id, name, description, entry, members }) => {
+        const recipient = members.find(m => m.name === entry)!;
+        return { id, name, description, entry, memberCount: members.length, entryAgent: recipient.agent, entryModel: recipient.model ?? null };
+      }));
       if (!id && method === 'POST') return sendJson(res, 201, teams.save(await readJson(req)));
       if (id === 'template' && method === 'GET') return sendJson(res, 200, await teams.template());
       if (id === 'import' && method === 'POST') return sendJson(res, 201, teams.import(await readJson(req)));
@@ -1077,8 +1104,8 @@ export function createHttpServer(deps: HttpDeps): Server {
       if (id && !sub && method === 'DELETE') { teams.remove(id); res.writeHead(204).end(); return; }
       if (id && sub === 'export' && method === 'GET') return sendJson(res, 200, teams.export(id));
       if (id && sub === 'tasks' && method === 'POST') {
-        const body = await readJson(req);
-        return sendJson(res, 202, await teams.dispatch({ teamId: id, text: body.text, cwd: body.cwd, source: { kind: body.source?.kind === 'web' ? 'web' : body.source?.kind === 'cli' ? 'cli' : 'http' } }));
+        const body = await readJson(req, MAX_TURN_BODY);
+        return sendJson(res, 202, await teams.dispatch({ teamId: id, text: body.text, images: body.images, cwd: body.cwd, source: { kind: body.source?.kind === 'web' ? 'web' : body.source?.kind === 'cli' ? 'cli' : 'http' } }));
       }
       throw new HttpError(404, 'not found');
     }
@@ -1087,6 +1114,15 @@ export function createHttpServer(deps: HttpDeps): Server {
     if (parts[0] === 'api' && parts[1] === 'threads' && parts[2]) {
       const threadId = parts[2];
       const sub = parts[3];
+
+      if (sub === 'preview-notes') {
+        if (!parts[4] && method === 'GET') return sendJson(res, 200, manager.previewNotes.list(threadId, url.searchParams.get('page')));
+        if (!parts[4] && method === 'POST') return sendJson(res, 201, manager.previewNotes.create(threadId, await readJson(req, 32768)));
+        if (parts[4] === 'send' && !parts[5] && method === 'POST') return sendJson(res, 202, await manager.previewNotes.send(threadId, await readJson(req, 8192)));
+        if (parts[4] && !parts[5] && method === 'GET') return sendJson(res, 200, manager.previewNotes.read(threadId, parts[4]));
+        if (parts[4] && !parts[5] && method === 'DELETE') { manager.previewNotes.remove(threadId, parts[4]); res.writeHead(204).end(); return; }
+        throw new HttpError(404, 'not found');
+      }
 
       // GET /api/threads/:id/coordination/result/:deliveryId: the hub's copy of a remote member's
       // result file. It is text the member wrote, so it downloads instead of rendering as a page.
@@ -1139,6 +1175,7 @@ export function createHttpServer(deps: HttpDeps): Server {
           res,
           200,
           await manager.updateThread(threadId, {
+            rememberModelChoice: body.rememberModelChoice,
             title: body.title,
             pinned: body.pinned,
             workMode: body.workMode,
@@ -1270,7 +1307,8 @@ export function createHttpServer(deps: HttpDeps): Server {
 
       if (method === 'POST' && sub === 'handover-thread') {
         const body = await readJson(req);
-        return sendJson(res, 201, await manager.createHandoverThread(threadId, body.agent, body.model, body.mode));
+        // `takeTeam` (default true) moves a collaboration's members to the successor with the conversation.
+        return sendJson(res, 201, await manager.createHandoverThread(threadId, body.agent, body.model, body.mode, undefined, body?.takeTeam !== false));
       }
       // POST /api/threads/:id/autotitle: the person's 「重新取名」, through the 自动取名 extension.
       if (method === 'POST' && sub === 'autotitle') {
@@ -1282,12 +1320,32 @@ export function createHttpServer(deps: HttpDeps): Server {
       if (method === 'GET' && sub === 'brief') return sendJson(res, 200, manager.threadBrief(threadId));
       // POST /api/threads/:id/retry: send the failed ask again, the person's 「接着做」.
       if (method === 'POST' && sub === 'retry') return sendJson(res, 200, await manager.retryFailedTurn(threadId));
+      // PATCH /api/threads/:id/auto-retry: the person's cancel of the automatic transient retry.
+      if (method === 'PATCH' && sub === 'auto-retry') {
+        const body = await readJson(req);
+        return sendJson(res, 200, manager.setAutoRetry(threadId, body.enabled));
+      }
+      // PUT /api/threads/:id/advance: the thread's own switch over the global one (null inherits).
+      if (method === 'PUT' && sub === 'advance') {
+        const body = await readJson(req);
+        const state = manager.autoAdvance.setOverride(threadId, body.enabled);
+        return sendJson(res, 200, { ...state, advance: manager.autoAdvance.view(threadId) });
+      }
+      // DELETE /api/threads/:id/advance/watch: the person's cancel of the line under the last turn.
+      if (method === 'DELETE' && sub === 'advance' && parts[4] === 'watch' && !parts[5]) {
+        manager.getThread(threadId);
+        manager.autoAdvance.drop(threadId);
+        return sendJson(res, 200, { advance: manager.autoAdvance.view(threadId) });
+      }
       if (method === 'POST' && sub === 'takeover') {
         const body = await readJson(req);
-        return sendJson(res, 201, await manager.takeOver(threadId, body.agent, body.model, body.note));
+        return sendJson(res, 201, await manager.takeOver(threadId, body.agent, body.model, body.note, body.summary));
       }
       if (method === 'DELETE' && sub === 'handover-link') {
-        return sendJson(res, 200, manager.detachAutomaticHandover(threadId));
+        return sendJson(res, 200, manager.detachHandover(threadId));
+      }
+      if (method === 'POST' && sub === 'handback') {
+        return sendJson(res, 200, manager.handbackAutomaticHandover(threadId));
       }
 
       if (method === 'POST' && sub === 'handover') {
@@ -1315,7 +1373,11 @@ export function createHttpServer(deps: HttpDeps): Server {
 
       if (method === 'POST' && sub === 'turns') {
         const body = await readJson(req, MAX_TURN_BODY);
-        if (manager.coordination?.metadata(threadId)?.team && (typeof body.text !== 'string' || !body.text.trim() || body.text.length > 32000)) throw new HttpError(400, '团队任务需要 1～32000 字符');
+        if (manager.coordination?.metadata(threadId)?.team) {
+          const { images } = teamMessage(body);
+          const thread = manager.threadView(threadId);
+          await manager.checkImages(thread.agent, thread.model, images);
+        }
         await manager.coordination?.previewMentions(threadId, typeof body.text === 'string' ? body.text : '', body.mentions, body.collaboration);
         await manager.coordination?.userSpoke(threadId);
         return sendJson(res, 202, await manager.startTurn(threadId, { text: body.text, images: body.images, videos: body.videos, queue: body.queue, mentions: body.mentions, collaboration: body.collaboration, workMode: body.workMode, fromUser: true }));
@@ -1468,7 +1530,14 @@ export function createHttpServer(deps: HttpDeps): Server {
           .join('/');
         checkGrant(token, threadId, cookieValue(req.headers.cookie, PREVIEW_COOKIE) ?? cookieValue(req.headers.cookie, LEGACY_PREVIEW_COOKIE));
         const { real } = manager.threadFile(threadId, rel);
-        const { body, contentType } = readPreviewFile(real);
+        const file = readPreviewFile(real);
+        let body = file.body;
+        const contentType = file.contentType;
+        if (contentType.startsWith('text/html')) {
+          const injection = '<script src="/api/preview-bridge.js"></script>';
+          const html = body.toString('utf8');
+          body = Buffer.from(html.includes('</body>') ? html.replace('</body>', injection + '</body>') : html + injection);
+        }
         res.writeHead(200, {
           'Content-Type': contentType,
           'X-Content-Type-Options': 'nosniff',
@@ -1501,7 +1570,8 @@ export function createHttpServer(deps: HttpDeps): Server {
       if (method === 'GET' && sub === 'fork-options') return sendJson(res, 200, await manager.forkOptions(threadId));
 
       if (method === 'POST' && sub === 'fork') {
-        // An empty body copies the whole thread; `turnId` names the turn the copy ends with.
+        // An empty body copies the whole thread; `turnId` names the turn the copy ends with;
+        // `agent` hands the copy to another agent, its whole conversation carried over.
         const body = await readJson(req);
         return sendJson(
           res,
@@ -1509,6 +1579,7 @@ export function createHttpServer(deps: HttpDeps): Server {
           await manager.forkThread(threadId, {
             ...(typeof body?.turnId === 'string' ? { turnId: body.turnId } : {}),
             worktree: body?.worktree === true,
+            ...(typeof body?.agent === 'string' && body.agent ? { agent: body.agent } : {}),
           }),
         );
       }

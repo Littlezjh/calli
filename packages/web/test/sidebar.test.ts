@@ -216,14 +216,15 @@ test('threads in no project sit together after the projects, unless pinned or fi
 });
 
 
-test('handovers group by explicit ancestry and open the latest successor even when the original is active', () => {
+test('handovers group by explicit ancestry and the chain card opens the member that is alive', () => {
   const a = thread('origin', { updatedAt: '2030-01-01' });
   const b = thread('successor', { handover: { sourceId: a.id, title: a.title, agent: a.agent, mode: 'continue' } });
   const c = thread('third', { handover: { sourceId: b.id, title: b.title, agent: b.agent, mode: 'continue' }, createdAt: '2027-01-01' });
   const unrelated = thread('same-title', { title: a.title });
   const groups = handoverGroups([a, unrelated, c, b]);
   assert.equal(groups.length, 2);
-  assert.equal(groups[0].latest.id, c.id);
+  // The original is the member still moving: the card stands for it, not for the newer successors.
+  assert.equal(groups[0].latest.id, a.id);
   assert.deepEqual(new Set(ids(groups[0].members)), new Set([a.id, b.id, c.id]));
   assert.equal(handoverGroups([a, unrelated])[0].members.length, 1, 'separate sections do not pull threads in');
   assert.equal(handoverGroups([c])[0].latest.id, c.id, 'missing parents stay usable');
@@ -232,6 +233,18 @@ test('handovers group by explicit ancestry and open the latest successor even wh
   assert.equal(split.length, 2, 'a detached edge becomes two sidebar cards');
   assert.ok(split.some(group => ids(group.members).join() === a.id));
   assert.ok(split.some(group => group.members.length === 2 && ids(group.members).every(id => id === b.id || id === c.id)));
+});
+
+test('a chain card is not stolen: a drifted successor or a mid-chain waiting member takes the face it deserves', () => {
+  // A successor renamed onto another task (newest, quiet) must not hide the segment still at work.
+  const report = thread('report', { status: 'running', updatedAt: '2026-01-03', createdAt: '2026-01-01' });
+  const drifted = thread('drifted', { title: '别的任务', updatedAt: '2026-01-02', createdAt: '2026-01-05', handover: { sourceId: report.id, title: report.title, agent: report.agent, mode: 'branch' } });
+  assert.equal(handoverGroups([report, drifted])[0].latest.id, report.id, 'the running segment is the face');
+  // A waiting member in the middle of the chain outranks both its quiet ends.
+  const first = thread('first', { updatedAt: '2026-01-01', createdAt: '2026-01-01' });
+  const asked = thread('asked', { waiting: true, updatedAt: '2026-01-02', createdAt: '2026-01-02', handover: { sourceId: first.id, title: first.title, agent: first.agent, mode: 'continue' } });
+  const leaf = thread('leaf', { updatedAt: '2026-01-04', createdAt: '2026-01-03', handover: { sourceId: asked.id, title: asked.title, agent: asked.agent, mode: 'continue' } });
+  assert.equal(handoverGroups([first, asked, leaf])[0].latest.id, asked.id, 'waiting beats a newer, quieter leaf');
 });
 
 test('forks stay separate, and corrupt handover cycles terminate', () => {

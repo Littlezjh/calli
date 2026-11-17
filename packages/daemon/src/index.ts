@@ -228,6 +228,7 @@ async function main(): Promise<void> {
     try {
       const began = Date.now();
       store.collapseStoredToolOutputs();
+      store.trimStoredToolOutputs();
       if (Date.now() - began > 1000) console.log(`tool snapshot collapse finished in ${Math.round((Date.now() - began) / 1000)}s`);
     } catch (err) {
       console.warn(`warning: tool snapshot collapse failed: ${err instanceof Error ? err.message : err}`);

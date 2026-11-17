@@ -10,6 +10,7 @@ export class ZcodeWire {
   private nextId = 1;
   private buffer = '';
   private closed = false;
+  get isClosed(): boolean { return this.closed; }
   onEvent: (method: string, params: any) => void = () => {};
   onRequest: (method: string, params: any) => Promise<unknown> | unknown = () => undefined;
   onClosed: (error: Error) => void = () => {};

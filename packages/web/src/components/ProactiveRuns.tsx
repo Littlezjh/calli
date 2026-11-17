@@ -86,29 +86,36 @@ function answerLabel(run: ProactiveRun, option: string): string {
 }
 
 /** What can be done about a run, wherever it shows. Discarding is the one thing that cannot be undone, so it asks. */
-export function RunControls({ api, run, state }: { api: Api; run: ProactiveRun; state: ProactiveState }) {
+/** `hideQuestion`: the caller already shows the question in full, so it is not said twice. */
+export function RunControls({ api, run, state, hideQuestion = false }: { api: Api; run: ProactiveRun; state: ProactiveState; hideQuestion?: boolean }) {
   const [viewing, setViewing] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [answer, setAnswer] = useState('');
+  const options = run.question?.options ?? [];
+  // With options to pick from, writing an answer of one's own is one tap away rather than always open.
+  const [writing, setWriting] = useState(!options.length);
   const pending = state.pending[run.id];
   const controls = runControls(run);
   if (!controls.length) return null;
   if (controls.includes('answer')) return <div className="proactive-answer">
-    {run.question?.text && <p>{run.question.text}</p>}
-    <div className="desk-card-actions">{run.question?.options.map(option => <button key={option} className="ghost" disabled={Boolean(pending)} onClick={() => state.act(run, 'answer', option)}>{answerLabel(run, option)}</button>)}</div>
-    <form className="desk-card-actions proactive-answer-form" aria-label={t('proactive.otherAnswer')} onSubmit={e => { e.preventDefault(); if (answer.trim()) state.act(run, 'answer', answer.trim()); }}>
-      <input aria-label={t('proactive.otherAnswer')} placeholder={t('proactive.otherAnswer')} value={answer} disabled={Boolean(pending)} onChange={e => setAnswer(e.target.value)} />
+    {run.question?.text && !hideQuestion && <p>{run.question.text}</p>}
+    {(options.length > 0 || !writing) && <div className="desk-card-actions">
+      {options.map(option => <button key={option} className="ghost" disabled={Boolean(pending)} onClick={() => state.act(run, 'answer', option)}>{answerLabel(run, option)}</button>)}
+      {!writing && <button className="ghost quiet" disabled={Boolean(pending)} aria-expanded={false} onClick={() => setWriting(true)}>{t('proactive.otherAnswer')}</button>}
+    </div>}
+    {writing && <form className="desk-card-actions proactive-answer-form" aria-label={t('proactive.otherAnswer')} onSubmit={e => { e.preventDefault(); if (answer.trim()) state.act(run, 'answer', answer.trim()); }}>
+      <input aria-label={t('proactive.otherAnswer')} placeholder={t('proactive.otherAnswer')} value={answer} disabled={Boolean(pending)} autoFocus={options.length > 0} onChange={e => setAnswer(e.target.value)} />
       <button className="ghost" disabled={Boolean(pending) || !answer.trim()}>{t('proactive.answer')}</button>
-    </form>
+    </form>}
   </div>;
   const label = (control: Exclude<typeof controls[number], 'diff'>) => {
-    if (control === 'dismiss') return t(run.needsRepo ? 'proactive.declineRepo' : run.reason === 'done' ? 'proactive.notDone' : 'proactive.stopWaiting');
+    if (control === 'dismiss') return t(run.kind === 'dispatch' ? 'proactive.noThanks' : run.needsRepo ? 'proactive.declineRepo' : run.reason === 'done' ? 'proactive.notDone' : 'proactive.stopWaiting');
     return t(`proactive.${control}`);
   };
   return <>
     <div className="desk-card-actions">{controls.map(control => control === 'diff'
       ? <button key={control} className="ghost" onClick={() => setViewing(true)}>{t('proactive.viewChanges')}</button>
-      : <button key={control} className={control === 'merge' ? 'primary' : 'ghost'} disabled={Boolean(pending)} aria-busy={pending === control} onClick={() => { if (control === 'discard') setConfirming(true); else state.act(run, control); }}>{label(control)}</button>)}
+      : <button key={control} className={control === 'merge' || control === 'start' ? 'primary' : 'ghost'} disabled={Boolean(pending)} aria-busy={pending === control} onClick={() => { if (control === 'discard') setConfirming(true); else state.act(run, control); }}>{label(control)}</button>)}
     </div>
     {viewing && <DiffDialog api={api} run={run} onClose={() => setViewing(false)} />}
     {confirming && createPortal(<Dialog title={t('proactive.discardTitle')} message={t('proactive.discardHint')} confirmLabel={t('proactive.discard')} danger onCancel={() => setConfirming(false)} onConfirm={() => { setConfirming(false); state.act(run, 'discard'); }} />, document.body)}
@@ -139,7 +146,7 @@ export function ProactiveCard({ api, run, state, style }: { api: Api; run: Proac
   </article>;
 }
 
-function RunSummary({ run }: { run: ProactiveRun }) {
+export function RunSummary({ run }: { run: ProactiveRun }) {
   if (run.status === 'waiting') return <p>{t('proactive.waitingFor', run.wait?.what || run.line || run.summary || t('proactive.service'))}{run.wakeAt && Number.isFinite(Date.parse(run.wakeAt)) && <> · {t('proactive.checkAt', formatDateTime(run.wakeAt, { hour: '2-digit', minute: '2-digit', hour12: false }))}</>}</p>;
   if (run.status === 'asking' && run.reason !== 'done' && run.question?.text) return null;
   const summary = run.status === 'asking' ? run.line || run.summary : run.summary;

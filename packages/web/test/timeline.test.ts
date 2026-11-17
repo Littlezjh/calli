@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { channelRows, turnChannel } from '../src/timeline.js';
 import {
   buildTimeline,
+  errorSummary,
   stepCommand,
   compactionLabel,
   coordinationNote,
@@ -209,6 +210,35 @@ test('turn.error adds an error item and clears running', () => {
   const tl = buildTimeline([ev('turn.started', { text: 'x' }), ev('turn.error', { message: 'boom' })]);
   assert.equal(tl.running, false);
   assert.equal(tl.items.at(-1)?.kind, 'error');
+});
+
+test('provider errors get short truthful summaries without losing their original details', () => {
+  const examples: [string, RegExp][] = [
+    ['API error (attempt 2): UNAVAILABLE (code 503): No capacity available for model gemini-3.8-flash-high on the server', /服务繁忙.*503/],
+    ['529 {"error":{"type":"overloaded_error","message":"Overloaded"}}', /服务繁忙.*529/],
+    ['Error code: 429 - {"error":{"code":"insufficient_quota"}}', /额度用尽.*429/],
+    ['HTTP 429: rate_limit_exceeded', /请求受限.*429/],
+    ['401 Incorrect API key provided', /认证\/访问.*401/],
+    ['HTTP 403 Forbidden', /认证\/访问.*403/],
+    ['maximum context length exceeded', /上下文超限/],
+    ['Error code: 500 Internal Server Error', /服务异常.*500/],
+    ['fetch failed: ECONNRESET', /连接异常/],
+    ['Could not read /tmp/503/output.txt', /^本轮出错$/],
+    ['disk quota exceeded', /^本轮出错$/],
+    ['unknown failure with a long diagnostic', /^本轮出错$/],
+  ];
+  for (const [message, expected] of examples) {
+    const { items } = buildTimeline([ev('turn.started'), ev('turn.error', { message })]);
+    const item = items.at(-1);
+    assert.ok(item?.kind === 'error');
+    assert.match(item.summary!, expected);
+    assert.equal(item.detail, message);
+    assert.equal(item.message, message);
+    assert.equal(item.planExhausted, undefined, 'presentation never changes eligibility for a handover');
+  }
+  assert.match(errorSummary({ code: 'permission_refused', message: '503' }), /操作未获批准/);
+  assert.match(errorSummary({ code: 'interrupted' }), /重启中断/);
+  assert.equal(errorSummary({ code: 'plan_exhausted', message: 'HTTP 429' }), '额度用尽');
 });
 
 test('lastSeq tracks the highest seq seen so the stream can resume', () => {
@@ -1107,10 +1137,31 @@ test('a quota-resume marker divides the timeline where the daemon continued the 
   assert.ok(timeline.items.some(item => item.kind === 'error' && item.planExhausted === true));
 });
 
+test('a transient failure the daemon retried gets its own divider, attempt counted', () => {
+  const timeline = buildTimeline([
+    ev('turn.started', { text: 'keep working' }),
+    ev('turn.error', { message: 'API error (attempt 2): UNAVAILABLE (code 503): No capacity available for model gemini-3.8-flash-high on the server' }),
+    ev('turn.retry', { attempt: 1, max: 3 }, null),
+    ev('turn.started', { text: 'keep working' }, 't2'),
+    ev('message.delta', { text: 'resumed' }, 't2'),
+    ev('turn.done', {}, 't2'),
+  ]);
+  const marker = timeline.items.find(item => item.kind === 'turn-retry');
+  assert.ok(marker?.kind === 'turn-retry');
+  assert.equal(marker.attempt, 1);
+  assert.equal(marker.max, 3);
+  assert.ok(!marker.turnId);
+  // A capacity failure is a plain error box, not the plan-exhausted system line.
+  const error = timeline.items.find(item => item.kind === 'error');
+  assert.ok(error?.kind === 'error' && !error.planExhausted);
+});
+
 test('a turn a channel started is marked by its source, never by its words', () => {
   const user = (data: Record<string, any>) => buildTimeline([ev('turn.started', data)]).items.find(i => i.kind === 'user') as any;
   assert.deepEqual(user({ text: 'raw', displayText: '飞书 · 3 条新信号', channel: { kind: 'lark', count: 3 } }).channel, { kind: 'lark', count: 3 });
   assert.equal(user({ text: '飞书 · 3 条新信号' }).channel, undefined);
+  const prep = user({ text: 'raw', displayText: '会前准备 · 2 场会议', channel: { kind: 'mixed', count: 2, parts: [{ kind: 'meeting-prep', count: 2 }, { kind: 'person', text: '顺便看下周报' }] } }).channel;
+  assert.deepEqual(channelRows(prep, 'raw'), [{ kind: 'note', text: '会前准备 · 2 场会议' }, { kind: 'person', text: '顺便看下周报' }], 'a meeting-prep part is a quiet line, not dropped');
   assert.equal(user({ text: 'x', channel: { count: 2 } }).channel, undefined);
 });
 

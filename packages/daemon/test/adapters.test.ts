@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { effortsFromConfig, mapAcpUpdate, modelsFromConfig } from '../src/adapters/acp.js';
+import { formQuestions } from '../src/adapters/questions.js';
 import { ClaudeAcpAdapter } from '../src/adapters/claude.js';
 import { DshAcpAdapter } from '../src/adapters/dsh.js';
 import { TraexAcpAdapter } from '../src/adapters/traex.js';
@@ -335,6 +336,22 @@ test('ClaudeAcpAdapter: permission mode, model and effort are applied when the n
   assert.deepEqual(JSON.parse(readFileSync(started, 'utf8'))._meta.claudeCode.options, { model: 'big', effort: 'high' });
   assert.equal(readFileSync(selected, 'utf8'), 'big\n', 'a fresh Claude session must select the model only at native startup');
   await session.close();
+});
+
+test('ClaudeAcpAdapter: a selected model overrides a failing settings pin without changing the instance', async (t) => {
+  const env = { ANTHROPIC_MODEL: 'broken', FAKE_CLAUDE_SETTINGS_MODEL: 'broken' };
+  const adapter = new ClaudeAcpAdapter([process.execPath, fakeAcp], env);
+  for (const model of ['big', 'small']) {
+    const session = await adapter.start({ cwd: here, model });
+    t.after(() => session.close());
+    const { hooks, events } = collectingHooks();
+    await session.prompt(turn('model?'), hooks);
+    assert.equal(events.at(-1)?.data.text, `model:${model};mode:default;effort:default`);
+    await session.close();
+  }
+  assert.equal(env.ANTHROPIC_MODEL, 'broken', 'the instance environment is not mutated');
+  await assert.rejects(adapter.start({ cwd: here }), /Could not confirm model "broken" with the API/,
+    'an unpinned session still uses the native default and reports its failure');
 });
 
 test('ClaudeAcpAdapter: full_access skips the approval prompt, and settings change on a live session', async () => {
@@ -1620,4 +1637,27 @@ test('CodexAppServerAdapter: pictures go as file paths', async () => {
   await session.prompt(turn('what is this', [image]), hooks);
   assert.match(textFrom(events), /images:\/data\/attachments\/t\/1\.png/);
   await session.close();
+});
+
+test('formQuestions: a custom-answer companion joins its choice, and only its choice', () => {
+  const choice = { type: 'string', oneOf: [{ const: 'a', title: 'A' }] };
+  const asked = formQuestions({ type: 'object', properties: {
+    question_0: choice, question_0_custom: { type: 'string', title: 'Other' },
+    question_1: choice, question_1_custom: { type: 'string', title: 'Other' },
+  } }, 'message');
+  assert.deepEqual(asked?.map(q => [q.id, q.note?.id]), [['question_0', 'question_0_custom'], ['question_1', 'question_1_custom']]);
+
+  // A companion whose choice is missing, or itself required, stays a question of its own.
+  const orphan = formQuestions({ type: 'object', properties: { note_custom: { type: 'string' }, question_0: choice } }, 'message');
+  assert.deepEqual(orphan?.map(q => q.id), ['note_custom', 'question_0']);
+  const demanded = formQuestions({ type: 'object', required: ['question_0_custom'], properties: { question_0: choice, question_0_custom: { type: 'string' } } }, 'message');
+  assert.deepEqual(demanded?.map(q => q.id), ['question_0', 'question_0_custom']);
+
+  // Booleans and multi-selects keep their options, so their companion joins them too.
+  const flags = formQuestions({ type: 'object', properties: { question_0: { type: 'boolean' }, question_0_custom: { type: 'string' } } }, 'message');
+  assert.deepEqual(flags?.map(q => [q.id, q.note?.id]), [['question_0', 'question_0_custom']]);
+
+  // Plain free-text fields never pair: two questions in, two questions out.
+  const plain = formQuestions({ type: 'object', properties: { question_0: { type: 'string' }, question_0_custom: { type: 'string' } } }, 'message');
+  assert.deepEqual(plain?.map(q => q.id), ['question_0', 'question_0_custom']);
 });

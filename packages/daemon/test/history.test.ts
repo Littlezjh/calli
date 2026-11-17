@@ -30,7 +30,7 @@ test('eight turns of answers exclude tools and intermediate text; work and detai
       f.add(turn, 'turn.done', {});
     }
     const page = await f.store.history.page('thread');
-    assert.equal(page.events.filter(e => e.type === 'turn.started').length, 8);
+    assert.equal(page.events.filter(e => e.type === 'turn.started').length, 2);
     assert.equal(page.hasOlder, true);
     assert.deepEqual(page.turnIds, Array.from({ length: 12 }, (_, i) => `t${i}`));
     const json = JSON.stringify(page);
@@ -47,10 +47,13 @@ test('eight turns of answers exclude tools and intermediate text; work and detai
     assert.ok(String(detail.output).startsWith('SUPER_LARGE_RESULT'));
     assert.equal((detail.content as any[])[0].newText, 'two\nthree\n');
     const older = await f.store.history.page('thread', page.nextCursor!);
-    assert.equal(older.events.filter(e => e.type === 'turn.started').length, 4);
-    assert.equal(older.hasOlder, false);
+    assert.equal(older.events.filter(e => e.type === 'turn.started').length, 8);
+    assert.equal(older.hasOlder, true);
+    const oldest = await f.store.history.page('thread', older.nextCursor!);
+    assert.equal(oldest.events.filter(e => e.type === 'turn.started').length, 2);
+    assert.equal(oldest.hasOlder, false);
     assert.equal(older.turnIds, undefined);
-    assert.equal(older.nextCursor, null);
+    assert.equal(oldest.nextCursor, null);
     assert.equal(page.snapshotSeq, f.store.history.latest('thread'));
   } finally { f.close(); }
 });
@@ -444,11 +447,13 @@ test('a forward read pages a conversation from its beginning, eight turns at a t
     assert.deepEqual(turnsOf(last), ['t16', 't17', 't18', 't19']);
     assert.equal(last.hasNewer, false);
     assert.equal(last.nextCursor, null);
-    // The way it was read before is unchanged: the newest eight, with an older cursor.
+    // A thread opening gets only its last two turns, with an older cursor; the pages before are eight each.
     const newest = await f.store.history.page('thread');
-    assert.deepEqual(turnsOf(newest), Array.from({ length: 8 }, (_, i) => `t${i + 12}`));
+    assert.deepEqual(turnsOf(newest), ['t18', 't19']);
     assert.equal(newest.hasOlder, true);
     assert.equal(newest.hasNewer, undefined);
+    const older = await f.store.history.page('thread', newest.nextCursor!);
+    assert.deepEqual(turnsOf(older), Array.from({ length: 8 }, (_, i) => `t${i + 10}`));
   } finally { f.close(); }
 });
 
@@ -493,5 +498,51 @@ test('a manual handover knows whether its source went on, and read as a chain hi
     db.prepare("UPDATE threads SET handover = json_set(handover, '$.detached', json('true')) WHERE id = ?").run('next');
     assert.deepEqual(await turns(true), ['BRIEF given to the new conversation']);
     assert.equal(f.store.handoverSourceMoved({ ...f.store.getThread('next')!, handover: null }), null);
+  } finally { f.close(); }
+});
+
+test('a repeated tools-only pass starts after the tool rows it already projected and still sees later calls', async () => {
+  const f = fixture();
+  try {
+    f.add('t0', 'turn.started', { text: 'q' });
+    f.add('t0', 'tool.start', { id: 'a', kind: 'edit', title: 'edit' });
+    f.add('t0', 'tool.update', { id: 'a', content: [{ type: 'diff', path: 'a.ts', oldText: 'x\n', newText: 'y\n' }] });
+    f.add('t0', 'tool.end', { id: 'a', status: 'completed' });
+    (f.store as any).db.prepare('DELETE FROM history_coverage').run(); // a thread whose projections are not known to be whole
+    await f.store.outputSources('thread');
+    const marker = () => (f.store as any).db.prepare('SELECT through FROM history_tools_through WHERE thread_id=?').get('thread')?.through;
+    const first = marker();
+    assert.equal(first, f.store.history.latest('thread'));
+    // Drop a projection below the marker: a second pass must not look for it again.
+    (f.store as any).db.prepare("DELETE FROM history_rows WHERE thread_id='thread' AND type='history.tool.end'").run();
+    await f.store.outputSources('thread');
+    assert.equal((f.store as any).db.prepare("SELECT COUNT(*) c FROM history_rows WHERE thread_id='thread' AND type='history.tool.end'").get().c, 0);
+    (f.store as any).db.prepare('DELETE FROM history_coverage').run();
+    f.add('t0', 'tool.start', { id: 'b', kind: 'edit', title: 'edit b' });
+    f.add('t0', 'tool.update', { id: 'b', content: [{ type: 'diff', path: 'b.ts', oldText: 'x\n', newText: 'y\n' }] });
+    const next = await f.store.outputSources('thread');
+    assert.deepEqual(next.diffs.filter(d => d.data.files?.length).map(d => d.data.files![0].path).sort(), ['a.ts', 'b.ts']);
+    assert.ok(marker() >= first);
+  } finally { f.close(); }
+});
+
+test('a page carries only the latest usage reading of each kind', async () => {
+  const f = fixture();
+  try {
+    for (let i = 0; i < 2; i++) {
+      f.add(`t${i}`, 'turn.started', { text: `q${i}` });
+      for (let n = 0; n < 50; n++) {
+        f.add(`t${i}`, 'usage.updated', { used: 1000 * i + n, size: 200_000 });
+        f.add(`t${i}`, 'usage.sample', { scope: 'request', input: n, output: 1 });
+      }
+      f.add(`t${i}`, 'message.delta', { text: `a${i}` });
+      f.add(`t${i}`, 'turn.done', {});
+    }
+    const page = await f.store.history.page('thread');
+    const used = page.events.filter(e => e.type === 'usage.updated');
+    assert.equal(used.length, 1);
+    assert.equal(used[0].data.used, 1049);
+    assert.equal(page.events.filter(e => e.type === 'usage.sample').length, 1);
+    assert.equal(page.events.filter(e => e.type === 'turn.started').length, 2);
   } finally { f.close(); }
 });

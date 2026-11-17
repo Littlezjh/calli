@@ -204,6 +204,23 @@ export function boardStage(t: Pick<Thread, 'id' | 'waiting' | 'waitingReason' | 
 /** Whether an attention is a person being waited on, as against a result to look at. */
 export const isWait = (a: Attention | null): boolean => a !== null && a.kind !== 'unread' && a.kind !== 'error';
 
+/**
+ * Which member stands for a handover chain: the one that wants the user or is at work — waiting
+ * first, then unread or failed, then running — and after those whoever moved last. When it was
+ * created says which conversation is newest, not which one is alive: a successor renamed onto
+ * another task, or one the user never went on with, must not stand in front of the segment still
+ * being worked on. The choice never depends on which thread happens to be on screen.
+ */
+function faceOrder(a: Thread, b: Thread): number {
+  const rank = (t: Thread) => {
+    const attention = threadAttention(t, null);
+    if (attention) return isWait(attention) ? 0 : 1;
+    if (t.status === 'running') return 2;
+    return 3;
+  };
+  return rank(a) - rank(b) || b.updatedAt.localeCompare(a.updatedAt) || b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id);
+}
+
 /** What a thread wants, most pressing first; null when it wants nothing. */
 function urgency(t: Thread, selectedId: string | null): number | null {
   const attention = threadAttention(t, selectedId);
@@ -262,6 +279,7 @@ export function buildActivity(threads: Thread[], search: string, now: Date, sele
 /**
  * Group explicit handovers only, within the caller's existing section or project. The groups are
  * the most recently moved first, or with `keepOrder` in the order their first thread has in `threads`.
+ * `latest` is the group's face: the member that is alive (see `faceOrder`), which the row stands for.
  */
 export function handoverGroups(threads: Thread[], keepOrder = false): Array<{ key: string; latest: Thread; members: Thread[] }> {
   const byId = new Map(threads.map((t) => [t.id, t]));
@@ -282,8 +300,8 @@ export function handoverGroups(threads: Thread[], keepOrder = false): Array<{ ke
   }
   return [...groups].map(([key, members]) => {
     members.sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id));
-    const parents = new Set(members.map((t) => t.handover?.sourceId));
-    return { key, latest: members.find((t) => !parents.has(t.id)) ?? members[0], members };
+    // The face is the member that is alive, not the newest conversation (see faceOrder).
+    return { key, latest: [...members].sort(faceOrder)[0], members };
   }).sort((a, b) => {
     if (keepOrder) return Math.min(...a.members.map((t) => threads.indexOf(t))) - Math.min(...b.members.map((t) => threads.indexOf(t)));
     const newest = (members: Thread[]) => members.reduce((time, t) => t.updatedAt > time ? t.updatedAt : time, '');

@@ -52,7 +52,7 @@ let backgroundWork; // the timer of work the agent started on its own
 let nextAgentRequestId = 1000;
 const awaitingInput = new Map();
 let currentMode = 'default';
-let currentModel = dsh ? '["deepseek-official","deepseek-v4-pro"]' : 'default';
+let currentModel = dsh ? '["deepseek-official","deepseek-v4-pro"]' : process.env.FAKE_ACP_MODELS?.split(',')[0]?.split('|')[0] || 'default';
 let currentEffort = dsh ? '' : 'default';
 let currentSpeed = 'off';
 // No "auto" mode on purpose: the adapter must fall back to acceptEdits for auto_edit.
@@ -96,12 +96,19 @@ const sessionInfo = () => ({
           category: 'model',
           type: 'select',
           currentValue: currentModel,
-          options: [
-            { value: 'default', name: 'Default', description: 'Big 1.0' },
-            { value: 'big', name: 'Big 1.0', description: 'For hard work' },
-            { value: 'small', name: 'Small 1.0', description: '' },
-            { value: 'broken', name: 'Broken 1.0', description: 'Not on this account' },
-          ],
+          // FAKE_ACP_MODELS replaces the catalog with comma-separated `id|Name` entries (first is
+          // current), so a test can present a gateway-style catalog of provider-prefixed models.
+          options: process.env.FAKE_ACP_MODELS
+            ? process.env.FAKE_ACP_MODELS.split(',').map((entry) => {
+              const [value, name] = entry.split('|');
+              return { value, name: name || value };
+            })
+            : [
+              { value: 'default', name: 'Default', description: 'Big 1.0' },
+              { value: 'big', name: 'Big 1.0', description: 'For hard work' },
+              { value: 'small', name: 'Small 1.0', description: '' },
+              { value: 'broken', name: 'Broken 1.0', description: 'Not on this account' },
+            ],
         },
     // Like the real agents: a model may have no effort option at all. dsh's has an empty
     // "provider default" value and only appears while a reasoning model is selected.
@@ -157,7 +164,7 @@ const lifecyclePermission = (promptId, scenario) => {
   });
 };
 
-rl.on('line', (line) => {
+rl.on('line', async (line) => {
   const msg = JSON.parse(line);
 
   // Responses to our permission request.
@@ -195,16 +202,22 @@ rl.on('line', (line) => {
     return;
   }
 
+  if (process.env.FAKE_ACP_RPC_LOG) appendFileSync(process.env.FAKE_ACP_RPC_LOG, JSON.stringify({ method: msg.method, pid: process.pid }) + '\n');
   switch (msg.method) {
     case 'initialize':
+      if (process.env.FAKE_ACP_INIT_DELAY_MS) await new Promise(resolve => setTimeout(resolve, Number(process.env.FAKE_ACP_INIT_DELAY_MS)));
+      if (process.env.FAKE_ACP_INIT_FAIL_ONCE && !existsSync(process.env.FAKE_ACP_INIT_FAIL_ONCE)) { writeFileSync(process.env.FAKE_ACP_INIT_FAIL_ONCE, 'failed'); process.exit(2); }
       return out({ jsonrpc: '2.0', id: msg.id, result: { protocolVersion: 1, agentCapabilities: {} } });
     case 'session/new':
       if (process.env.FAKE_ACP_START_ERROR) return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32603, message: process.env.FAKE_ACP_START_ERROR } });
       if (!dsh) {
         const initial = msg.params?._meta?.claudeCode?.options;
         if (typeof initial?.model === 'string' && process.env.FAKE_ACP_MODEL_SELECTION_LOG) appendFileSync(process.env.FAKE_ACP_MODEL_SELECTION_LOG, initial.model + '\n');
-        if (initial?.model === 'broken') return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32603, message: 'Internal error' } });
+        const reconciledModel = process.env.FAKE_CLAUDE_SETTINGS_MODEL
+          ? process.env.ANTHROPIC_MODEL ?? process.env.FAKE_CLAUDE_SETTINGS_MODEL : initial?.model;
+        if (reconciledModel === 'broken') return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32603, message: 'Internal error', data: { details: 'Could not confirm model "broken" with the API.' } } });
         if (typeof initial?.model === 'string') currentModel = initial.model;
+        if (typeof reconciledModel === 'string') currentModel = reconciledModel;
         if (typeof initial?.effort === 'string') {
           const efforts = sessionInfo().configOptions.find(option => option.id === 'effort')?.options;
           if (!efforts?.some(value => value.value === initial.effort)) return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32602, message: 'unsupported effort' } });
@@ -608,8 +621,13 @@ rl.on('line', (line) => {
       if (text.includes('flaky')) {
         return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32603, message: `Internal error: upstream connection reset (request ${Math.floor(Math.random() * 90000) + 10000})` } });
       }
-      // FAKE_ACP_PLAN_LEFT stands for another account whose plan still has room.
-      if (text.includes('out of plan') && !process.env.FAKE_ACP_PLAN_LEFT) {
+      // FAKE_ACP_PLAN_LEFT stands for another account whose plan still has room. With a
+      // gateway catalog (FAKE_ACP_MODELS), the plan owns FAKE_ACP_PLAN_PREFIX ('zcode' by
+      // default): its models run out, while a separately billed provider's do not.
+      const offPlanPool = !process.env.FAKE_ACP_MODELS
+        || !currentModel.includes('/')
+        || currentModel.startsWith((process.env.FAKE_ACP_PLAN_PREFIX ?? 'zcode') + '/');
+      if (text.includes('out of plan') && !process.env.FAKE_ACP_PLAN_LEFT && offPlanPool) {
         return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32603, message: "Internal error: You've hit your session limit · resets 10:10am (UTC)" } });
       }
       if (text.includes('slow')) {

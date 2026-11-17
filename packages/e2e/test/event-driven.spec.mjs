@@ -18,7 +18,8 @@ const settle = page => page.evaluate(() => new Promise(done => requestAnimationF
 
 async function openDesk(page, daemon) {
   await openUi(page, daemon);
-  await page.evaluate(() => { location.hash = '#/desk'; });
+  // The desk is the drawer's own tab on the assistant's home; its address opens it directly.
+  await page.evaluate(() => { location.hash = '#/desk/desk'; });
   await page.locator('.desk-summary').waitFor();
 }
 
@@ -83,7 +84,7 @@ test('a matter reads its received messages only when asked; failure can be retri
       ] } });
     });
     await openUi(page, daemon);
-    await page.evaluate(() => { location.hash = '#/desk'; });
+    await page.evaluate(() => { location.hash = '#/desk/desk'; });
     await page.getByRole('button', { name: '按进度', exact: true }).click();
     await page.locator(`#desk-pile-${full.id}`).click();
     const toggle = page.locator('.desk-signals .desk-subscriptions-toggle');

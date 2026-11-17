@@ -58,9 +58,9 @@ test('an oversized output is capped head and tail with an honest marker', async 
     f.add('t1', 'tool.update', { id: 'exec-big', status: 'in_progress', output: big });
     const row = storedRows(f.store, 'tool.update')[0];
     assert.equal(row.data.outputTruncated, true);
-    assert.equal(row.data.outputOmitted, 200_000 - 96 * 1024 - 32 * 1024);
+    assert.equal(row.data.outputOmitted, 200_000 - 3 * 1024 - 1024);
     assert.ok(String(row.data.output).includes('[truncated, '));
-    assert.ok(String(row.data.output).length < 140_000);
+    assert.ok(String(row.data.output).length < 5_000);
     // Diffs are never capped: the read model counts added and removed lines from them.
     const diff = { type: 'diff', path: 'a.ts', oldText: 'one\n', newText: `two\n${'line\n'.repeat(80_000)}` };
     f.add('t1', 'tool.start', { id: 'exec-diff', kind: 'edit', input: {} });
@@ -125,6 +125,27 @@ test('the migration collapses old logs once and a rerun changes nothing', async 
     assert.ok(String(end.data.output).endsWith('done'));
     f.store.collapseStoredToolOutputs(); // the marker keeps a rerun from touching anything
     assert.equal(storedRows(f.store, 'tool.update').length, 1);
+  } finally {
+    f.close();
+  }
+});
+
+test('the trim migration shrinks old 128K-capped outputs once', () => {
+  const f = storeFixture();
+  try {
+    f.add('t1', 'turn.started', { text: 'old cap' });
+    f.add('t1', 'tool.start', { id: 'wide', kind: 'execute', input: {} });
+    const raw = new DatabaseSync(join(f.dir, 'hub.db'));
+    const seq = (raw.prepare("SELECT MAX(seq) AS n FROM events WHERE thread_id = 'thread'").get() as { n: number }).n + 1;
+    raw.prepare('INSERT INTO events (thread_id, seq, turn_id, type, ts, data) VALUES (?, ?, ?, ?, ?, ?)')
+      .run('thread', seq, 't1', 'tool.end', new Date().toISOString(), JSON.stringify({ id: 'wide', status: 'completed', output: 'z'.repeat(100_000) }));
+    raw.close();
+    f.store.trimStoredToolOutputs();
+    const end = storedRows(f.store, 'tool.end')[0];
+    assert.equal(end.data.outputTruncated, true);
+    assert.ok(String(end.data.output).length < 5_000);
+    f.store.trimStoredToolOutputs();
+    assert.equal(storedRows(f.store, 'tool.end').length, 1);
   } finally {
     f.close();
   }

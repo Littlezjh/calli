@@ -8,9 +8,10 @@ import type { AddressInfo } from 'node:net';
 import { Store } from '../src/store.js';
 import { ThreadManager } from '../src/threads.js';
 import { AttachmentStore } from '../src/attachments.js';
+import { Workdirs } from '../src/workdirs.js';
 import { AgyAdapter } from '../src/adapters/agy.js';
 import { TraexAcpAdapter } from '../src/adapters/traex.js';
-import type { AgentAdapter } from '../src/adapters/types.js';
+import type { AgentAdapter, PlanQuota } from '../src/adapters/types.js';
 import { CoordinationManager } from '../src/coordination.js';
 import { createHttpServer } from '../src/http.js';
 import { freshQuota, modelWindows } from '../src/auto-handover.js';
@@ -39,7 +40,7 @@ async function setup(summaryFail = false, hidden?: string) {
   writeFileSync(join(dir, 'bridge.json'), '{}');
   adapters.set('bridge', new AgyAdapter([process.execPath, join(fixtures, 'fake-agy.mjs')], { FAKE_HANDOVER_QUOTA: join(dir, 'bridge.json') }));
   const kinds: Record<string, string> = { other: 'traex' };
-  const manager = new ThreadManager(store, adapters, [dir], new AttachmentStore(dir), () => [...adapters.keys()].map(id => ({ id, adapter: kinds[id] ?? 'agy', ...(id === hidden ? { hidden: true } : {}) })));
+  const manager = new ThreadManager(store, adapters, new Workdirs([dir], join(dir, 'dirs.json'), join(dir, 'scratch')), new AttachmentStore(dir), () => [...adapters.keys()].map(id => ({ id, adapter: kinds[id] ?? 'agy', ...(id === hidden ? { hidden: true } : {}) })));
   Object.defineProperty(manager.autoHandover, 'delayMs', { value: 80 });
   const team = new CoordinationManager(store, manager, join(dir, 'calli.sock'));
   const server = createHttpServer({ manager, token: 'test-token', webDir: null, version: 'test' });
@@ -288,6 +289,50 @@ test('the default order skips a bridge without a plan; an order that names it st
   } finally { await h.close(); }
 });
 
+test('the default order keeps a subscription off a gateway that reports its own windows', async () => {
+  const h = await setup();
+  try {
+    h.manager.autoHandover.configure({ enabled: true, threshold: 90, orders: {} });
+    // The gateway is healthy and its report has windows, like a subscription's would.
+    class GatewayAdapter extends AgyAdapter { routesThroughGateway() { return true; } }
+    writeFileSync(join(h.dir, 'gw.json'), JSON.stringify({ 'Gemini Models': 10 }));
+    h.adapters.set('agy2', new GatewayAdapter([process.execPath, join(fixtures, 'fake-agy.mjs')], { FAKE_HANDOVER_QUOTA: join(h.dir, 'gw.json') }));
+    writeFileSync(join(h.dir, 'agy3.json'), JSON.stringify({ 'Gemini Models': 95 }));
+    assert.deepEqual(await h.manager.autoHandover.targets(h.thread.id), []);
+    // Another subscription account is still found, and an order that names the gateway still uses it.
+    writeFileSync(join(h.dir, 'agy3.json'), JSON.stringify({ 'Gemini Models': 10 }));
+    assert.deepEqual((await h.manager.autoHandover.targets(h.thread.id)).map(t => t.agent), ['agy3']);
+    h.manager.autoHandover.configure({ enabled: true, threshold: 90, orders: { agy: [{ agent: 'agy2' }] } });
+    assert.deepEqual((await h.manager.autoHandover.targets(h.thread.id)).map(t => t.agent), ['agy2']);
+  } finally { await h.close(); }
+});
+
+test('a stale self-report is read again, and an account whose usage cannot be read is not ruled out', async () => {
+  const h = await setup();
+  try {
+    h.manager.autoHandover.configure({ enabled: true, threshold: 90, orders: {} });
+    writeFileSync(join(h.dir, 'agy2.json'), JSON.stringify({ 'Gemini Models': 95 }));
+    const observe = (agent: string, usedPercent: number) => (h.manager as unknown as { observeQuota(agent: string, quota: PlanQuota): void })
+      .observeQuota(agent, { checkedAt: new Date(Date.now() - 60_000).toISOString(), windows: [{ label: '7D', usedPercent }] });
+    // agy3 told its usage a minute ago while answering: too old to decide on, too recent to be probed
+    // unasked. The handover reads it again instead of passing it over.
+    observe('agy3', 50);
+    assert.deepEqual((await h.manager.autoHandover.targets(h.thread.id)).map(t => t.agent), ['agy3']);
+    // Its usage endpoint fails now: the last reading stands, and only a real limit rules it out.
+    h.adapters.get('agy3')!.fetchQuota = async () => { throw new Error('usage endpoint down'); };
+    assert.deepEqual((await h.manager.autoHandover.targets(h.thread.id)).map(t => t.agent), ['agy3']);
+    observe('agy3', 95);
+    assert.deepEqual(await h.manager.autoHandover.targets(h.thread.id), []);
+  } finally { await h.close(); }
+  const fresh = await setup();
+  try {
+    fresh.manager.autoHandover.configure({ enabled: true, threshold: 90, orders: {} });
+    // Never read at all: an account that cannot be read is not taken for a bridge without a plan.
+    fresh.adapters.get('agy2')!.fetchQuota = async () => { throw new Error('usage endpoint down'); };
+    assert.deepEqual((await fresh.manager.autoHandover.targets(fresh.thread.id)).map(t => t.agent), ['agy2']);
+  } finally { await fresh.close(); }
+});
+
 test('a hub that never saved the setting starts with it on, and a choice made later stays', async () => {
   const h = await setup();
   try {
@@ -433,5 +478,70 @@ test('takeover: an exhausted lead hands its place, failed ask and note to the ch
     // The brief leaves the full coordinates and the long synthesized summary to `calli`.
     assert.doesNotMatch(text, /Session 文件地址|# 交接摘要/);
     assert.ok(text.length < 1500, `brief handover is ${text.length} chars`);
+  } finally { await h.close(); }
+});
+
+test('takeover: the person picks who writes the summary, the source or another agent', async () => {
+  const h = await setup();
+  try {
+    await h.manager.startTurn(h.thread.id, { text: 'first task' }); await h.done();
+    for (const summary of ['own', { agent: 'missing' }, { agent: 'agy3', model: 5 }]) {
+      assert.equal((await h.api(`/api/threads/${h.thread.id}/takeover`, 'POST', { agent: 'agy2', summary })).status, 400);
+    }
+    // The source writes it: a summary turn runs in the source first, and its words go over.
+    const res = await h.api(`/api/threads/${h.thread.id}/takeover`, 'POST', { agent: 'agy2', summary: 'source' });
+    assert.equal(res.status, 201);
+    const next = await res.json() as { id: string; agent: string };
+    assert.equal(next.agent, 'agy2'); await h.done(next.id);
+    const sourceStarts = h.store.listEvents(h.thread.id, 0, -1).filter(e => e.type === 'turn.started');
+    assert.equal(sourceStarts.at(-1)!.data.handover, 'agy2');
+    const brief = String(h.store.listEvents(next.id, 0, -1).find(e => e.type === 'turn.started')!.data.text);
+    assert.match(brief, new RegExp(`calli history ${h.thread.id}`));
+    assert.doesNotMatch(brief, /从记录整理/);
+
+    // Another agent writes it: the record is compressed by the named agent, the source is not asked.
+    const other = await h.manager.createThread({ agent: 'agy', cwd: h.dir, model: 'gemini-pro' });
+    await h.manager.startTurn(other.id, { text: 'second task' }); await h.done(other.id);
+    const res2 = await h.api(`/api/threads/${other.id}/takeover`, 'POST', { agent: 'agy2', summary: { agent: 'agy3' } });
+    assert.equal(res2.status, 201);
+    const next2 = await res2.json() as { id: string };
+    await h.done(next2.id);
+    assert.ok(!h.store.listEvents(other.id, 0, -1).some(e => e.type === 'turn.started' && e.data.handover));
+    assert.match(String(h.store.listEvents(next2.id, 0, -1).find(e => e.type === 'turn.started')!.data.text), /## 进度（由 \S+ 从记录整理）/);
+  } finally { await h.close(); }
+});
+
+test('a gateway adapter names its pools by model id, and a failed pool does not block the whole instance', async () => {
+  const h = await setup();
+  try {
+    // A copy of the fake gateway agent: a gateway catalog of provider-prefixed ids, whose pools
+    // the adapter tells apart the way the claude adapter does.
+    class GatewayAdapter extends AgyAdapter {
+      override models(): Promise<import('../src/adapters/types.js').ModelOption[]> {
+        return Promise.resolve([{ id: 'zcode/GLM-5.3', label: 'zcode/GLM-5.3' }, { id: 'deepseek/deepseek-flash', label: 'deepseek/deepseek-flash' }]);
+      }
+      separateModelPools(from: string, to: string): boolean {
+        const pool = (id: string) => (id.includes('/') ? id.slice(0, id.indexOf('/')) : '');
+        const a = pool(from), b = pool(to);
+        return Boolean(a && b && a !== b);
+      }
+    }
+    const gw = new GatewayAdapter([process.execPath, join(fixtures, 'fake-agy.mjs')], { FAKE_HANDOVER_QUOTA: join(h.dir, 'agy.json') });
+    h.adapters.set('agy', gw);
+    // The thread sits on the plan's model; the adapter's windows name no models at all.
+    await h.manager.updateThread(h.thread.id, { model: 'zcode/GLM-5.3' });
+    h.config([{ agent: 'agy', model: 'deepseek/deepseek-flash' }]);
+    // The plan is exhausted; the switch target bills on its own provider.
+    writeFileSync(join(h.dir, 'agy.json'), JSON.stringify({ 'Gemini Models': 95 }));
+    const targets = await h.manager.autoHandover.targets(h.thread.id);
+    assert.deepEqual(targets, [{ agent: 'agy', model: 'deepseek/deepseek-flash' }]);
+
+    // Run the exhausted turn: the pool is named by the model id, so only that pool is blocked.
+    await h.manager.startTurn(h.thread.id, { text: 'quota-exhausted' });
+    await h.done();
+    assert.equal(h.manager.getThread(h.thread.id).model, 'deepseek/deepseek-flash');
+    const blocks = h.store.hubSetting<Array<{ agent: string; model?: string }>>('handover.blocks', []);
+    assert.ok(blocks.some(b => b.model === 'zcode/GLM-5.3'), 'the failed pool is what got blocked');
+    assert.ok(!blocks.some(b => b.model === undefined), 'the whole instance is not blocked');
   } finally { await h.close(); }
 });

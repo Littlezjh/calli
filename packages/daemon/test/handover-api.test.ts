@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import type { AddressInfo } from 'node:net';
 import { AgentRegistry } from '../src/agents.js';
 import { AttachmentStore } from '../src/attachments.js';
+import { CoordinationManager } from '../src/coordination.js';
 import { createHttpServer } from '../src/http.js';
 import { Store } from '../src/store.js';
 import { ThreadManager } from '../src/threads.js';
@@ -302,6 +303,14 @@ test('manual handovers always branch without stopping work, automatic handovers 
     assert.equal(manager.threadView(next.id).autoHandover?.override, null);
     assert.equal(manager.threadView(source.id).autoHandover?.override, null);
     assert.equal((await fetch(`${base}/api/threads/${next.id}/handover-link`, { method: 'DELETE', headers: { Authorization: 'Bearer mode-token' } })).status, 409);
+    // A handover made by hand only leaves its chain: both conversations stay, nothing is archived.
+    const manualDetach = await fetch(`${base}/api/threads/${independent.id}/handover-link`, { method: 'DELETE', headers: { Authorization: 'Bearer mode-token' } });
+    assert.equal(manualDetach.status, 200);
+    assert.deepEqual((await manualDetach.json() as any).detached, [independent.id]);
+    assert.equal(store.getThread(independent.id)!.handover?.detached, true);
+    assert.equal(store.getThread(independent.id)!.archivedAt, null);
+    assert.equal(manager.threadView(continued.id).autoHandover?.override, false, 'unchanged by the manual unlink');
+    assert.equal((await fetch(`${base}/api/threads/${independent.id}/handover-link`, { method: 'DELETE', headers: { Authorization: 'Bearer mode-token' } })).status, 409);
     const forkedSource = await manager.createThread({ agent: 'source', cwd: root });
     const forkOne = await manager.createHandoverThread(forkedSource.id, 'next', undefined, 'continue');
     const forkTwo = await manager.createHandoverThread(forkedSource.id, 'next', undefined, 'continue');
@@ -323,6 +332,100 @@ test('manual handovers always branch without stopping work, automatic handovers 
   }
 });
 
+test('a successor inherits the chain outline in its brief, and the outline rides again only when it may be out of view', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'calli-handover-outline-'));
+  const store = new Store(root);
+  // An agent that answers at once: the prompts it received are the turns exactly as they were sent.
+  const prompts: string[] = [];
+  const echo = {
+    label: 'Echo', available: async () => true,
+    capabilities: { resume: false, approvals: false, permissionModes: [], effortLevels: [], images: false, deleteSession: false, history: false, fork: false },
+    resumeCommand: (id: string) => `echo resume ${id}`,
+    async commands() { return []; },
+    async start() {
+      return {
+        agentSessionId: 'echo-session',
+        async prompt(input: { text: string }, hooks: { emit(event: { type: string; data: Record<string, unknown> }): void }) {
+          prompts.push(input.text);
+          hooks.emit({ type: 'message.delta', data: { text: 'ok' } });
+          return { stopReason: 'end_turn' };
+        },
+        async cancel() {}, async close() {},
+      };
+    },
+  } as unknown as ConstructorParameters<typeof ThreadManager>[1] extends Map<string, infer A> ? A : never;
+  const manager = new ThreadManager(store, new Map([['one', echo]]), [root], new AttachmentStore(root));
+  const say = async (id: string, text: string) => {
+    const before = prompts.length;
+    await manager.startTurn(id, { text });
+    for (let i = 0; i < 300 && (prompts.length === before || manager.threadView(id).status === 'running'); i++) await new Promise(r => setTimeout(r, 10));
+    return prompts.at(-1)!;
+  };
+  try {
+    // A relay chain of three, the way quota handovers leave it.
+    const tid = (tag: string) => `00000000-0000-4000-8000-0000000000${tag}`;
+    const A = tid('aa'), B = tid('bb'), C = tid('cc');
+    const make = (id: string, title: string, sourceId?: string) => store.createThread({ id, agent: 'one', cwd: root, title, agentSessionId: null, permissionMode: 'default', model: null, effort: null,
+      handover: sourceId ? { sourceId, agent: 'one', title, mode: 'continue', sourceSeq: 2 } : null });
+    make(A, '周报统计'); make(B, '周报统计（接手）', A); make(C, '周报统计（接手）（接手）', B);
+
+    // Handing over from the middle of a chain: the brief carries the outline of the segments before it.
+    const mid = await manager.handoverSummary(B) as { summary: string };
+    assert.match(mid.summary, /## 接力链（共 2 段，最早在前）/);
+    assert.ok(mid.summary.includes('· 周报统计 ·'), 'each segment is named by title');
+    assert.ok(mid.summary.includes('（当前）'), 'the source being handed over is marked as the current segment');
+    assert.ok(mid.summary.includes('calli history'), 'the way back is named');
+    // A first handover, with no chain behind it, stays lean.
+    const loneId = tid('11');
+    store.createThread({ id: loneId, agent: 'one', cwd: root, title: '新任务', agentSessionId: null, permissionMode: 'default', model: null, effort: null, handover: null });
+    const brief = await manager.handoverSummary(loneId) as { summary: string };
+    assert.ok(!brief.summary.includes('## 接力链'), 'no chain, no outline');
+
+    // The successor's own turns: the outline rides as an injection, then stays out until it may be gone.
+    const first = await say(C, '继续');
+    assert.match(first, /<calli-handover>[\s\S]*?## 接力链（共 3 段，最早在前）/);
+    assert.ok(first.includes('· 周报统计 ·'));
+    const second = await say(C, '接着做');
+    assert.ok(!second.includes('<calli-handover>'), 'a block already read is not attached again');
+    // A new session — a compaction, a relay — brings the outline back.
+    store.updateThread(C, { agentSessionId: 'another-session' });
+    const third = await say(C, '还在吗');
+    assert.match(third, /<calli-handover>/, 'the outline rides again after the session changed');
+  } finally {
+    await manager.shutdown(); store.close(); rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('the chain walk stops at a detached edge, a missing ancestor and a cycle; the outline stays out of previews', async () => {
+  const { chainSegments, chainOutlineText, handoverChainBlock, handoverPreview } = await import('../src/handover.js');
+  const member = (id: string, sourceId?: string, extra: Record<string, unknown> = {}) =>
+    ({ id, title: `任务（${id}）`, updatedAt: '2026-11-16T00:00:00Z', archivedAt: null, preview: '进度', handover: sourceId ? { sourceId } : null, ...extra });
+  const a = member('a'), b = member('b', 'a'), c = member('c', 'b'), d = member('d', 'c', { archivedAt: '2026-11-15T00:00:00Z' });
+  const byId = new Map([[a.id, a], [b.id, b], [c.id, c], [d.id, d]]);
+  const get = (id: string) => byId.get(id);
+  // Oldest first, ending at the thread itself; the archive does not end the walk.
+  assert.deepEqual(chainSegments(d, get).map(s => s.id), ['a', 'b', 'c', 'd']);
+  assert.equal(chainSegments(d, get).at(-1)?.archived, true);
+  // A detached edge is where one task ended and another began.
+  b.handover = { sourceId: 'a', detached: true };
+  assert.deepEqual(chainSegments(c, get).map(s => s.id), ['b', 'c']);
+  // A missing ancestor or a corrupt cycle stops the walk without hanging.
+  b.handover = { sourceId: 'gone' };
+  assert.deepEqual(chainSegments(c, get).map(s => s.id), ['b', 'c']);
+  a.handover = { sourceId: 'c' }; b.handover = { sourceId: 'a' };
+  assert.ok(chainSegments(a, get).length <= 3);
+  // The outline names the segments and marks the current one, capped at eight lines.
+  const many = Array.from({ length: 10 }, (_, i) => ({ id: `s${i}`, title: `段${i}`, updatedAt: '2026-11-16T00:00:00Z', archived: false, preview: null as string | null }));
+  const outline = chainOutlineText(many, 's9');
+  assert.match(outline, /共 10 段/);
+  assert.ok(outline.includes("还有 2 段未列出"), "the tail beyond the cap is counted, not listed");
+  assert.ok(outline.includes('（当前）'));
+  // The folded preview of a handover shows the task, never the protocol block.
+  const preview = handoverPreview(`# 接手\n\n你接手。\n\n工作目录 /work。\n\n${handoverChainBlock(outline)}\n\n## 进度（hub 从记录整理，可能不全）\n- 最近的要求：做统计`);
+  assert.ok(preview.includes('做统计'));
+  assert.ok(!preview.includes('接力链') && !preview.includes('calli history'));
+});
+
 test('a relay between accounts of the same agent keeps model and effort; across agent kinds it does not', async () => {
   const root = mkdtempSync(join(tmpdir(), 'calli-handover-model-'));
   const cwd = join(root, 'project'); mkdirSync(cwd);
@@ -332,9 +435,14 @@ test('a relay between accounts of the same agent keeps model and effort; across 
     { id: 'claude-1', adapter: 'claude', label: 'Claude Code', command: [process.execPath, fixture], env: { CLAUDE_CONFIG_DIR: one, FAKE_SESSION_ROOT: one } },
     { id: 'claude-2', adapter: 'claude', label: 'Claude Code', command: [process.execPath, fixture], env: { CLAUDE_CONFIG_DIR: two, FAKE_SESSION_ROOT: two } },
     { id: 'agy-x', adapter: 'agy', label: 'Antigravity', command: [process.execPath, fakeAgy], env: {} },
+    { id: 'claude-gw', adapter: 'claude', label: 'Claude Code', command: [process.execPath, fixture], env: { CLAUDE_CONFIG_DIR: two, FAKE_SESSION_ROOT: two } },
   ], null);
   const store = new Store(join(root, 'data'));
   const manager = new ThreadManager(store, registry.adapters, new Workdirs([cwd], null), new AttachmentStore(join(root, 'data')));
+  // A gateway account of the same agent serves a model the subscription accounts do not have.
+  const gateway = registry.adapters.get('claude-gw')!;
+  const own = gateway.models.bind(gateway);
+  gateway.models = async (refresh) => [...await own(refresh), { id: 'zcode/GLM-5.3', label: 'GLM-5.3' }];
   try {
     const source = await manager.createThread({ agent: 'claude-1', cwd, model: 'big', effort: 'high' });
     // Same agent, another account: the relay keeps what the thread was running.
@@ -348,5 +456,142 @@ test('a relay between accounts of the same agent keeps model and effort; across 
     // An explicit choice still wins over the inheritance.
     const pinned = await manager.createHandoverThread(source.id, 'claude-2', 'small');
     assert.equal(pinned.model, 'small');
+    // Same agent, but the target does not offer the model: it starts on its own default instead of failing.
+    const routed = await manager.createThread({ agent: 'claude-gw', cwd, model: 'zcode/GLM-5.3' });
+    const toPlan = await manager.createHandoverThread(routed.id, 'claude-1');
+    assert.equal(toPlan.model, null);
   } finally { await manager.shutdown(); store.close(); rmSync(root, { recursive: true, force: true }); }
+});
+
+test('a gateway plan running out switches the same thread to a separately billed model and resends the ask', async () => {
+  const { modelGateway } = await import('./fixtures/model-gateway.mjs');
+  const gateway = await modelGateway();
+  const root = mkdtempSync(join(tmpdir(), 'calli-gateway-switch-'));
+  let manager: ThreadManager | undefined;
+  try {
+    gateway.state.models = [
+      { id: 'zcode/GLM-5.3', display_name: 'zcode/GLM-5.3' },
+      { id: 'deepseek/deepseek-flash', display_name: 'deepseek/deepseek-flash' },
+    ];
+    const account = join(root, 'account');
+    mkdirSync(account);
+    writeFileSync(join(account, 'settings.json'), JSON.stringify({
+      env: { ANTHROPIC_BASE_URL: gateway.url, ANTHROPIC_AUTH_TOKEN: 'gateway-test-token', CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: '1' },
+      model: 'zcode/GLM-5.3',
+    }));
+    const selected = join(root, 'models-selected.log');
+    const registry = new AgentRegistry([{
+      id: 'magpie', adapter: 'claude', label: 'Claude Code', command: [process.execPath, fixture],
+      // The fake agent's catalog mirrors the gateway's: one plan model, one routed provider.
+      env: {
+        CLAUDE_CONFIG_DIR: account, ANTHROPIC_BASE_URL: gateway.url, CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: '1',
+        FAKE_ACP_MODELS: 'zcode/GLM-5.3|GLM-5.3,deepseek/deepseek-flash|DeepSeek-V4.1-Flash', FAKE_ACP_MODEL_SELECTION_LOG: selected,
+      },
+    }], null);
+    const store = new Store(join(root, 'data'));
+    const cwd = join(root, 'project'); mkdirSync(cwd);
+    manager = new ThreadManager(store, registry.adapters, new Workdirs([cwd], null), new AttachmentStore(join(root, 'data')), () => [{ id: 'magpie', adapter: 'claude' }]);
+    Object.defineProperty(manager.autoHandover, 'delayMs', { value: 80 });
+    const adapter = registry.adapters.get('magpie')!;
+    adapter.fetchQuota = () => Promise.resolve({ windows: [], checkedAt: new Date().toISOString() });
+
+    const thread = await manager.createThread({ agent: 'magpie', cwd, model: 'zcode/GLM-5.3' });
+    store.updateThread(thread.id, { permissionMode: 'full_access' });
+    // The order names the routed model, which the adapter's ids prove bills on its own provider.
+    manager.autoHandover.configure({ enabled: true, threshold: 90, orders: { magpie: [{ agent: 'magpie', model: 'deepseek/deepseek-flash' }] } });
+    assert.deepEqual(await manager.autoHandover.targets(thread.id), [{ agent: 'magpie', model: 'deepseek/deepseek-flash' }]);
+
+    await manager.startTurn(thread.id, { text: 'out of plan' });
+    const wait = async (check: () => unknown, timeout = 20_000) => {
+      const end = Date.now() + timeout;
+      while (!check()) { if (Date.now() > end) throw new Error('timed out'); await new Promise(r => setTimeout(r, 25)); }
+    };
+    await wait(() => manager.threadView(thread.id).status === 'idle' && !manager.autoHandover.held(thread.id));
+
+    // One conversation, on the other model now, the failed ask sent again and answered.
+    assert.equal(manager.listThreads().length, 1);
+    assert.equal(manager.getThread(thread.id).model, 'deepseek/deepseek-flash');
+    const turns = store.listTurns(thread.id);
+    assert.equal(turns.length, 2);
+    assert.equal(store.listEvents(thread.id, 0, -1).filter(e => e.type === 'turn.error').length, 1);
+    const switched = store.listEvents(thread.id, 0, -1).find(e => e.type === 'handover.model');
+    assert.deepEqual({ model: switched?.data.model, previous: switched?.data.previous, reason: switched?.data.reason },
+      { model: 'deepseek/deepseek-flash', previous: 'zcode/GLM-5.3', reason: 'exhausted' });
+    // The agent really ran the resend on the routed model, not only had its name changed.
+    assert.deepEqual(readFileSync(selected, 'utf8').trim().split('\n'), ['zcode/GLM-5.3', 'deepseek/deepseek-flash']);
+  } finally {
+    await manager?.shutdown().catch(() => undefined);
+    await gateway.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a fork can carry the whole conversation to another agent, keeping the way back along the chain', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'calli-fork-across-'));
+  const store = new Store(root);
+  const registry = new AgentRegistry(['claude-1', 'claude-2'].map((id, i) => ({
+    id, adapter: 'claude', label: `Claude ${i + 1}`, command: [process.execPath, fixture],
+    env: { CLAUDE_CONFIG_DIR: join(root, id), FAKE_SESSION_ROOT: join(root, id), FAKE_ACP_SESSION: `fork-session-${i + 1}` },
+  })), null);
+  const manager = new ThreadManager(store, registry.adapters, new Workdirs([root], null), new AttachmentStore(root),
+    () => [{ id: 'claude-1', adapter: 'claude' }, { id: 'claude-2', adapter: 'claude' }]);
+  const settle = async (id: string) => { for (let n = 0; n < 300 && manager.getThread(id).status === 'running'; n++) await new Promise(r => setTimeout(r, 20)); };
+  try {
+    // A relay chain: the original's conversation exists, its successor went on with a turn of its own.
+    const original = await manager.createThread({ agent: 'claude-1', cwd: root, title: '周报统计' });
+    await manager.startTurn(original.id, { text: '第一版数据' });
+    await settle(original.id);
+    const successor = await manager.createHandoverThread(original.id, 'claude-2', undefined, 'branch');
+    await manager.startTurn(successor.id, { text: '第二版接着改' });
+    await settle(successor.id);
+
+    // To another agent: the whole conversation is copied into its account, and the copy stays
+    // reachable to the chain it came from.
+    const across = await manager.forkThread(successor.id, { agent: 'claude-1' });
+    assert.equal(across.agent, 'claude-1');
+    assert.ok(across.agentSessionId && across.agentSessionId !== successor.agentSessionId, 'its own session in the other account');
+    assert.equal(across.title, '周报统计（接手）（分叉）');
+    assert.deepEqual({ ...(across.handover ? { sourceId: across.handover.sourceId, mode: across.handover.mode, method: across.handover.method } : {}) },
+      { sourceId: successor.id, mode: 'branch', method: 'resume' }, 'the fork keeps the way back along the chain');
+    assert.equal(across.forkedFrom, successor.id);
+    // A turn of arrival cannot be picked when the conversation changes accounts.
+    await assert.rejects(manager.forkThread(successor.id, { agent: 'claude-1', turnId: 'none' }), /whole conversation/);
+    await assert.rejects(manager.forkThread(successor.id, { agent: 'missing' }), /cannot be copied/);
+
+    // To the same agent: the old path, and a fork from a chain member is linked in as well.
+    const local = await manager.forkThread(successor.id);
+    assert.equal(local.agent, 'claude-2');
+    assert.equal(local.handover?.sourceId, successor.id);
+    // A fork of a chain's root carries no link of its own: nothing came before it.
+    const rootFork = await manager.forkThread(original.id);
+    assert.equal(rootFork.handover ?? null, null);
+    assert.equal(rootFork.forkedFrom, original.id);
+  } finally { await manager.shutdown(); store.close(); rmSync(root, { recursive: true, force: true }); }
+});
+
+test('a handover made by hand takes the collaboration seat with it unless told not to', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'calli-handover-team-'));
+  const store = new Store(root);
+  const registry = new AgentRegistry(['claude-1', 'claude-2'].map(id => ({
+    id, adapter: 'claude', label: id, command: [process.execPath, fixture],
+    env: { CLAUDE_CONFIG_DIR: join(root, id), FAKE_SESSION_ROOT: join(root, id), FAKE_ACP_SESSION: `team-${id}` },
+  })), null);
+  const manager = new ThreadManager(store, registry.adapters, new Workdirs([root], null), new AttachmentStore(root));
+  const coordination = new CoordinationManager(store, manager, join(root, 'coordination.sock'), {
+    exchangeRoot: join(root, 'exchange'), resultDir: join(root, 'data', 'coordination', 'files'),
+  });
+  manager.coordination = coordination;
+  try {
+    const lead = await manager.createThread({ agent: 'claude-1', cwd: root, title: '带团队的任务' });
+    await coordination.enable(lead.id);
+    const next = await manager.createHandoverThread(lead.id, 'claude-2', undefined, 'branch');
+    assert.equal(coordination.metadata(lead.id)?.retired, true, 'the source retires its seat');
+    assert.equal(coordination.metadata(next.id)?.rootId, next.id, 'the successor leads the team');
+    // A refusal keeps the team where it was.
+    const lead2 = await manager.createThread({ agent: 'claude-1', cwd: root, title: '不带团队的任务' });
+    await coordination.enable(lead2.id);
+    const next2 = await manager.createHandoverThread(lead2.id, 'claude-2', undefined, 'branch', undefined, false);
+    assert.equal(coordination.metadata(lead2.id)?.rootId, lead2.id, 'the team stays with the source');
+    assert.equal(coordination.metadata(next2.id), undefined, 'the successor is a plain conversation');
+  } finally { coordination.dispose(); await manager.shutdown(); store.close(); rmSync(root, { recursive: true, force: true }); }
 });

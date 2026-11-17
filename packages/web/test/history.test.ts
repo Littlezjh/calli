@@ -83,7 +83,10 @@ test('projected completed histories have the same visible answers, boundaries, s
       add(ending, ending === 'turn.error' ? 'turn.error' : 'turn.done', ending === 'cancelled' ? { stopReason: 'cancelled' } : { message: 'failure' });
     }
     const raw = buildTimeline(store.listEvents('th'));
-    const page = await store.history.page('th');
+    // A thread opens on its last two turns; the page before it holds the rest.
+    const newest = await store.history.page('th');
+    const before = await store.history.page('th', newest.nextCursor!);
+    const page = { ...newest, events: [...before.events, ...newest.events] };
     const light = buildTimeline(page.events);
     assert.deepEqual(visible(light.items), visible(raw.items));
     const backlog = await store.history.since('th', 0);

@@ -2,16 +2,19 @@ import { referencePreview, splitReferences, withReferences } from '../context-re
 import { ReferenceChips } from './ContextReferences';
 import { MessageActionButton, MessageMore, PointMessageMenu, SelectMessage, useMessageGestures, type MessageAction } from './MessageActions';
 import { channelRows, hydrateHistoryFiles } from '../timeline';
+import { advanceStatus } from '../advance';
 import { ApiError, type Api } from '../api';
 import { hydrateWork, HistoryClient, type HistoryDetail, type HistoryWork, type ResourceKind, type WorkFiles } from '../history';
-import { Children, createContext, Fragment, isValidElement, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type KeyboardEvent, type ReactNode } from 'react';
+import { Children, createContext, Fragment, isValidElement, memo, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type KeyboardEvent, type ReactNode } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { trimAutolinkJunk } from '../markdown-links';
+import { threadLinkIndex, threadMentions, trimAutolinkJunk, type ThreadLinkIndex } from '../markdown-links';
 import { placeImages, stripPaths } from '../image-places';
 import { highlightLanguage, languageName } from '../code-language';
 import { enlargeMermaidDiagram, renderMermaidDiagram } from '../mermaid';
-import { copyText } from '../clipboard';
+import { copyRich, copyText, quoteMarkdown, rememberCopiedQuote } from '../clipboard';
+import { flushSync } from 'react-dom';
+import { createRoot } from 'react-dom/client';
 import { diffLines, numberLines } from '../diff';
 import { pictureUrl, svgPicture } from '../images';
 import { SentVideo } from './VideoPreview';
@@ -55,7 +58,7 @@ import {
 import { VoiceCloud } from './VoiceOrb';
 import { Lightbox } from './Lightbox';
 import { PlanCopyButton, PlanDownloadButton } from './plan-tools';
-import { IconBell, ActivityIcon, IconArrowRight, IconCheck, IconChevron, IconClose, IconCompact, IconCopy, IconEdit, IconExternal, IconFile, IconFork, IconHand, IconHandover, IconPaperclip, IconQuote, IconRead, IconSparkle, IconTray, IconWorktree } from './icons';
+import { IconBell, ActivityIcon, IconArrowRight, IconCheck, IconChevron, IconClipboard, IconClose, IconCompact, IconCopy, IconEdit, IconExternal, IconFile, IconFork, IconHand, IconHandover, IconPaperclip, IconQuote, IconRead, IconSparkle, IconTray, IconWorktree } from './icons';
 import { t } from '../i18n';
 
 // The daemon's confirmation marker is replaced by the localized notice label.
@@ -92,6 +95,8 @@ interface Props {
   onQuote?: (text: string, turnId: string, threadId?: string) => void;
   onMessageContext?: (text: string, turnId: string, threadId?: string) => Promise<void>;
   onHandToAssistant?: (text: string, turnId: string, threadId?: string) => Promise<void>;
+  /** Hands the whole thread to another agent, offered last in a message's menu. */
+  onAutoHandover?: () => void;
   /**
    * When the last turn failed because the agent's plan ran out: hand the thread to another agent.
    * `label` names the quota-aware one-click target when one is available; `choose` opens the handover to pick another.
@@ -102,6 +107,14 @@ interface Props {
    * continue with the same agent. `armed` mirrors the daemon's watch; `onArm`/`onCancel` toggle it.
    */
   resume?: { armed: boolean; resetsAt?: string | null; onArm: () => void; onCancel: () => void; busy?: boolean; error?: string } | null;
+  /**
+   * When the last turn failed on a transient provider error: the daemon resends the ask by
+   * itself, a few times with spacing. `attempts` counts the ones made, `nextAt` when the next
+   * one is due; `onCancel` is the person's stop on the error card.
+   */
+  autoRetry?: { attempts: number; max: number; nextAt: string; onCancel: () => void; busy?: boolean } | null;
+  /** The daemon advancing this thread by itself: the quiet line under the last turn, with its cancel. */
+  advance?: { reason: 'wait' | 'continue'; attempts: number; max: number; nextAt: string; what?: string; onCancel: () => void; busy?: boolean } | null;
   /** The agent can end a copy at any finished turn, so every answer gets the button, not only the last. */
   forkAnyTurn?: boolean;
   /**
@@ -118,6 +131,14 @@ interface Props {
   memberThreadId?: (name: string) => string | null;
   /** Opens a member's thread, resolved above, as the person's own navigation would. */
   onOpenMemberThread?: (threadId: string) => void;
+  /**
+   * The threads a message may name in passing (a corner-bracketed title with a short id after
+   * it, or a whole id): enough to turn such mentions into jump links. Absent where nothing can
+   * be opened (a peek, a panel).
+   */
+  threads?: Array<{ id: string; title: string }>;
+  /** Opens the thread such a mention names, as the person's own navigation would. */
+  onOpenThread?: (threadId: string) => void;
   /** The history this view was built from; an edit is sent against it. */
   revision?: number;
 }
@@ -130,17 +151,19 @@ const RECENT_TURNS = 30;
 /** Scrolling up to within this distance of the top unfolds or fetches the earlier turns. */
 const NEAR_TOP_PX = 600;
 
-export function ThreadView({ onOpenFinds, chain = false, observeOlder = true, beforeItems, olderLabel, olderError, revealTurnId, historyApi, historyThreadId, items: originalItems, roots, loadImage, loadFile, onOpenFile, onPreview, hasOlder, loadingOlder, onLoadOlder, onFork, onQuote, onMessageContext, onHandToAssistant, forkAnyTurn, onEdit, revision = 0, takeover, resume, memberThreadId, onOpenMemberThread }: Props) {
+export function ThreadView({ onOpenFinds, chain = false, observeOlder = true, beforeItems, olderLabel, olderError, revealTurnId, historyApi, historyThreadId, items: originalItems, roots, loadImage, loadFile, onOpenFile, onPreview, hasOlder, loadingOlder, onLoadOlder, onFork, onQuote, onMessageContext, onHandToAssistant, onAutoHandover, forkAnyTurn, onEdit, revision = 0, takeover, resume, autoRetry, advance, memberThreadId, onOpenMemberThread, threads, onOpenThread }: Props) {
   const [selection, setSelection] = useState<{ text: string; turnId: string } | null>(null);
   const [contextMenu, setContextMenu] = useState<{ text: string; turnId: string; element: HTMLElement; x: number; y: number; nonce: number } | null>(null);
   useEffect(() => { setSelection(null); setContextMenu(null); }, [historyThreadId]);
   const actionsFor = (text: string, turnId: string, element?: HTMLElement): MessageAction[] => [
     { key: 'copy', label: t('view.copyAnswer'), icon: IconCopy, run: async () => { if (!await copyText(text)) throw new Error(t('view.copyFailed')); } },
+    { key: 'copyQuote', label: t('view.copyQuote'), icon: IconClipboard, run: async () => { if (!await copyRich(quoteMarkdown(text), quoteHtml(text))) throw new Error(t('view.copyFailed')); rememberCopiedQuote({ text, turnId, ...(historyThreadId ? { threadId: historyThreadId } : {}) }); } },
     ...(onQuote ? [{ key: 'quote', label: t('references.quote'), icon: IconQuote, run: () => onQuote(text, turnId, historyThreadId) }] : []),
     ...(onHandToAssistant ? [{ key: 'assistant', label: t('messageActions.assistant'), icon: IconSparkle, run: () => onHandToAssistant(text, turnId, historyThreadId) }] : []),
     ...(onMessageContext ? [{ key: 'context', label: t('messageActions.context'), icon: IconPaperclip, run: () => onMessageContext(text, turnId, historyThreadId) }] : []),
     { key: 'select', label: t('messageActions.select'), icon: IconRead, run: () => setSelection({ text, turnId }) },
     ...(element?.querySelector('.message-edit-btn') ? [{ key: 'edit', label: t('view.editMessage'), icon: IconEdit, run: () => element.querySelector<HTMLButtonElement>('.message-edit-btn')?.click() }] : []),
+    ...(onAutoHandover ? [{ key: 'handover', label: t('takeover.title'), icon: IconHand, run: onAutoHandover }] : []),
   ];
   const gestures = useMessageGestures((element, x, y) => {
     const item = originalItems.find(item => item.key === element.dataset.messageKey);
@@ -150,6 +173,10 @@ export function ThreadView({ onOpenFinds, chain = false, observeOlder = true, be
     setContextMenu({ text, turnId: item.turnId, element, x, y, nonce: Date.now() });
   });
   const [loadedFiles, setLoadedFiles] = useState<{ client?: HistoryClient; files: Map<string, WorkFiles> }>({ files: new Map() });
+  // The thread list changes as threads come and go; the index built from it keeps a stable shape,
+  // so parsed messages are not parsed again for every unrelated refresh.
+  const threadLinks = useMemo(() => (threads?.length ? threadLinkIndex(threads) : null), [threads]);
+  const jump = useMemo(() => (onOpenThread ? { open: onOpenThread } : null), [onOpenThread]);
   const historyClient = useMemo(() => {
     if (!historyApi || !historyThreadId) return undefined;
     const client = new HistoryClient(historyApi, historyThreadId, (ref, work) => {
@@ -294,6 +321,7 @@ export function ThreadView({ onOpenFinds, chain = false, observeOlder = true, be
         }
         case 'model-switch': return <div key={item.key} className="context-compaction handover-divider">{t('auto.switched', item.model, item.previous, t(item.reason === 'exhausted' ? 'auto.exhausted' : 'auto.near'))}</div>;
         case 'quota-resume': return <div key={item.key} className="context-compaction handover-divider">{t('auto.resumed')}</div>;
+        case 'turn-retry': return <div key={item.key} className="context-compaction handover-divider">{t('auto.retried', item.attempt, item.max)}</div>;
         case 'user': {
           if (item.handoverCollapsed) return null;
           // Nobody wrote this turn: the agent picked up work on its own, e.g. a finished background task.
@@ -375,7 +403,7 @@ export function ThreadView({ onOpenFinds, chain = false, observeOlder = true, be
           return <ProposalCard key={item.key} text={item.text} streaming={!item.done} />;
         case 'assistant':
           if (!item.text) return null;
-          return <AssistantMessage key={item.key} messageKey={item.key} text={item.text} done={item.done} roots={roots} loadFile={loadFile} onOpen={show} />;
+          return <AssistantMessage key={item.key} messageKey={item.key} text={item.text} done={item.done} roots={roots} loadFile={loadFile} onOpen={show} threadLinks={threadLinks} />;
         case 'plan':
           return <PlanCard key={item.key} item={item} />;
         case 'work':
@@ -422,34 +450,26 @@ export function ThreadView({ onOpenFinds, chain = false, observeOlder = true, be
         case 'error': {
           // The current writer conflict owns the composer; older conflicts remain quiet history.
           if (item.sessionInUse) return item === items[items.length - 1] ? null : <div key={item.key} className="row session-in-use-history">{item.message}</div>;
-          // A plan that ran out is a system line, like the fork mark: centered between hairlines,
-          // no box. The conclusion leads, the agent's raw words shrink to one faint line, and every
-          // way on is a text link.
-          if (item.planExhausted) return (
-            <div key={item.key} className="row exhausted-note" role="alert">
-              <div className="exhausted-line">{t('timeline.error.planExhaustedTitle')}</div>
-              {item.detail && <div className="exhausted-sub" title={item.detail}>{item.detail}</div>}
-              {item === items[items.length - 1] && (takeover || resume) && <div className="exhausted-actions">
-                  {takeover?.go && takeover.label && <button className="exhausted-hand" onClick={takeover.go} disabled={takeover.busy}>
-                    {takeover.busy ? t('view.handingOver') : t('view.handTo', takeover.label)}
-                    <IconArrowRight size={14} />
-                  </button>}
-                  {takeover && <button className="exhausted-quiet" onClick={takeover.choose} disabled={takeover.busy}>{t('view.chooseOtherShort')}</button>}
-                  {resume && !resume.armed && <button className="exhausted-quiet" onClick={resume.onArm} disabled={resume.busy}>{t('view.resumeArm')}</button>}
-                  {resume?.armed && <>
-                    <span role="status">{resume.resetsAt ? t('view.resumeArmedAt', resetClock(resume.resetsAt)) : t('view.resumeArmedAny')}</span>
-                    <button className="exhausted-quiet" onClick={resume.onCancel} disabled={resume.busy}>{t('view.resumeCancel')}</button>
-                  </>}
-                  {resume?.error && <small className="exhausted-error">{resume.error}</small>}
-                </div>}
-            </div>
-          );
           return (
-            <div key={item.key} className="row">
-              <div className="error-box">
-                {item.message}
-              </div>
-            </div>
+            <ErrorNotice key={item.key} item={item}>
+              {item.planExhausted && item === items[items.length - 1] && (takeover || resume) && <div className="exhausted-actions">
+                {takeover?.go && takeover.label && <button className="exhausted-hand" onClick={takeover.go} disabled={takeover.busy}>
+                  {takeover.busy ? t('view.handingOver') : t('view.handTo', takeover.label)}
+                  <IconArrowRight size={14} />
+                </button>}
+                {takeover && <button className="exhausted-quiet" onClick={takeover.choose} disabled={takeover.busy}>{t('view.chooseOtherShort')}</button>}
+                {resume && !resume.armed && <button className="exhausted-quiet" onClick={resume.onArm} disabled={resume.busy}>{t('view.resumeArm')}</button>}
+                {resume?.armed && <>
+                  <span role="status">{resume.resetsAt ? t('view.resumeArmedAt', resetClock(resume.resetsAt)) : t('view.resumeArmedAny')}</span>
+                  <button className="exhausted-quiet" onClick={resume.onCancel} disabled={resume.busy}>{t('view.resumeCancel')}</button>
+                </>}
+                {resume?.error && <small className="exhausted-error">{resume.error}</small>}
+              </div>}
+              {autoRetry && item === items[items.length - 1] && <div className="error-retry">
+                <span role="status">{t('view.autoRetryStatus', autoRetry.attempts + 1, autoRetry.max, resetClock(autoRetry.nextAt))}</span>
+                <button onClick={autoRetry.onCancel} disabled={autoRetry.busy}>{t('view.autoRetryCancel')}</button>
+              </div>}
+            </ErrorNotice>
           );
         }
         case 'fork':
@@ -468,6 +488,7 @@ export function ThreadView({ onOpenFinds, chain = false, observeOlder = true, be
   return (
     <div className="thread" ref={threadRef} {...gestures}>
       <HistoryContext.Provider key={historyClient?.identity ?? historyThreadId} value={historyClient}>
+      <ThreadJump.Provider value={jump}>
       <Pictures.Provider value={pictures}>
         {/* Scrolling up loads these on its own; the buttons stay for keyboards and screen readers. */}
         {folded && (
@@ -491,7 +512,12 @@ export function ThreadView({ onOpenFinds, chain = false, observeOlder = true, be
         )}
         {beforeItems}
         {shown.map((g) => renderItems(g.items))}
+        {advance && <div className="advance-line">
+          <span role="status">{advanceStatus(advance)}</span>
+          <button onClick={advance.onCancel} disabled={advance.busy}>{t('view.advanceCancel')}</button>
+        </div>}
       </Pictures.Provider>
+      </ThreadJump.Provider>
       </HistoryContext.Provider>
       {lightbox && <Lightbox url={lightbox.url} name={lightbox.name} onClose={closeLightbox} />}
       {contextMenu && <PointMessageMenu key={contextMenu.nonce} point={contextMenu} actions={actionsFor(contextMenu.text, contextMenu.turnId, contextMenu.element)} />}
@@ -501,6 +527,27 @@ export function ThreadView({ onOpenFinds, chain = false, observeOlder = true, be
 }
 
 const HistoryContext = createContext<HistoryClient | undefined>(undefined);
+
+/** The same quiet failure notice in threads, assistant chats and collaboration history. */
+function ErrorNotice({ item, children }: { item: Extract<Item, { kind: 'error' }>; children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const id = useId();
+  return <div className={`row${item.planExhausted ? ' exhausted-note' : ''}`}>
+    <div className="error-box">
+      <div className="error-heading">
+        <span role="alert">{item.summary ?? t(item.planExhausted ? 'timeline.error.planExhaustedTitle' : 'timeline.error.failedTitle')}</span>
+        <button className="error-toggle" aria-expanded={open} aria-controls={id} onClick={() => setOpen(value => !value)}>
+          {t(open ? 'timeline.error.hideDetails' : 'timeline.error.showDetails')}
+        </button>
+      </div>
+      <div id={id} hidden={!open} className="error-detail">{open && <>
+        <div>{item.message}</div>
+        {item.detail && !item.message.includes(item.detail) && <div>{item.detail}</div>}
+      </>}</div>
+      {children}
+    </div>
+  </div>;
+}
 
 /** A quota reset time as a short local note: "17:00" today, "10/12 17:00" later. Empty when unknown. */
 function resetClock(iso: string | null | undefined, now = new Date()): string {
@@ -899,6 +946,13 @@ const Pictures = createContext<{
 } | null>(null);
 
 /**
+ * How a link in an answer opens another thread: the person's own navigation, the same as picking
+ * it in the list. Reaches `MarkdownLink` through context for the same reason `Pictures` does.
+ * Where nothing was wired (a peek, a panel), a thread link shows as its plain text.
+ */
+const ThreadJump = createContext<{ open: (threadId: string) => void } | null>(null);
+
+/**
  * A link in an answer. One to the web opens in a tab of its own, so the hub stays where it is.
  * One to a file is on the agent's host, where the browser cannot follow: a picture opens at full
  * size, anything else in the file viewer. A file the thread cannot show gives its path to the
@@ -906,6 +960,7 @@ const Pictures = createContext<{
  */
 function MarkdownLink({ href, title, children }: { href?: string; title?: string; children?: ReactNode }) {
   const pictures = useContext(Pictures);
+  const jump = useContext(ThreadJump);
   const [note, setNote] = useState<string | null>(null);
   useEffect(() => {
     if (!note) return;
@@ -922,6 +977,26 @@ function MarkdownLink({ href, title, children }: { href?: string; title?: string
     );
   }
   if (target.kind === 'anchor') return <a href={href}>{children}</a>;
+  if (target.kind === 'thread') {
+    if (!jump) return <>{children}</>;
+    const open = () => jump.open(target.id);
+    return (
+      <a
+        className="thread-link"
+        role="button"
+        tabIndex={0}
+        title={title ?? t('view.openThread')}
+        onClick={open}
+        onKeyDown={(e: KeyboardEvent) => {
+          if (e.key !== 'Enter' && e.key !== ' ') return;
+          e.preventDefault();
+          open();
+        }}
+      >
+        {children}
+      </a>
+    );
+  }
   if (target.kind === 'none') return <>{children}</>;
 
   const { path } = target;
@@ -996,6 +1071,19 @@ function BreakableCode({ children, ...props }: ComponentProps<'code'>) {
 
 const MARKDOWN_COMPONENTS = { pre: CodeBlock, img: MarkdownImage, a: MarkdownLink, div: MarkdownDiv, code: BreakableCode };
 const MARKDOWN_PLUGINS = [remarkGfm, trimAutolinkJunk];
+
+/**
+ * A message as a block quote for another app's editor. Plain Markdown, none of this page's own
+ * blocks (copy buttons, highlighting, previews), drawn synchronously so the copy keeps the click.
+ */
+function quoteHtml(text: string): string {
+  const box = document.createElement('div');
+  const root = createRoot(box);
+  flushSync(() => root.render(<Markdown remarkPlugins={[remarkGfm]}>{text.trim()}</Markdown>));
+  const html = box.innerHTML;
+  root.unmount();
+  return `<blockquote style="margin:0;padding-left:12px;border-left:3px solid #d0d7de">${html}</blockquote>`;
+}
 /**
  * Markdown drops addresses it does not know, `file://` among them, leaving a link that reloads
  * the page. Every address is kept instead: links and images are drawn by the components above,
@@ -1010,18 +1098,22 @@ interface AssistantProps {
   roots: string[];
   loadFile: (path: string) => Promise<Blob>;
   onOpen: (url: string, name?: string) => void;
+  /** Names of the other threads this message may cite; `null` where none can be linked. */
+  threadLinks?: ThreadLinkIndex | null;
 }
 
 /**
  * Parsing Markdown is the costly part of rendering a thread, and every streamed event re-renders
  * the list. Memoising on the props means only the message being written is parsed again.
  */
-const AssistantMessage = memo(function AssistantMessage({ text, done, roots, loadFile, onOpen, messageKey }: AssistantProps) {
+const AssistantMessage = memo(function AssistantMessage({ text, done, roots, loadFile, onOpen, messageKey, threadLinks }: AssistantProps) {
   // Looked for once the message is complete: a path that is still being typed would not be found.
   const plugins = useMemo(() => {
+    const mentions = threadLinks ? threadMentions(threadLinks) : null;
     const places = done ? imagePlaces(text, roots) : [];
-    return places.length ? [...MARKDOWN_PLUGINS, placeImages(places)] : MARKDOWN_PLUGINS;
-  }, [done, text, roots]);
+    const list = mentions ? [...MARKDOWN_PLUGINS, mentions] : MARKDOWN_PLUGINS;
+    return places.length ? [...list, placeImages(places)] : list;
+  }, [done, text, roots, threadLinks]);
   const images = useMemo(() => ({ roots, load: loadFile, onOpen }), [roots, loadFile, onOpen]);
   return (
     <div className="row assistant" data-message-key={messageKey}>
@@ -1130,7 +1222,6 @@ function FileImage({ path, roots, load, onOpen }: { path: string; roots: string[
       <button type="button" onClick={() => onOpen(url, path)} aria-label={t('view.enlargePath', path)}>
         <img src={url} alt={path} />
       </button>
-      <figcaption title={path}>{relativePath(path, roots)}</figcaption>
     </figure>
   );
 }
@@ -1188,7 +1279,9 @@ function questionTrace(item: Extract<Item, { kind: 'input' }>): Trace {
   }
   const parts = item.questions.map((q) => {
     const said = (answer.answers[q.id] ?? []).map((value) => q.options.find((o) => o.value === value)?.label ?? value).join(' · ');
-    return `${q.header || q.question}：${said}`;
+    // The choice's own free-text line reads as part of the same answer, not a question of its own.
+    const note = q.note ? (answer.answers[q.note.id] ?? [])[0] : undefined;
+    return `${q.header || q.question}：${note && said ? `${said} · ${note}` : note ?? said}`;
   });
   return { icon: 'check', text: t('trace.answered', parts) };
 }

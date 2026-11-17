@@ -270,3 +270,48 @@ test('stage: a waiting thread and a matter waiting on the person are answer; wai
     assert.equal(await h.stageOf(newest), 'idle', 'only the most recently active thread decides');
   } finally { await h.close(); }
 });
+
+test('dispatch results reach the Router with or without a matter, with progress kept in chat', async () => {
+  const h = await setup(); try {
+    for (const [task, stage, linked] of [['dispatch-worker-progress', 'progress', false], ['dispatch-worker-review', 'review', false], ['dispatch-worker-answer', 'answer', true], ['dispatch work fail', 'blocked', false]] as const) {
+      const matter = linked ? h.personal.create({ text: '派发事项' }) : null;
+      const run = h.personal.proactive.proposeDispatch({ agent: 'pi', cwd: h.cwd, task, title: task, matterId: matter?.id ?? '' });
+      const count = h.routerTurns().length;
+      const started = await h.personal.proactive.startDispatch(run.id);
+      await settle(() => h.routerTurns().length === count + 1);
+      const turn = h.routerTurns().at(-1)!;
+      const data = reported(turn.data.text);
+      assert.equal(data.threadId, started.threadId); assert.equal(data.matterId, matter?.id ?? ''); assert.equal(data.stage, stage);
+      assert.equal(data.title, matter?.text ?? task);
+      assert.doesNotMatch(String(turn.data.text), /^<calli-context>\n/);
+      assert.equal(turn.data.personalOrigin, undefined);
+      if (stage === 'answer') assert.equal(data.question, '请选择 A 还是 B？');
+      if (stage === 'blocked') assert.equal(data.pushed, true);
+      await settle(() => h.personal.router.status().status === 'idle');
+      const notices = h.store.listTurnEvents(turn.threadId, turn.turnId!).filter(event => event.type === 'agent.notice');
+      assert.equal(notices.length, stage === 'review' || stage === 'answer' ? 1 : 0);
+      await assert.rejects(h.personal.command(turn.threadId, { op: 'dispatch', agent: 'pi', cwd: h.cwd, task: 'Unrequested task', now: true }), /current turn/);
+    }
+  } finally { await h.close(); }
+});
+
+test('threads say from fixture CLI queues and reports exactly the requested round once', async () => {
+  const h = await setup(); try {
+    const target = await h.manager.createThread({ agent: 'pi', cwd: h.cwd, title: 'Existing work' });
+    await h.manager.startTurn(target.id, { text: 'slow' });
+    const first = h.store.recentLifecycle(target.id, 1)[0].turnId;
+    await h.personal.router.say({ text: `router-fixture-say ${JSON.stringify({ id: target.id, text: 'inspect existing work' })}` });
+    await settle(() => h.manager.threadView(target.id).queued.length === 1);
+    assert.equal(h.routerTurns().filter(turn => turn.data.channel).length, 0, 'the preceding round has not reported');
+    await h.manager.cancelTurn(target.id, { keepQueue: true });
+    await settle(() => h.routerTurns().some(turn => (turn.data.channel as { kind?: string })?.kind === 'worker'));
+    const starts = h.store.listEventsOfType(target.id, 'turn.started');
+    assert.equal(starts.length, 2); assert.equal(starts[0].turnId, first);
+    assert.equal(starts[0].data.assistantSay, undefined); assert.equal(typeof starts[1].data.assistantSay, 'string');
+    const report = h.routerTurns().find(turn => (turn.data.channel as { kind?: string })?.kind === 'worker')!;
+    assert.equal(reported(report.data.text).threadId, target.id);
+    assert.equal(reported(report.data.text).stage, 'progress');
+    await h.turn(target.id, 'ordinary later round'); await h.quiet();
+    assert.equal(h.routerTurns().filter(turn => (turn.data.channel as { kind?: string })?.kind === 'worker').length, 1);
+  } finally { await h.close(); }
+});

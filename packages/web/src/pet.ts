@@ -19,6 +19,8 @@ export interface PetThreadLike {
   failure?: { code: string | null; message: string; at: string } | null;
   handover?: { sourceId: string } | null;
   autoHandover?: { resume?: { resetsAt: string | null } | null };
+  /** The daemon retrying a transient failure by itself; missing from older daemons. */
+  autoRetry?: { attempts: number; max: number; nextAt: string } | null;
   report?: { note: string } | null;
   coordination?: { team?: { status: TeamStatus; error?: string } } | null;
 }
@@ -43,7 +45,7 @@ export function petThreadState(thread: PetThreadLike, now = Date.now()): PetThre
   if (thread.doneAt) return 'idle';
   if (team === 'needs_attention') return 'failed';
   if (thread.status === 'error') {
-    if (thread.autoHandover?.resume) return 'parked';
+    if (thread.autoHandover?.resume || thread.autoRetry) return 'parked';
     const at = Date.parse(thread.failure?.at ?? thread.updatedAt);
     return now - at > PET_STALE_MS ? 'stale' : 'failed';
   }
@@ -98,7 +100,7 @@ export function petAdvice(thread: PetThreadLike, now = Date.now()): PetAdvice {
     if (thread.waitingReason === 'plan') return { why: t('pet.why.plan'), step: 'open', label: t('pet.step.readPlan') };
     return { why: t('pet.why.confirm'), step: 'open', label: t('pet.step.confirm') };
   }
-  if (state === 'parked') return { why: t('pet.why.parked'), step: 'open', label: t('pet.goSee') };
+  if (state === 'parked') return { why: thread.autoRetry ? t('pet.why.retrying') : t('pet.why.parked'), step: 'open', label: t('pet.goSee') };
   if (state === 'failed' || state === 'stale') {
     if (team?.status === 'needs_attention' && thread.status !== 'error') {
       return { why: team.error ? petFailureLine(team.error) : t('pet.why.team'), step: 'open', label: t('pet.goSee') };

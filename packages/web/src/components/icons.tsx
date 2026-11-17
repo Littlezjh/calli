@@ -127,11 +127,62 @@ export const IconKeyboard = (p: { size?: number }) => (
     <path d="M6.5 10h.01M10 10h.01M13.5 10h.01M17 10h.01M8 14h8" />
   </Svg>
 );
+// The remote desktop's controls on a touch screen, drawn after Codex's: rounder and bolder than
+// the rest, since they float over a picture.
+/** A laptop: the machine whose desktop is shown. */
+export const IconLaptop = (p: { size?: number }) => (
+  <Svg {...p}>
+    <rect x="4.5" y="4.5" width="15" height="11" rx="2" />
+    <rect x="2.5" y="15.5" width="19" height="4" rx="1.6" />
+  </Svg>
+);
+/** A keyboard: two rows of keys over a space bar. */
+export const IconKeys = (p: { size?: number }) => (
+  <Svg {...p}>
+    <rect x="2.5" y="5" width="19" height="14" rx="3.5" />
+    <path d="M7 9.2h.01M10.3 9.2h.01M13.7 9.2h.01M17 9.2h.01M8.6 12.3h.01M12 12.3h.01M15.4 12.3h.01" strokeWidth={2.4} />
+    <path d="M8 15.6h8" />
+  </Svg>
+);
+/** Copy: two squares, the front one tilted over the one behind. */
+export const IconCopyStack = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M17.6 8.3l.3.04a2.8 2.8 0 0 1 2.4 3.1l-.8 6.4a2.8 2.8 0 0 1-3.1 2.4l-6.3-.8a2.8 2.8 0 0 1-2.4-2.5" />
+    <rect x="3.7" y="3.7" width="12.6" height="12.6" rx="3" transform="rotate(-5 10 10)" />
+  </Svg>
+);
+/** Paste: a clipboard with a short list on it. */
+export const IconPasteList = (p: { size?: number }) => (
+  <Svg {...p}>
+    <rect x="5" y="4.5" width="14" height="17" rx="3" />
+    <rect x="9" y="2.5" width="6" height="3.5" rx="1.2" />
+    <path d="M9 11h.01M9 15.5h.01" strokeWidth={2.6} />
+    <path d="M12 11h3.2M12 15.5h3.2" />
+  </Svg>
+);
+/** Back and forward: tall, thin chevrons. */
+export const IconPrev = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M15 4.5L7.5 12l7.5 7.5" />
+  </Svg>
+);
+export const IconNext = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M9 4.5l7.5 7.5L9 19.5" />
+  </Svg>
+);
 /** A pointer: taking control of the desktop's mouse and keyboard. */
 export const IconPointer = (p: { size?: number }) => (
   <Svg {...p}>
     <path d="M5 3.5l13 6.5-5.5 1.8L10.7 17.5z" />
     <path d="M12.6 11.9l4.6 4.6" />
+  </Svg>
+);
+/** An eye: looking without touching. */
+export const IconEye = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M2.5 12s3.5-6.5 9.5-6.5 9.5 6.5 9.5 6.5-3.5 6.5-9.5 6.5S2.5 12 2.5 12z" />
+    <circle cx="12" cy="12" r="2.8" />
   </Svg>
 );
 /** A touchpad: the phone's screen moving the desktop's pointer. */

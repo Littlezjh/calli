@@ -2,6 +2,7 @@ import type { Store } from './store.js';
 import type { ThreadManager } from './threads.js';
 import { freshQuota, instanceWindows, type AutoHandover } from './auto-handover.js';
 import type { PlanQuota } from './adapters/types.js';
+import { quotaResetFrom } from './adapters/quota-errors.js';
 import { HttpError } from './errors.js';
 
 /**
@@ -83,16 +84,19 @@ export class QuotaResume {
   }
 
   /** A thread the person can arm: present, idle, and its last turn died of plan exhaustion. */
-  private parkedCheck(id: string): { agent: string; failedTurn: string; model?: string } {
+  private parkedCheck(id: string): { agent: string; failedTurn: string; model?: string; message: string } {
     const thread = this.manager.getThread(id);
     if (thread.archivedAt) throw new HttpError(409, 'the thread is archived');
     const view = this.manager.threadView(id);
     if (view.status === 'running' || view.waiting) throw new HttpError(409, 'the thread is busy');
     const last = this.store.listTurns(id).at(-1)?.turnId ?? null;
-    const failed = last && this.store.listTurnEvents(id, last).some(e => e.type === 'turn.error' && e.data.code === 'plan_exhausted')
-      ? last : null;
+    let failed: string | null = null;
+    let message = '';
+    if (last) for (const e of this.store.listTurnEvents(id, last)) {
+      if (e.type === 'turn.error' && e.data.code === 'plan_exhausted') { failed = last; message = String(e.data.message ?? ''); }
+    }
     if (!failed) throw new HttpError(409, 'the thread did not just run out of plan');
-    return { agent: thread.agent, failedTurn: failed, ...(thread.model ? { model: thread.model } : {}) };
+    return { agent: thread.agent, failedTurn: failed, message, ...(thread.model ? { model: thread.model } : {}) };
   }
 
   /** The person's click on the exhausted turn's card, or a park while the global setting is on. */
@@ -100,7 +104,9 @@ export class QuotaResume {
     const parked = this.parkedCheck(id);
     const watches = this.watches();
     const existing = watches[id];
-    const resetsAt = await this.resetHint(parked.agent, parked.model);
+    // The quota windows first; the error's own promise of a reset time second — a gateway the hub
+    // cannot poll still says when its window reopens, in the very message that closed the thread.
+    const resetsAt = await this.resetHint(parked.agent, parked.model) ?? quotaResetFrom(parked.message);
     watches[id] = {
       agent: parked.agent,
       failedTurn: parked.failedTurn,
@@ -191,6 +197,9 @@ export class QuotaResume {
         const windows = quota ? instanceWindows(quota, thread.model ?? null) : [];
         const over = windows.filter(x => x.usedPercent >= threshold);
         if (windows.length && !over.length) { await this.resume(id); continue; }
+        // Quota the hub cannot read at all: past the reset time the failure itself promised, the
+        // resend is the probe — a thread parked on such a gateway would otherwise never continue.
+        if (!windows.length && w.resetsAt && Date.now() >= Date.parse(w.resetsAt) + this.graceMs) { await this.resume(id); continue; }
         const binding = over.map(x => x.resetsAt ? Date.parse(x.resetsAt) : null)
           .filter(t => t !== null && t > Date.now()).sort((a, b) => a! - b!)[0] ?? null;
         this.postpone(id, binding ? binding + this.graceMs : undefined, '额度还没有恢复');

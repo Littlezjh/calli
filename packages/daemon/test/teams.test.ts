@@ -518,3 +518,66 @@ test('a member spoken to directly answers the person and routes nothing in the t
     assert.equal(h.manager.threadView(threadId).status, 'idle');
   } finally { await h.close(); }
 });
+
+const TEAM_PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a9c8AAAAASUVORK5CYII=', 'base64');
+
+test('team tasks accept images, retain attachments and allow image-only continuations', async () => {
+  const h = await setup();
+  try {
+    const summary = (await (await h.api()).json() as any[]).find(team => team.id === h.definition.id);
+    assert.equal(summary.entryAgent, 'pi');
+    assert.equal(summary.entryModel, null);
+    assert.equal(summary.members, undefined);
+    // Larger than the ordinary JSON limit, still within the normal image contract.
+    const data = Buffer.concat([TEAM_PNG, Buffer.alloc(1024 * 1024)]).toString('base64');
+    const response = await h.api(`/${h.definition.id}/tasks`, 'POST', { text: 'inspect-work-mode', images: [{ data, mimeType: 'image/jpeg' }], cwd: h.cwd });
+    assert.equal(response.status, 202);
+    const { threadId } = await response.json() as any;
+    await h.settled(threadId);
+    const start = h.store.listEventsOfType(threadId, 'turn.started')[0];
+    const attached = (start.data.images as Array<{ id: string; mimeType: string; size: number }>)[0];
+    assert.equal(attached.mimeType, 'image/png');
+    const answer = h.store.listEventsOfType(threadId, 'message.delta').map(e => e.data.text).join('');
+    assert.equal(JSON.parse(answer).images[0].data, data);
+    const downloaded = await fetch(`${h.base}/api/threads/${threadId}/attachments/${attached.id}`, { headers: { Authorization: 'Bearer test-token' } });
+    assert.equal(downloaded.status, 200);
+    assert.equal(Buffer.from(await downloaded.arrayBuffer()).toString('base64'), data);
+    await h.coordination.confirm(threadId);
+    const taskId = h.coordination.view(threadId)!.team!.taskId;
+    const followup = await fetch(`${h.base}/api/threads/${threadId}/turns`, { method: 'POST', headers: { Authorization: 'Bearer test-token', 'Content-Type': 'application/json' }, body: JSON.stringify({ images: [{ data: TEAM_PNG.toString('base64') }] }) });
+    assert.equal(followup.status, 202);
+    await h.settled(threadId);
+    assert.notEqual(h.coordination.view(threadId)!.team!.taskId, taskId);
+    assert.equal((h.store.listEventsOfType(threadId, 'turn.started').at(-1)!.data.images as unknown[]).length, 1);
+    const imageOnly = await h.api(`/${h.definition.id}/tasks`, 'POST', { images: [{ data: TEAM_PNG.toString('base64') }], cwd: h.cwd });
+    assert.equal(imageOnly.status, 202);
+    const next = await imageOnly.json() as any;
+    await h.settled(next.threadId);
+    assert.equal(h.manager.threadView(next.threadId).title, h.definition.name);
+  } finally { await h.close(); }
+});
+
+test('invalid team images and unsupported models are rejected before creating or reopening a task', async () => {
+  const h = await setup();
+  try {
+    const count = () => (h.store.db.prepare('SELECT COUNT(*) AS n FROM threads').get() as { n: number }).n;
+    const before = count();
+    for (const images of ['invalid', [{ data: 'invalid' }], Array.from({ length: 7 }, () => ({ data: TEAM_PNG.toString('base64') }))]) {
+      assert.equal((await h.api(`/${h.definition.id}/tasks`, 'POST', { text: 'task', images, cwd: h.cwd })).status, 400);
+      assert.equal(count(), before);
+    }
+    h.teams.save({ ...h.definition, members: h.definition.members.map(m => m.name === h.definition.entry ? { ...m, model: 'fake/plain' } : m) }, h.definition.id);
+    const unsupported = await h.api(`/${h.definition.id}/tasks`, 'POST', { text: 'task', images: [{ data: TEAM_PNG.toString('base64') }], cwd: h.cwd });
+    assert.equal(unsupported.status, 400);
+    assert.match((await unsupported.json() as any).error, /cannot read images/);
+    assert.equal(count(), before);
+    h.teams.save(h.definition, h.definition.id);
+    const { threadId } = await h.dispatch();
+    await h.settled(threadId); await h.coordination.confirm(threadId);
+    const taskId = h.coordination.view(threadId)!.team!.taskId;
+    const invalid = await fetch(`${h.base}/api/threads/${threadId}/turns`, { method: 'POST', headers: { Authorization: 'Bearer test-token', 'Content-Type': 'application/json' }, body: JSON.stringify({ text: 'task', images: [{ data: 'invalid' }] }) });
+    assert.equal(invalid.status, 400);
+    assert.equal(h.coordination.view(threadId)!.team!.status, 'done');
+    assert.equal(h.coordination.view(threadId)!.team!.taskId, taskId);
+  } finally { await h.close(); }
+});

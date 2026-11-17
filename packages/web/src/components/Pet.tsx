@@ -435,8 +435,10 @@ interface Props {
   /** The threads the page already holds; her status bar reads these and fetches nothing. */
   threads: readonly Thread[];
   onOpenThread: (id: string) => void;
-  /** Her install state, as it changes, for whatever else shows her. */
+  /** Her status change, as it happens, for whatever else shows her. */
   onStatusChange?: (status: PetStatus) => void;
+  /** Opens her conversation where the page keeps it (the desk's column); without it she takes the message herself. */
+  onChat?: () => void;
   /** Opens the private settings, for when no agent has been chosen to answer. */
   onConfigure?: () => void;
   /** Matters a reply may name; with `onOpenTodo` their names become links that spread that pile. */
@@ -556,7 +558,7 @@ export function Pet(props: Props) {
   );
 }
 
-function PetCompanion({ api, status, presence, greeting, spreadOpen, desk, place, threads, onOpenThread, onConfigure, todos, onOpenTodo, setupNeeded, onExplore, setupNotice }: Props & { status: PetStatus; presence: PetPresence }) {
+function PetCompanion({ api, status, presence, greeting, spreadOpen, desk, place, threads, onOpenThread, onConfigure, onChat, todos, onOpenTodo, setupNeeded, onExplore, setupNotice }: Props & { status: PetStatus; presence: PetPresence }) {
   const visible = usePageVisible();
   const still = useReducedMotion();
   const narrow = useIsNarrow();
@@ -959,8 +961,11 @@ function PetCompanion({ api, status, presence, greeting, spreadOpen, desk, place
   };
 
   // ——— Talking to her ———
+  // Where the page keeps her conversation, that is where talking goes: on the desk it is the
+  // resident column, not the one-line box she offers elsewhere.
   const openCompose = () => {
     setPanel(null);
+    if (onChat) { onChat(); return; }
     setCompose(true);
     setSay((current) => (current?.kind === 'greeting' ? null : current));
   };

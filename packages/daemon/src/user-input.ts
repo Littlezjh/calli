@@ -45,14 +45,18 @@ export class UserInputs {
     else {
       if (!value?.answers || typeof value.answers !== 'object' || Array.isArray(value.answers)) throw new HttpError(400, '请提供问题答案');
       const answers: Record<string, string[]> = Object.create(null);
-      for (const key of Object.keys(value.answers)) if (!p.request.questions.some(q => q.id === key)) throw new HttpError(400, '问题不存在');
+      for (const key of Object.keys(value.answers)) if (!p.request.questions.some(q => q.id === key || q.note?.id === key)) throw new HttpError(400, '问题不存在');
       for (const q of p.request.questions) {
         const values = value.answers[q.id] ?? [];
         if (!Array.isArray(values) || values.length > 30 || values.some(v => typeof v !== 'string' || !v.trim() || v.length > 8000)) throw new HttpError(400, '答案格式无效');
-        if (q.required !== false && !values.length) throw new HttpError(400, '请回答所有问题');
+        // A choice's free-text line answers it too: "other" text stands in where no option was picked.
+        const note = q.note ? value.answers[q.note.id] ?? [] : [];
+        if (q.note && (!Array.isArray(note) || note.length > 1 || note.some(v => typeof v !== 'string' || !v.trim() || v.length > 8000))) throw new HttpError(400, '答案格式无效');
+        if (q.required !== false && !values.length && !note.length) throw new HttpError(400, '请回答所有问题');
         if (!q.multiple && values.length > 1) throw new HttpError(400, '此问题只能选择一个答案');
         if (!q.freeText && values.some(v => !q.options.some(o => o.value === v))) throw new HttpError(400, '请选择提供的选项');
         answers[q.id] = [...new Set(values)];
+        if (q.note && note.length) answers[q.note.id] = [note[0]];
       }
       answer = { answers };
     }

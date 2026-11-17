@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ClaudeAcpAdapter } from '../src/adapters/claude.js';
+import { gatewayQuota, gatewayWindowLabel } from '../src/adapters/gateway-quota.js';
 import { modelGateway } from './fixtures/model-gateway.mjs';
 
 test('Claude gateway discovery reads account settings and capabilities without selecting every model', async t => {
@@ -231,4 +232,47 @@ test('Claude gateway discovery preserves native slash command discovery', async 
   });
   await adapter.models();
   assert.deepEqual((await adapter.commands()).map(c => c.name), ['compact', 'review', 'goal', 'cost', 'stats', 'context']);
+});
+
+test('Claude on a gateway reads the plans and balances behind its own models from the gateway', async t => {
+  const gateway = await modelGateway();
+  t.after(() => gateway.close());
+  const home = mkdtempSync(join(tmpdir(), 'calli-gateway-quota-'));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  gateway.state.models = [{ id: 'zcode/GLM-5.3' }, { id: 'zcode/GLM-5.3-Flash' }, { id: 'deepseek/deepseek-flash' }];
+  gateway.state.quotas = [
+    { provider: 'zcode', name: 'ZCode', kind: 'subscription', plan: 'GLM Coding Pro', windows: [
+      { name: '5 hours', used: 100, remaining: 0, resetsAt: '2026-11-13T05:46:34.931Z' },
+      { name: 'Weekly', used: 37.02, remaining: 62.98, resetsAt: '2026-11-18T06:39:24.999Z' },
+      { name: 'Search', unlimited: true, used: 0 },
+    ] },
+    { provider: 'deepseek', name: 'DeepSeek', kind: 'balance', windows: [], balance: '¥60.52' },
+    // A plan the instance's catalog cannot reach is not this account's to show.
+    { provider: 'workbuddy', name: 'WorkBuddy', kind: 'subscription', plan: 'Free plan', windows: [{ name: 'Credits', used: 10 }] },
+  ];
+  const adapter = new ClaudeAcpAdapter(['nonexistent-acp-for-gateway-test'], {
+    HOME: home, CLAUDE_CONFIG_DIR: home, ANTHROPIC_BASE_URL: gateway.url, ANTHROPIC_AUTH_TOKEN: 'gateway-test-token', CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: '1',
+  });
+  const quota = await adapter.fetchQuota();
+  const glm = ['zcode/GLM-5.3', 'zcode/GLM-5.3-Flash'];
+  assert.deepEqual(quota.windows, [
+    { label: '5H', scope: 'GLM Coding Pro', modelIds: glm, usedPercent: 100, resetsAt: '2026-11-13T05:46:34.931Z' },
+    { label: '7D', scope: 'GLM Coding Pro', modelIds: glm, usedPercent: 37.02, resetsAt: '2026-11-18T06:39:24.999Z' },
+  ]);
+  assert.deepEqual(quota.balances, [{ scope: 'DeepSeek', amount: '¥60.52', modelIds: ['deepseek/deepseek-flash'] }]);
+  assert.equal(quota.note, undefined);
+  const read = gateway.state.requests.find(r => r.path === '/v1/magpie/quotas');
+  assert.equal(read?.authorization, 'Bearer gateway-test-token', 'the gateway key is the only credential sent');
+});
+
+test('gateway quota names a failed read and tells two accounts of one plan apart', () => {
+  const quota = gatewayQuota({ data: [
+    { provider: 'zcode', plan: 'GLM Coding Pro', user: 'a', windows: [{ name: '5 hours', used: 10 }] },
+    { provider: 'zcode', plan: 'GLM Coding Pro', user: 'b', windows: [{ name: '5 hours', used: 20 }] },
+    { provider: 'deepseek', name: 'DeepSeek', windows: [], error: 'HTTP 401' },
+  ] }, null, '2026-11-13T00:00:00.000Z');
+  assert.deepEqual(quota.windows.map(w => [w.scope, w.usedPercent, w.modelIds]), [['GLM Coding Pro · a', 10, undefined], ['GLM Coding Pro · b', 20, undefined]]);
+  assert.equal(quota.note, 'DeepSeek: HTTP 401');
+  assert.equal(quota.balances, undefined);
+  assert.deepEqual(['5 hours', 'Weekly', '3 days', 'Credits'].map(gatewayWindowLabel), ['5H', '7D', '3D', 'Credits']);
 });

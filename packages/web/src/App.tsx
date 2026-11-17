@@ -1,3 +1,4 @@
+import { useDraftWarmup } from './draft-warmup';
 import { GitPanel } from './components/GitPanel';
 import { SessionInUseNotice } from './components/SessionInUseNotice';
 import { SettingsPage, type SettingsGroup } from './components/SettingsPage';
@@ -37,7 +38,7 @@ import { buildProjectOptions } from './projects';
 import { rootRows, withWorkdirs } from './workdirs';
 import { isBounce, useAppHistory } from './appHistory';
 import { useAppearance, useInTitlebar, useIsCompact, useListSwipe, useMinWidth, useStoredFlag } from './hooks';
-import { mergeAgentChoice, parseAgentChoices, type AgentChoices } from './agent-choice';
+import { useModelPreferences } from './model-preferences';
 import { useHosts } from './hosts';
 import type { PreparedImage } from './images';
 import { restoreVideos, type PreparedVideo } from './videos';
@@ -91,7 +92,7 @@ import { PersonalSettingsDialog } from './components/PersonalSettingsDialog';
 import { buildDesk } from './desk';
 import { SkillsPage } from './components/SkillsPage';
 import { SchedulesPage } from './components/SchedulesPage';
-import { DeskPage } from './components/DeskPage';
+import { AssistantHome } from './components/AssistantPanel';
 import { TodosPage } from './components/TodosPage';
 import { ActivityPage } from './components/ActivityPage';
 import { ExtensionsPage } from './components/ExtensionsPage';
@@ -121,7 +122,7 @@ import { NewProjectDialog, ProjectPicker, RootsDialog } from './components/Proje
 import { NoteMarks, type NoteMark } from './components/NoteMarks';
 import { ConnectDialog, DemoBar } from './components/ConnectDialog';
 import { DemoApi, DemoError } from './demo/DemoApi';
-import { type DraftModelPreference, switchDraftModelPreference } from './draft-preferences';
+import { EMPTY_MODEL_PREFERENCE, type DraftModelPreference } from '../../daemon/src/model-preferences';
 import { clampQuickSwitchBottom, savedQuickSwitchBottom, saveQuickSwitchBottom, useQuickSwitchMode } from './quick-switch';
 import { IconCheck, IconBell, AgentMark, IconActivity, IconAgents, IconArchive, IconArrowLeft, IconArrowDown, IconBack, IconClose, IconEdit, IconFolder, IconGauge, IconGlobe, IconImport, IconList, IconMenu, IconSettings, IconMore, IconOverview, IconPalette, IconPlus, IconPuzzle, IconServer, IconSidebar, IconSignIn, IconSignOut, IconSparkle, IconTerminal, IconTrace, IconLanguage, IconWaveform, IconSideChat } from './components/icons';
 import { StatReadings } from './components/SessionStats';
@@ -194,9 +195,9 @@ function viewForHash(hash: string, connected: boolean): MainView | null {
   if (hash.startsWith('#/machines/')) return 'machines';
   if (hash === '#/settings' || hash.startsWith('#/settings/')) return 'settings';
   if (hash.startsWith('#/thread/')) return null;
+  // The desk's address may name the drawer tab it was left on (#/desk/desk, #/desk/sessions…).
+  if (hash === DESK_HASH || hash.startsWith(`${DESK_HASH}/`)) return 'desk';
   switch (hash) {
-    case DESK_HASH:
-      return 'desk';
     case TODOS_HASH:
       return 'todos';
     case SCHEDULES_HASH:
@@ -239,15 +240,6 @@ const OVERVIEW_OPEN_KEY = 'calli.overview.open';
 
 /** What members of each instance start with, remembered on this device for the next team. */
 const MEMBER_DEFAULTS_KEY = 'calli.coord.defaults';
-/** The model, effort and speed last chosen per instance: its next new thread starts there. */
-const AGENT_CHOICE_KEY = 'calli.agent.choice';
-const readAgentChoices = (): AgentChoices => parseAgentChoices(localStorage.getItem(AGENT_CHOICE_KEY));
-const rememberAgentChoice = (agent: string, choice: Partial<Record<'model' | 'effort' | 'speed', string | null>>) => {
-  try {
-    localStorage.setItem(AGENT_CHOICE_KEY, JSON.stringify(mergeAgentChoice(readAgentChoices(), agent, choice)));
-  } catch { /* a full or blocked store just stops remembering */ }
-};
-
 /** A plan the user chose to leave be, by thread: the proposal's key, so a reload does not ask again. */
 const PLAN_SKIP_KEY = 'calli:plan-skipped';
 
@@ -629,6 +621,10 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   const [threadLink, setThreadLink] = useState(() => window.location.hash.startsWith('#/thread/') ? window.location.hash : null);
   const [schedulePath, setSchedulePath] = useState(() => window.location.hash.startsWith('#/schedules/') ? window.location.hash.slice('#/schedules/'.length) : '');
   const [machinePath, setMachinePath] = useState(() => window.location.hash.startsWith('#/machines/') ? window.location.hash.slice('#/machines/'.length) : '');
+  /** The desk drawer's tab in the address, so a reload lands with the drawer as it was left. */
+  // The assistant home puts its entries in this bar rather than a second bar of its own.
+  const [deskSlot, setDeskSlot] = useState<HTMLDivElement | null>(null);
+  const [deskPath, setDeskPath] = useState(() => /^#\/desk\/(desk|sessions|matters)$/.test(window.location.hash) ? window.location.hash.slice('#/desk/'.length) : '');
   const [settingsPath, setSettingsPath] = useState(() => start === 'machines' ? 'machines' : window.location.hash.replace(/^#\/settings\/?/, ''));
   // `list`: the phone's thread list was open, so closing settings goes back to it.
   const settingsOrigin = useRef<{ view: MainView; thread: string | null; hash: string; scroll: number; pinned: boolean; entry: string; list: boolean } | null>(null);
@@ -858,13 +854,19 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   const [draftWriting, setDraftWriting] = useState<WritingStage | null>(null);
   const [writingBusy, setWritingBusy] = useState(false);
   const [draftPermission, setDraftPermission] = useState('auto_edit');
-  const [draftModel, setDraftModel] = useState<string | null>(null);
-  const [draftEffort, setDraftEffort] = useState<string | null>(null);
-  const [draftSpeed, setDraftSpeed] = useState<string | null>(null);
-  const draftModelPreferences = useRef<Record<string, DraftModelPreference>>({});
-  const draftPreferencesApi = useRef<Api | null>(api);
-  const draftPreferenceSave = useRef<{ api: Api | null; pending: Record<string, DraftModelPreference> | null; running: boolean }>({ api, pending: null, running: false });
+  const modelPreferences = useModelPreferences(api, error => setError(message(error)));
   const [modelsByAgent, setModelsByAgent] = useState<Record<string, ModelOption[]>>(() => (keepThreads ? cachedModels(hostId) ?? {} : {}));
+  const draftCaps = agents.find(agent => agent.id === draftAgent)?.capabilities;
+  const draftChoice = fitDraftModelPreference(modelPreferences.preferences[draftAgent] ?? EMPTY_MODEL_PREFERENCE,
+    modelsByAgent[draftAgent] ?? [], draftCaps?.effortLevels ?? [], Boolean(draftCaps?.speed));
+  const { model: draftModel, effort: draftEffort, speed: draftSpeed } = draftChoice;
+  const consumeDraftWarmup = useDraftWarmup(api, !selectedId && view === 'thread' && !draftTeam && !draftWorktree
+    && !draftCollaboration && !draftWriting && draftAgent && draftCaps?.prewarm && modelPreferences.status === 'ready'
+    && (draftCwd || draftScratch) ? {
+      agent: draftAgent, cwd: draftScratch ? '' : draftCwd, scratch: draftScratch,
+      permissionMode: draftPermission, workMode: draftWorkMode,
+      model: draftModel, effort: draftEffort, speed: draftSpeed,
+    } : null);
   const modelVersions = useRef<Record<string, number>>({});
   const [commandsByKey, setCommandsByKey] = useState<Record<string, SlashCommand[]>>({});
   const [drawer, setDrawer] = useState(start === 'list');
@@ -1106,110 +1108,17 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
     : t('pet.name');
   const latestSegment = selected ? latestHandoverThread(selected, threads) : null;
   const viewingEarlier = Boolean(selected && latestSegment && latestSegment.id !== selected.id);
-  const mergedHandover = !api.demo && singleSegmentId !== selectedId && Boolean(selected?.handover?.mode === 'continue' || viewingEarlier);
-  const flushDraftModelPreferences = (targetApi: Api) => {
-    const save = draftPreferenceSave.current;
-    if (save.api !== targetApi || save.running || targetApi.demo || !save.pending) return;
-    const preferences = save.pending;
-    save.pending = null;
-    save.running = true;
-    void targetApi.saveDraftModelPreferences(preferences)
-      .then((saved) => {
-        if (draftPreferencesApi.current === targetApi && draftPreferenceSave.current.api === targetApi && !draftPreferenceSave.current.pending) {
-          draftModelPreferences.current = saved;
-        }
-      })
-      .catch((e) => {
-        if (draftPreferencesApi.current === targetApi && draftPreferenceSave.current.api === targetApi) setError(message(e));
-      })
-      .finally(() => {
-        if (draftPreferenceSave.current.api !== targetApi) return;
-        draftPreferenceSave.current.running = false;
-        flushDraftModelPreferences(targetApi);
-      });
-  };
-  const persistDraftModelPreferences = (preferences: Record<string, DraftModelPreference>) => {
-    draftPreferencesApi.current = api;
-    draftModelPreferences.current = preferences;
-    if (!api.demo) {
-      if (draftPreferenceSave.current.api !== api) draftPreferenceSave.current = { api, pending: null, running: false };
-      draftPreferenceSave.current.pending = preferences;
-      flushDraftModelPreferences(api);
-    }
-  };
-  const flushDraftModelPreferencesOnExit = (targetApi: Api) => {
-    const save = draftPreferenceSave.current;
-    if (targetApi.demo || draftPreferencesApi.current !== targetApi || save.api !== targetApi || (!save.pending && !save.running)) return;
-    void targetApi.saveDraftModelPreferences(draftModelPreferences.current, { keepalive: true }).catch(() => undefined);
-  };
-  const ensureDraftPreferenceApi = () => {
-    if (draftPreferencesApi.current === api) return true;
-    draftPreferencesApi.current = api;
-    draftModelPreferences.current = {};
-    draftPreferenceSave.current = { api, pending: null, running: false };
-    return false;
-  };
-  const selectDraftAgent = (id: string, list = agents, rememberCurrent = true) => {
-    const sameDaemon = ensureDraftPreferenceApi();
-    const remembered = switchDraftModelPreference(
-      draftModelPreferences.current,
-      rememberCurrent && sameDaemon ? draftAgent : '',
-      { model: draftModel, effort: draftEffort, speed: draftSpeed },
-      id,
-    );
-    if (remembered.preferences !== draftModelPreferences.current) persistDraftModelPreferences(remembered.preferences);
-    const caps = list.find((item) => item.id === id)?.capabilities;
-    const fitted = fitDraftModelPreference(remembered.preference, modelsByAgent[id] ?? [], caps?.effortLevels ?? [], Boolean(caps?.speed));
+  // Any thread that continues another one by a live link reads as one conversation, its ancestors
+  // folded in above — a relay made by hand reads the same way as an automatic one.
+  const mergedHandover = !api.demo && singleSegmentId !== selectedId && Boolean((selected?.handover && !selected.handover.detached) || viewingEarlier);
+  const selectDraftAgent = (id: string, list = agents) => {
+    const caps = list.find(item => item.id === id)?.capabilities;
     setDraftAgent(id);
     setDraftWorkMode('execute');
-    setDraftModel(fitted.model);
-    setDraftEffort(fitted.effort);
-    setDraftSpeed(fitted.speed);
-    // Each agent starts at its own level: one that cannot ask starts where it can work.
     if (caps) setDraftPermission(startingPermission(caps));
   };
-  const rememberActiveDraftModelPreference = (next: DraftModelPreference) => {
-    if (!draftAgent) return;
-    if (!ensureDraftPreferenceApi()) return;
-    persistDraftModelPreferences({
-      ...draftModelPreferences.current,
-      [draftAgent]: next,
-    });
-  };
-  const fitActiveDraftModelPreference = (agent: string, list: ModelOption[]) => {
-    if (selected || !agent || agent !== draftAgent) return;
-    const caps = agents.find((item) => item.id === agent)?.capabilities;
-    const fitted = fitDraftModelPreference(
-      { model: draftModel, effort: draftEffort, speed: draftSpeed },
-      list,
-      caps?.effortLevels ?? [],
-      Boolean(caps?.speed),
-    );
-    if (fitted.model !== draftModel) setDraftModel(fitted.model);
-    if (fitted.effort !== draftEffort) setDraftEffort(fitted.effort);
-    if (fitted.speed !== draftSpeed) setDraftSpeed(fitted.speed);
-    rememberActiveDraftModelPreference(fitted);
-  };
-  useEffect(() => {
-    if (selected || !draftAgent) return;
-    fitActiveDraftModelPreference(draftAgent, modelsByAgent[draftAgent] ?? []);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selected?.id, draftAgent, draftModel, draftEffort, draftSpeed, modelsByAgent, agents, hostId]);
-  useEffect(() => {
-    if (api.demo) return;
-    const flush = () => flushDraftModelPreferencesOnExit(api);
-    const flushWhenHidden = () => {
-      if (document.visibilityState === 'hidden') flush();
-    };
-    window.addEventListener('pagehide', flush);
-    window.addEventListener('beforeunload', flush);
-    document.addEventListener('visibilitychange', flushWhenHidden);
-    return () => {
-      window.removeEventListener('pagehide', flush);
-      window.removeEventListener('beforeunload', flush);
-      document.removeEventListener('visibilitychange', flushWhenHidden);
-    };
-  }, [api]);
+  // Returning to the new-thread page also picks up choices made on another device.
+  useEffect(() => { if (!selectedId) void modelPreferences.refresh(); }, [selectedId]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     let cancelled = false;
     if (!api || !selected?.coordination) { setCoordination(null); return; }
@@ -1304,12 +1213,12 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   const extWant = onExt ? (extOpen ? extensionHash(extOpen) : extTarget ?? '') : '';
   useEffect(() => {
     if (threadLink) return;
-    const want = onSettings ? `#/settings${settingsPath ? `/${settingsPath}` : ''}` : onDesk ? DESK_HASH : onObservability ? OBSERVABILITY_HASH : onMachines ? `${MACHINES_HASH}${machinePath ? `/${machinePath}` : ''}` : onAgents ? AGENTS_HASH : onTeams ? TEAMS_HASH : onTodos ? TODOS_HASH : onSchedules ? `${SCHEDULES_HASH}${schedulePath ? `/${schedulePath}` : ''}` : onActivity ? ACTIVITY_HASH : onSkills ? SKILLS_HASH : onMcp ? MCP_HASH : onExtensions ? EXTENSIONS_HASH : extWant;
+    const want = onSettings ? `#/settings${settingsPath ? `/${settingsPath}` : ''}` : onDesk ? `${DESK_HASH}${deskPath ? `/${deskPath}` : ''}` : onObservability ? OBSERVABILITY_HASH : onMachines ? `${MACHINES_HASH}${machinePath ? `/${machinePath}` : ''}` : onAgents ? AGENTS_HASH : onTeams ? TEAMS_HASH : onTodos ? TODOS_HASH : onSchedules ? `${SCHEDULES_HASH}${schedulePath ? `/${schedulePath}` : ''}` : onActivity ? ACTIVITY_HASH : onSkills ? SKILLS_HASH : onMcp ? MCP_HASH : onExtensions ? EXTENSIONS_HASH : extWant;
     if (window.location.hash !== want) {
       window.history.replaceState(window.history.state, '', want || window.location.pathname + window.location.search);
     }
     appHref.current = window.location.pathname + window.location.search + window.location.hash;
-  }, [schedulePath, machinePath, onSettings, settingsPath, onDesk, onObservability, onMachines, onAgents, onTeams, onTodos, onActivity, onSkills, onSchedules, onMcp, onExtensions, extWant, threadLink]);
+  }, [schedulePath, machinePath, deskPath, onSettings, settingsPath, onDesk, onObservability, onMachines, onAgents, onTeams, onTodos, onActivity, onSkills, onSchedules, onMcp, onExtensions, extWant, threadLink]);
 
   // Whether the directory a new thread would start in is a git repository. Asked once per directory picked.
   useEffect(() => {
@@ -1356,6 +1265,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
         setView(next);
         if (next === 'schedules') setSchedulePath(hash.startsWith('#/schedules/') ? hash.slice('#/schedules/'.length) : '');
       if (next === 'machines') setMachinePath(hash.startsWith('#/machines/') ? hash.slice('#/machines/'.length) : '');
+        if (next === 'desk') setDeskPath(hash.startsWith(`${DESK_HASH}/`) ? hash.slice('#/desk/'.length) : '');
         if (next === 'settings') setSettingsPath(hash.replace(/^#\/settings\/?/, ''));
         if (next === 'ext') setExtTarget(hash);
         setDrawer(false);
@@ -1433,6 +1343,8 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   const [takeoverTarget, setTakeoverTarget] = useState<{ threadId: string; target: HandoverTarget } | null>(null);
   // Arming or cancelling a "wait for the quota and continue" watch on that same turn.
   const [resumeBusy, setResumeBusy] = useState(false);
+  const [autoRetryBusy, setAutoRetryBusy] = useState(false);
+  const [advanceBusy, setAdvanceBusy] = useState(false);
   const scrollerRef = useRef<HTMLDivElement>(null);
   const mainRef = useRef<HTMLElement>(null);
   useLayoutEffect(() => {
@@ -1533,17 +1445,14 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
     let cancelled = false;
     (async () => {
       try {
-        const [a, c, , s, sc, preferences] = await Promise.all([
+        const [a, c, , s, sc] = await Promise.all([
           api.agents(),
           api.workdirs(),
           threadFeed.read(),
           api.sections(),
           api.schedules().catch(() => []),
-          api.draftModelPreferences().catch(() => ({} as Record<string, DraftModelPreference>)),
         ]);
         if (cancelled) return;
-        draftPreferencesApi.current = api;
-        draftModelPreferences.current = preferences;
         setAgents(a);
         setAgentsKnown(true);
         applyWorkdirs(c);
@@ -1555,7 +1464,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
         setDraftCwd((cur) => cur || c.workdirs[0] || '');
         const first = a.find((x) => x.available && !x.hidden);
         const kept = draftAgent && a.some((x) => x.id === draftAgent && !x.hidden) ? draftAgent : first?.id ?? '';
-        selectDraftAgent(kept, a, false);
+        selectDraftAgent(kept, a);
         if (!demo) {
           const dismissed = localStorage.getItem('calli_onboard_dismissed') === '1';
           const needsOnboard = a.length === 0 || a.filter((x) => x.available).length === 0;
@@ -1895,7 +1804,8 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   };
 
   // The agent and directory the composer is talking to: the thread's, or the draft's for a new thread.
-  const activeAgent = selected?.agent ?? draftAgent;
+  const draftTeamDefinition = draftTeam ? teamDefinitions.find(team => team.id === draftTeam) : undefined;
+  const activeAgent = selected?.agent ?? draftTeamDefinition?.entryAgent ?? draftAgent;
   const activeCwd = selected?.cwd ?? draftCwd;
   const commandsKey = `${activeAgent}\n${activeCwd}`;
   const lastFocusModelRefresh = useRef<{ agent: string; at: number } | null>(null);
@@ -2109,6 +2019,20 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
     void refreshThreads(); // the server decides the order
   };
 
+  /**
+   * Opens the thread a message names by id, whole or as the short prefix the assistant cites.
+   * A thread outside the list (archived, on another screen) is still fetched and opened; an id
+   * nothing answers is left to the error banner rather than quietly doing nothing.
+   */
+  const openThreadById = (id: string) => {
+    const known = threads.find(t => t.id === id);
+    if (known) { openThread(known); return; }
+    const ref = id.toLowerCase();
+    const prefixed = threads.filter(t => t.id.toLowerCase().startsWith(ref));
+    if (prefixed.length === 1) { openThread(prefixed[0]!); return; }
+    if (api) void api.thread(id).then(openThread).catch(handleError);
+  };
+
   const autotitleExt = extensions?.find((e) => e.manifest.id === 'autotitle');
   const boardExt = extensions?.find((e) => e.manifest.id === 'board');
   const threadActions = useThreadActions({
@@ -2182,6 +2106,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   // A new thread is created by its first message, or by starting voice on the draft.
   const createDraftThread = async (isNewThread: boolean) => {
     const t = await api.createThread({
+      warmupId: consumeDraftWarmup(),
       agent: draftAgent,
       cwd: draftCwd,
       permissionMode: draftPermission,
@@ -2210,8 +2135,8 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
     try {
       let id = selectedId;
       if (!id && draftTeam) {
-        if (images.length || videos.length) throw new Error(t('teams.attachments'));
-        const task = await api.dispatchTeam(draftTeam, text, draftCwd);
+        if (videos.length) throw new Error(t('teams.attachments'));
+        const task = await api.dispatchTeam(draftTeam, text, draftCwd, images.map(({ data, mimeType }) => ({ data, mimeType })));
         setSelectedId(task.threadId); setDraftTeam(null); setDraftSectionId(null);
         setView('thread'); void refreshThreads(); return;
       }
@@ -2386,6 +2311,8 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
     return { you: desk.quadrants.now.length, first: desk.first[0]?.todo.text ?? null };
   }, [onDesk, todos, todosLoading, todosError]);
   const [deskSpread, setDeskSpread] = useState(false);
+  // The caret for her composer: the pet's talk entry bumps it, wherever the person is.
+  const [chatFocus, setChatFocus] = useState(0);
   // A matter her reply named: the desk opens that pile, wherever the person is when they tap it.
   const [revealTodo, setRevealTodo] = useState<string | null>(null);
   const openTodoFromPet = (id: string) => {
@@ -2489,6 +2416,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
     }));
 
   const newThread = (opts: { cwd?: string; sectionId?: string | null; scratch?: boolean } = {}) => navigate(() => {
+    void modelPreferences.refresh();
     if (showcase) { showcase.onInstall(); return; }
     setSelectedId(null);
     setView('thread');
@@ -2539,7 +2467,11 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
         thread = await api.updateThread(id, { archived: false });
         if (active) setArchiveKey(key => key + 1);
       }
-      if (active) openThread(thread);
+      if (active) {
+        openThread(thread);
+        const previewPath = new URLSearchParams(threadLink.split('?')[1]).get('preview');
+        if (previewPath) setPreview({ threadId: id, path: previewPath });
+      }
     }).catch(() => {
       if (active) setError(t('app.threadNotFound'));
     }).finally(() => {
@@ -2625,26 +2557,9 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
       setDraftModel(null);
     }
   }, [draftModels, draftModel, draftEffort]);
-  const model = selected ? selected.model : draftModel;
+  const model = selected ? selected.model : draftTeam ? draftTeamDefinition?.entryModel ?? null : draftModel;
   const effort = selected ? selected.effort : draftEffort;
   const speed = selected ? selected.speed ?? null : draftSpeed;
-
-  // A new thread starts where the last one of that instance was left: the remembered model,
-  // effort and speed. Applied once on mount; pickAgent does the same for every switch.
-  useEffect(() => {
-    const remembered = readAgentChoices()[draftAgent];
-    if (remembered) {
-      if (remembered.model) setDraftModel(remembered.model);
-      if (remembered.effort) setDraftEffort(remembered.effort);
-      if (remembered.speed) setDraftSpeed(remembered.speed);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-  // The choice made in the draft is remembered while it is the draft being composed.
-  useEffect(() => {
-    if (!selected && draftAgent) rememberAgentChoice(draftAgent, { model: draftModel, effort: draftEffort, speed: draftSpeed });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draftModel, draftEffort, draftSpeed, draftAgent, selected?.id]);
 
   const updateSelected = (patch: { speed?: string | null; permissionMode?: string; model?: string | null; effort?: string | null }) => {
     if (!selected) return;
@@ -2653,11 +2568,11 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
     const before = { permissionMode: selected.permissionMode, model: selected.model, effort: selected.effort, speed: selected.speed };
     setThreads((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)));
     api
-      .updateThread(id, patch)
+      .updateThread(id, { ...patch, rememberModelChoice: true })
       .then((updated) => {
         setThreads((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
         if (patch.model !== undefined || patch.effort !== undefined || patch.speed !== undefined) {
-          rememberAgentChoice(updated.agent, { model: updated.model, effort: updated.effort, speed: updated.speed });
+          void modelPreferences.refresh();
         }
       })
       .catch((e) => {
@@ -2734,6 +2649,12 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           ...(activeCaps?.fork && !forkBlocked(selected)
             ? [{ id: 'fork', label: t('sidebar.fork'), hint: t('app.cmd.fork'), keywords: ['fork', 'branch', 'clone'] }]
             : []),
+          // The phone has no row menu, so the handover controls (including calling off an automatic
+          // takeover from the chain) reach it here; the desktop keeps them in the row menu too.
+          { id: 'handover', label: t('handover.title'), hint: t('app.cmd.handover'), keywords: ['handover', 'handoff', 'takeover', '交接'] },
+          ...(threadActions.inChain(selected)
+            ? [{ id: 'chain', label: t('handover.trail.title'), hint: t('app.cmd.chain'), keywords: ['chain', 'trail', 'history', '交接链', '接力'] }]
+            : []),
           { id: 'export', label: t('app.cmd.exportLabel'), hint: t('app.cmd.export'), keywords: ['export', 'copy'] },
           { id: 'archive', label: t('actions.archive'), hint: t('app.cmd.archive'), keywords: ['archive'] },
         ]
@@ -2761,6 +2682,8 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
     if (id === 'import') return openSettings('import');
     if (id === 'appearance') return openSettings('appearance');
     if (selected && (id === 'rename' || id === 'pin' || id === 'fork' || id === 'archive')) threadActions.run(id, selected);
+    if (selected && id === 'handover') return threadActions.handover(selected);
+    if (selected && id === 'chain') return threadActions.chain(selected);
   };
 
   // The hub has its own controls for these; going through the agent would leave them out of sync.
@@ -2768,7 +2691,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   // agent's raw /goal everywhere, as the phone's compact menu already did.
   const hiddenCommands = [...(models.length ? ['model'] : []), ...(effortLevels.length ? ['effort'] : []), ...(activeCaps?.quota ? ['usage'] : []), ...(activeCaps?.goal ? ['goal'] : [])];
 
-  const attachBlocked = !selected && draftTeam ? t('teams.attachments') : !activeCaps?.images ? t('app.noImages', agentLabel(activeAgent)) : imagesBlocked(models, model);
+  const attachBlocked = !selected && draftTeam && !draftTeamDefinition?.entryAgent ? t('teams.entryUnavailable') : !activeCaps?.images ? t('app.noImages', agentLabel(activeAgent)) : imagesBlocked(models, model);
 
   // The top bar names a thread's agent and directory, so the composer does not repeat them: its
   // strip is only for choosing them, before the thread exists.
@@ -2967,26 +2890,23 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
         compactDisabled={(selected.queued?.length ?? 0) >= MAX_QUEUED}
       />}
       <ModelPicker
+        preferenceStatus={!selected ? modelPreferences.status : undefined}
+        onRetryPreference={() => void modelPreferences.refresh()}
         catalog={activeCaps?.modelCatalog}
         models={models}
         model={model}
         efforts={effortLevels}
         effort={effort}
         speed={speed}
-        onSpeed={activeCaps?.speed ? v => selected ? updateSelected({ speed: v }) : (rememberActiveDraftModelPreference({ model: draftModel, effort: draftEffort, speed: v }), setDraftSpeed(v)) : undefined}
+        onSpeed={activeCaps?.speed ? v => selected ? updateSelected({ speed: v }) : modelPreferences.change(draftAgent, { model: draftModel, speed: v }) : undefined}
         onDiagnose={() => openObservability('diagnostics', activeAgent)}
         openSignal={modelSignal}
         onOpen={() => refreshActiveModels(true)}
         onModel={(v) => {
-          if (selected) return updateSelected({ model: v }); // the daemon drops an effort the new model lacks
-          const nextSpeed = draftSpeed && speedsForModel(models, v).some(s => s.id === draftSpeed) ? draftSpeed : null;
-          const nextEffort = draftEffort && effortsForModel(models, v, effortLevels).includes(draftEffort) ? draftEffort : null;
-          rememberActiveDraftModelPreference({ model: v, effort: nextEffort, speed: nextSpeed });
-          setDraftModel(v);
-          if (draftSpeed !== nextSpeed) setDraftSpeed(nextSpeed);
-          if (draftEffort !== nextEffort) setDraftEffort(nextEffort);
+          if (selected) return updateSelected({ model: v });
+          modelPreferences.change(draftAgent, { model: v });
         }}
-        onEffort={(v) => selected ? updateSelected({ effort: v }) : (rememberActiveDraftModelPreference({ model: draftModel, effort: v, speed: draftSpeed }), setDraftEffort(v))}
+        onEffort={(v) => selected ? updateSelected({ effort: v }) : modelPreferences.change(draftAgent, { model: draftModel, effort: v })}
       />
 
     </>
@@ -3236,6 +3156,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
               </button>
             )}
           </div>
+          {onDesk && !selected && <div className="topbar-desk" ref={setDeskSlot} />}
           {selected && (
             <div className="topbar-actions">
               {/* The thread at a glance: one panel for the team, the plan, the changes, the pictures
@@ -3446,11 +3367,17 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           </div>
         ) : onDesk ? (
           <div key="desk" className="scroller">
-            <DeskPage key={setupNotice?.at} setupNeeded={setupNeeded} onExplore={openExplore} api={api} todos={todos} loading={todosLoading} error={todosError} threads={threads} agents={agents}
+            <AssistantHome key={setupNotice?.at} setupNeeded={setupNeeded} onExplore={openExplore} api={api} todos={todos} loading={todosLoading} error={todosError} threads={threads} agents={agents}
               personal={personal} personalError={personalError} refreshKey={todosKey} onReload={reloadTodos}
-              onPersonalChange={setPersonal} onPersonalRetry={reloadPersonal} onOpenThread={pick} onOpenPlans={openTodos}
+              // Not `pick`: the assistant home's rows and links can name a thread this list no longer
+              // holds (archived since it was read); openThreadById still opens it, and says so
+              // honestly when nothing answers, instead of the empty new-thread page.
+              onPersonalChange={setPersonal} onPersonalRetry={reloadPersonal} onOpenThread={openThreadById} onOpenPlans={openTodos}
+              onConfigure={() => openSettings('assistant')} threadsKnown={threadsKnown}
               openFinds={deskFinds} onFindsOpened={() => setDeskFinds(false)}
-              onSpreadChange={setDeskSpread} revealTodoId={revealTodo} onRevealTodo={() => setRevealTodo(null)} />
+              onSpreadChange={setDeskSpread} revealTodoId={revealTodo} onRevealTodo={() => setRevealTodo(null)}
+              path={deskPath} onPathChange={setDeskPath}
+              focusSignal={chatFocus} headerSlot={deskSlot} />
           </div>
         ) : onTodos ? (
           // A scroller of its own: the thread's one pins itself to the bottom, a document starts at the top.
@@ -3523,6 +3450,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
                 setMessageReference({ draftKey, value, nonce: Date.now() });
               } : undefined}
               onHandToAssistant={!demo ? async (text, turnId, threadId) => setAssistantMessage(await messageSnapshot(text, turnId, threadId)) : undefined}
+              onAutoHandover={!demo && !selected.archivedAt ? () => threadActions.autoHandover(selected) : undefined}
               historyThreadId={selected.id}
               items={threadItems}
               revealTurnId={jump?.threadId === selected.id ? jump.turnId : undefined}
@@ -3541,6 +3469,9 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
                 if (known) { openThread(known); return; }
                 if (api) void api.thread(id).then(openThread).catch(handleError);
               }}
+              // A message names another thread in passing; the link opens it like a pick in the list.
+              threads={threads}
+              onOpenThread={openThreadById}
               hasOlder={hasOlder}
               loadingOlder={loadingOlder}
               onLoadOlder={loadOlder}
@@ -3586,6 +3517,28 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
                   void api.setResume(selected.id, false).catch(handleError).finally(() => setResumeBusy(false));
                 },
               } : null}
+              autoRetry={!api.demo && selected.autoRetry ? {
+                attempts: selected.autoRetry.attempts,
+                max: selected.autoRetry.max,
+                nextAt: selected.autoRetry.nextAt,
+                busy: autoRetryBusy,
+                onCancel: () => {
+                  setAutoRetryBusy(true);
+                  void api.cancelAutoRetry(selected.id).catch(handleError).finally(() => setAutoRetryBusy(false));
+                },
+              } : null}
+              advance={!api.demo && selected.advance?.nextAt ? {
+                reason: selected.advance.reason,
+                attempts: selected.advance.attempts,
+                max: selected.advance.max,
+                nextAt: selected.advance.nextAt,
+                ...(selected.advance.what !== undefined ? { what: selected.advance.what } : {}),
+                busy: advanceBusy,
+                onCancel: () => {
+                  setAdvanceBusy(true);
+                  void api.cancelAdvanceWatch(selected.id).catch(handleError).finally(() => setAdvanceBusy(false));
+                },
+              } : null}
             />
           ) : (
             <div className="empty">
@@ -3617,7 +3570,6 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           }} />}
         {showcase ? showcase.composer(selectedId) : <>
         {selected?.coordination?.team && selected.coordination.rootId === selected.id && ['awaiting_confirm', 'needs_attention'].includes(selected.coordination.team.status) && <div className="team-task-notice">{selected.coordination.team.status === 'needs_attention' && <span>{selected.coordination.team.error}</span>}{selected.coordination.team.status === 'awaiting_confirm' && <button className="ghost" onClick={() => void api.configureCoordination(selected.id, { action: 'confirm' }).then(value => { setCoordination(value); void refreshThreads(); }).catch(handleError)}>{t('teams.confirm')}</button>}</div>}
-        {!selected && draftTeam && <div className="team-text-only">{t('teams.attachments')}</div>}
         {voice.state.error ? <div className="voice-reconnect-row"><button className="voice-reconnect" onClick={() => void voice.start()}>{t('voice.reconnect')}</button><VoiceControls session={voice.state} onMute={voice.toggleMute} onStop={voice.dismissError} /></div> : viewingEarlier && latestSegment ? <HandoverComposer
           key={latestSegment.id} api={api} thread={latestSegment} sourceId={selected!.id} label={agentLabel(latestSegment.agent)} hostId={hostId}
           attachBlocked={capsOf(latestSegment.agent)?.images ? null : t('app.noImages', agentLabel(latestSegment.agent))}
@@ -3631,7 +3583,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           draftKey={composerDraftKey}
           voiceControls={voice.state.active ? <VoiceControls session={voice.state} onMute={voice.toggleMute} onStop={() => void voice.stop()} /> : undefined}
           running={voice.state.active ? false : running}
-          disabled={modeBusy || (!selected && !draftCwd)}
+          disabled={modeBusy || (!selected && (!draftCwd || modelPreferences.status !== 'ready'))}
           placeholder={voice.state.active ? t('app.placeholder.continue') : onRouterThread && !running ? t('pet.threadPlaceholder') : demo ? t('app.placeholder.demo') : workMode === 'plan' && !running ? t('composerMenu.planOn') : writing && !running ? t('writing.placeholder') : selected ? (running ? t('sideChat.queuePlaceholder') : t('app.placeholder.continue')) : draftScratch ? t('app.placeholder.scratch') : t('app.placeholder.startIn', folderName(draftCwd))}
           onSend={voice.state.active ? async (text, images, _mentions, videos = []) => {
             try { await voice.appendText(text, images.map(img => ({ data: img.data, mimeType: img.mimeType })), await Promise.all(videos.map(async video => (await api.uploadVideo(selectedId!, video.file)).id))); }
@@ -3682,7 +3634,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           actions={hubActions}
           hiddenCommands={hiddenCommands}
           onAction={runHubAction}
-          attachmentsBlocked={!selected && draftTeam ? t('teams.attachments') : undefined}
+          uploadsBlocked={!selected && draftTeam ? t('teams.attachments') : undefined}
           attachBlocked={attachBlocked}
           attachNote={imagesNote(models, model)}
           onError={setError}
@@ -3695,6 +3647,8 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           note={noteSignal?.draftKey === composerDraftKey ? noteSignal.note : null}
           onNoteConsumed={consumeNote}
           onNotesChange={onNotesChange}
+          // A quote copied in another thread here carries where to read it in full; one from this thread needs nothing.
+          quoteSource={(threadId, turnId) => threadId !== selectedId && threads.some(x => x.id === threadId) ? { threadId, turnId, elsewhere: true } : undefined}
           lastSent={selected ? lastSent : null}
         />}
         </>}
@@ -3755,7 +3709,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
       )}
       </div>
       {preview && api && (
-        <PreviewPanel api={api} threadId={preview.threadId} path={preview.path} onClose={() => setPreview(null)} onError={handleError} />
+        <PreviewPanel key={`${hostId ?? ''}:${preview.threadId}:${preview.path}`} api={api} threadId={preview.threadId} path={preview.path} onClose={() => setPreview(null)} onError={handleError} />
       )}
       {desktop !== 'closed' && (
         <DesktopPanel api={api} hidden={desktop === 'minimized'} onMinimize={() => setDesktop('minimized')} onClose={() => setDesktop('closed')} />
@@ -3799,6 +3753,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           onOpenThread={pick}
           onStatusChange={setPetStatus}
           onConfigure={() => openSettings('assistant')}
+          onChat={() => { if (!onDesk) openDesk(false); setChatFocus(n => n + 1); }}
           todos={todos.filter(todo => !todo.done)}
           onOpenTodo={openTodoFromPet}
         />
@@ -3871,6 +3826,8 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           onClose={() => setSideAsk(null)}
           onError={handleError}
           onThreadCreated={(t) => setThreads((prev) => [t, ...prev.filter((x) => x.id !== t.id)])}
+          threads={threads}
+          onOpenThread={(id) => { setSideAsk(null); openThreadById(id); }}
         />
       )}
       {api && diffFile && diffFile.threadId === selected?.id && (

@@ -188,6 +188,7 @@ class DoubaoSession implements AgentSession {
     }
 
     const [bin, ...base] = this.command;
+    hooks.emit({ type: 'session.lifecycle', data: { action: 'start', reason: 'per_turn_process' } });
     const child = spawn(bin, doubaoArgs({ ...this.opts, resumeId: this.agentSessionId || undefined }, input.text, base), {
       cwd: this.opts.cwd,
       env: sessionEnvironment(this.env, this.opts.coordinationEnv),

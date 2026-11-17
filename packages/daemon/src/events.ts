@@ -15,8 +15,12 @@ export type EventType =
   | 'turn.started'
   /** Request milestones, with elapsedMs and sincePreviousPhaseMs assigned by the hub. */
   | 'turn.phase'
+  /** Process starts and closes, with machine-readable causes; no prompt or credentials. */
+  | 'session.lifecycle'
   | 'turn.done'
   | 'turn.error'
+  /** The daemon resent the last failed turn by itself after a transient provider error. */
+  | 'turn.retry'
   | 'message.delta'
   /** Authoritative item text correcting its already-streamed tail. */
   | 'message.replace'
@@ -52,9 +56,9 @@ export type EventType =
   | 'extensions.changed';
 
 /** Structured origin for turns started by an internal channel rather than a person. */
-export type TurnPart = { kind: 'person'; text: string } | { kind: 'lark' | 'worker'; count: number };
+export type TurnPart = { kind: 'person'; text: string } | { kind: 'lark' | 'worker' | 'meeting-prep'; count: number };
 /** `mixed`: several arrivals folded into one Router turn, in order; `parts` keeps them apart for display. */
-export interface TurnChannel { kind: 'lark' | 'worker' | 'mixed'; count: number; parts?: TurnPart[] }
+export interface TurnChannel { kind: 'lark' | 'worker' | 'meeting-prep' | 'mixed'; count: number; parts?: TurnPart[] }
 
 export interface StoredEvent {
   threadId: string;

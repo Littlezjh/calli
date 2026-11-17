@@ -167,31 +167,68 @@ test('general settings default to a new thread and persist across clients and st
   assert.deepEqual(await (await api(path, { method: 'PUT', body: JSON.stringify({ startupPage: 'new-thread', autoArchiveDays: null }) })).json(), { startupPage: 'new-thread', autoArchiveDays: null });
 });
 
-test('draft model preferences are stored by the daemon and sanitized by agent capability', async () => {
+test('model preferences persist by instance and model; reads never discard unavailable choices', async () => {
   const path = '/api/draft-model-preferences';
+  const edit = async (value: unknown) => {
+    const response = await api(path, { method: 'PATCH', body: JSON.stringify(value) });
+    assert.equal(response.status, 200);
+    return response.json();
+  };
   assert.equal((await api(path, {}, false)).status, 401);
-  assert.equal((await api(path, { method: 'PUT', body: JSON.stringify({ pi: { model: 'fake/think' } }) }, false)).status, 401);
-  assert.deepEqual(await (await api(path)).json(), {});
-  assert.equal((await api(path, { method: 'PUT', body: JSON.stringify(null) })).status, 400);
-
-  const saved = await api(path, { method: 'PUT', body: JSON.stringify({
-    pi: { model: 'fake/think', effort: 'high', speed: 'fast' },
-    ghost: { model: 'fake/think', effort: 'high', speed: 'fast' },
-    junk: 'not a preference',
-  }) });
-  assert.equal(saved.status, 200);
-  assert.deepEqual(await saved.json(), { pi: { model: 'fake/think', effort: 'high', speed: null } });
-  assert.deepEqual(await (await api(path)).json(), { pi: { model: 'fake/think', effort: 'high', speed: null } });
+  assert.equal((await api(path, { method: 'PATCH', body: JSON.stringify({ agent: 'pi', effort: 'high' }) }, false)).status, 401);
+  for (const body of [null, {}, { agent: 'ghost', model: null }, { agent: 'pi' }, { agent: 'pi', effort: 9 }, { agent: 'pi', model: 'missing' }]) {
+    assert.equal((await api(path, { method: 'PATCH', body: JSON.stringify(body) })).status, 400);
+  }
+  let choice = await edit({ agent: 'pi', model: 'fake/think', effort: 'high' });
+  assert.equal(choice.effort, 'high');
+  await edit({ agent: 'pi', model: 'fake/plain' });
+  choice = await edit({ agent: 'pi', model: 'fake/think' });
+  assert.equal(choice.effort, 'high');
+  await edit({ agent: 'pi', effort: null });
+  await edit({ agent: 'pi', model: 'fake/plain' });
+  assert.equal((await edit({ agent: 'pi', model: 'fake/think' })).effort, null);
+  // Different devices editing different instances cannot replace each other's map entries.
+  await Promise.all([edit({ agent: 'pi', effort: 'high' }), edit({ agent: 'claude', model: null })]);
+  const saved = await (await api(path)).json();
+  assert.equal(saved.pi.effort, 'high');
+  assert.ok(saved.claude);
   const reopened = new Store(dataDir);
-  try { assert.deepEqual(reopened.hubSetting('draft.model.preferences', null), { pi: { model: 'fake/think', effort: 'high', speed: null } }); }
+  try { assert.deepEqual(reopened.hubSetting('draft.model.preferences', null), saved); }
   finally { reopened.close(); }
+  const unavailable = { pi: { model: 'fake/missing', effort: 'high', speed: null } };
+  store.saveHubSetting('draft.model.preferences', unavailable);
+  assert.equal((await (await api(path)).json()).pi.model, 'fake/missing');
+  assert.deepEqual(store.hubSetting('draft.model.preferences', null), unavailable, 'GET is read-only');
+  // Legacy PUT still works, preserving entries it does not mention.
+  await edit({ agent: 'claude', model: null });
+  const put = await api(path, { method: 'PUT', body: JSON.stringify({ pi: { model: 'fake/think', effort: 'high' } }) });
+  assert.equal(put.status, 200);
+  assert.ok((await put.json()).claude);
+});
 
-  store.saveHubSetting('draft.model.preferences', {
-    pi: { model: 'fake/missing', effort: 'high', speed: 'fast' },
-    ghost: { model: 'fake/think', effort: 'high', speed: 'fast' },
-  });
-  assert.deepEqual(await (await api(path)).json(), { pi: { model: null, effort: 'high', speed: null } });
-  assert.deepEqual(store.hubSetting('draft.model.preferences', null), { pi: { model: null, effort: 'high', speed: null } });
+test('only explicit composer edits update future preferences; old threads keep their settings', async () => {
+  const path = '/api/draft-model-preferences';
+  const created = await api('/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'pi', cwd: workdir, model: 'fake/think', effort: 'low' }) });
+  assert.equal(created.status, 201);
+  const thread = await created.json();
+  const before = await (await api(path)).json();
+  await api(`/api/threads/${thread.id}`);
+  await api(`/api/threads/${thread.id}`, { method: 'PATCH', body: JSON.stringify({ effort: 'max' }) });
+  assert.deepEqual(await (await api(path)).json(), before, 'internal edits and reads do not affect defaults');
+  const edit = async (body: object) => {
+    const response = await api(`/api/threads/${thread.id}`, { method: 'PATCH', body: JSON.stringify({ ...body, rememberModelChoice: true }) });
+    assert.equal(response.status, 200);
+    return response.json();
+  };
+  await edit({ effort: 'low' });
+  assert.equal((await (await api(path)).json()).pi.effort, 'low');
+  await edit({ model: 'fake/plain' });
+  assert.equal((await edit({ model: 'fake/think' })).effort, 'low');
+  await api(path, { method: 'PATCH', body: JSON.stringify({ agent: 'pi', model: 'fake/plain' }) });
+  assert.equal((await (await api(`/api/threads/${thread.id}`)).json()).model, 'fake/think');
+  const failed = await api(`/api/threads/${thread.id}`, { method: 'PATCH', body: JSON.stringify({ model: 'missing', rememberModelChoice: true }) });
+  assert.equal(failed.status, 400);
+  assert.equal((await (await api(path)).json()).pi.model, 'fake/plain');
 });
 
 test('project directory browsing is authenticated, read-only, and independent of file access', async () => {
@@ -587,6 +624,7 @@ test('Claude validates unknown model capabilities when used; known catalog restr
       return events.some(event => event.type === 'turn.error') ? events : null;
     });
     assert.equal(failed.some(event => event.type === 'message.delta'), false, 'the rejected configuration must not run a prompt');
+    if (choice.model === 'broken') assert.match(String(failed.find(event => event.type === 'turn.error')?.data.message), /Could not confirm model "broken" with the API/);
   }
   const piPlain = await api('/api/threads', {
     method: 'POST',

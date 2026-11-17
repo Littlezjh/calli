@@ -11,6 +11,10 @@ export interface TurnInput {
 }
 
 export type WorkMode = 'execute' | 'plan';
+export interface UserQuestionNote {
+  /** The schema field the note is answered under, so the agent gets it back untouched. */
+  id: string;
+}
 export interface UserQuestion {
   id: string;
   question: string;
@@ -19,6 +23,8 @@ export interface UserQuestion {
   multiple?: boolean;
   freeText?: boolean;
   required?: boolean;
+  /** The agent's own optional free-text line for this choice ("other" answer or note), asked on the same card. */
+  note?: UserQuestionNote;
 }
 export interface UserInputRequest {
   /** Native request identity, used to coalesce reannouncements and cancellations. */
@@ -88,6 +94,8 @@ export interface TurnResult {
 
 /** A live agent session bound to one thread. */
 export interface AgentSession {
+  /** A speculative process may have exited since it became ready. */
+  isAlive?(): boolean;
   /** Stable id on the agent side, used to resume the session after a restart. */
   readonly agentSessionId: string;
   /** Changes the permission level of a live session. Only called when the adapter lists modes. */
@@ -174,9 +182,21 @@ export interface QuotaWindow {
   loadPercent?: number;
 }
 
+/** Money left on a pay-as-you-go key, as the vendor states it; never turned into a percentage. */
+export interface QuotaBalance {
+  /** Whose balance: the provider or account behind it. */
+  scope: string;
+  /** The amount with its currency, as reported, such as "¥60.52". */
+  amount: string;
+  /** Exact model IDs billed from this balance; absent means unmapped. */
+  modelIds?: string[];
+}
+
 /** Plan usage of an agent instance, read outside any session so nothing is left behind. */
 export interface PlanQuota {
   windows: QuotaWindow[];
+  /** Balances of keys billed per use, next to the plans' windows. */
+  balances?: QuotaBalance[];
   /** An adapter's explanation of missing or limited quota data. */
   note?: string;
   /**
@@ -268,6 +288,8 @@ export interface DiscoveredAccount {
 }
 
 export interface StartOptions {
+  /** Cancels a speculative startup and closes its owned process. */
+  signal?: AbortSignal;
   /** Internal metadata probes must not take the shortcuts used to create a real conversation. */
   probe?: boolean;
   /** Native capability requested for an isolated Calli tool job, absent on ordinary threads. */
@@ -305,6 +327,8 @@ export interface StreamBridgeCapability {
 }
 
 export interface AgentAdapter {
+  /** Starting without a prompt is cancellable and can prepare a new draft. */
+  readonly prewarm?: boolean;
   /** Optional task capabilities exposed through Calli's on-demand CLI. */
   readonly borrowedTools?: readonly import('./borrowed-tools.js').BorrowedTool[];
   readonly id: string;
@@ -314,6 +338,8 @@ export interface AgentAdapter {
   /** Command or guide to install this agent when it is not yet on PATH. */
   readonly installGuide?: string;
   readonly capabilities: {
+    /** The adapter can prepare a cancellable session before the first message. */
+    prewarm?: boolean;
     /** The adapter can inspect existing generated memory; this does not imply generation is enabled. */
     memory?: boolean;
     workModes?: readonly WorkMode[];
@@ -410,6 +436,20 @@ export interface AgentAdapter {
   planExhausted?(message: string): boolean;
   /** Whether the native session explicitly refused another writer. */
   sessionInUse?(message: string): boolean;
+  /**
+   * Whether two models on this instance bill from independent quota pools, judging by their ids
+   * alone — a gateway whose plan models and routed providers bill separately, say. Switching a
+   * thread's model within its own instance is only offered with evidence like this, where the
+   * quota windows cannot name per-model pools. Returning false (or not defining this) keeps the
+   * windows as the only evidence.
+   */
+  separateModelPools?(from: string, to: string): boolean;
+  /**
+   * Whether this instance reaches its models through a gateway rather than the account's own
+   * subscription. Both may report usage windows, so automatic handover asks this to keep the
+   * default order from moving work between a subscription and a gateway.
+   */
+  routesThroughGateway?(): boolean;
   /** Read-only location of this instance's native session, without starting an agent. */
   sessionLocation?(agentSessionId: string | null, cwd: string): Promise<{
     configDir: string;
@@ -533,4 +573,11 @@ export function sessionStoreKey(instance: { adapter: string; env?: Record<string
     default:
       return instance.adapter;
   }
+}
+
+/** A cancelled speculative start must not leave a child waiting on its protocol handshake. */
+export function cancelSessionOnAbort(signal: AbortSignal | undefined, close: () => void): void {
+  if (!signal) return;
+  if (signal.aborted) close();
+  else signal.addEventListener('abort', close, { once: true });
 }

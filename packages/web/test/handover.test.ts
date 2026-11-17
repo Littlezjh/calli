@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { handoverHistoryKey, laterSegment, latestHandoverThread, nextSegment, takeoverMention } from '../src/handover';
+import { handoverHistoryKey, laterSegment, latestHandoverThread, nextSegment, takeoverMention, cancellableHandover } from '../src/handover';
 import type { Thread } from '../src/api';
 
 const segment = (id: string, parent?: string) => ({ id, createdAt: id, handover: parent ? { sourceId: parent, mode: 'continue' } : null }) as Thread;
@@ -64,4 +64,14 @@ test('a conversation handed over to by hand follows its source only while the so
   const next = by('next', {}, { mode: 'continue', automatic: true });
   assert.equal(laterSegment(a, next, [a, next, older])?.id, 'next');
   assert.equal(laterSegment(a, a, [a, by('other', {}, { sourceId: 'z' })]), undefined, 'handed over from another conversation');
+});
+
+test('only a handover made by hand from the dialog can be cancelled from the menu', () => {
+  const link = { sourceId: 's', title: 'x', agent: 'a' };
+  assert.equal(cancellableHandover({ handover: { ...link, mode: 'branch', automatic: false }, archivedAt: null }), true);
+  assert.equal(cancellableHandover({ handover: { ...link, mode: 'branch', automatic: false }, archivedAt: '2026-11-14T00:00:00Z' }), false);
+  assert.equal(cancellableHandover({ handover: { ...link, mode: 'continue', automatic: true, method: 'resume' }, archivedAt: null }), false);
+  // An automatic handover shown as its own conversation after the source moved on is still automatic.
+  assert.equal(cancellableHandover({ handover: { ...link, mode: 'branch', automatic: true, method: 'summary', sourceMoved: true }, archivedAt: null }), false);
+  assert.equal(cancellableHandover({ handover: null, archivedAt: null }), false);
 });

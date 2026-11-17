@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { Api } from '../api';
 import { IconClose, IconExternal, IconRefresh } from './icons';
+import { externalPreview } from '../preview-notes';
+import { PreviewAnnotations } from './PreviewAnnotations';
 import { t } from '../i18n';
 
 /**
@@ -20,6 +23,7 @@ interface Props {
 }
 
 export function PreviewPanel({ api, threadId, path, onClose, onError }: Props) {
+  const frame = useRef<HTMLIFrameElement>(null);
   const [url, setUrl] = useState<string | null>(null);
   const [refreshedAt, setRefreshedAt] = useState(0);
   const alive = useRef(true);
@@ -31,7 +35,8 @@ export function PreviewPanel({ api, threadId, path, onClose, onError }: Props) {
 
   const load = useCallback(async () => {
     try {
-      const { url: signed } = await api.previewLink(threadId, path);
+      const external = externalPreview(path, window.location.origin);
+      const signed = external ?? (await api.previewLink(threadId, path)).url;
       if (!alive.current) return;
       setUrl(signed);
       setRefreshedAt(Date.now());
@@ -48,9 +53,9 @@ export function PreviewPanel({ api, threadId, path, onClose, onError }: Props) {
     };
   }, [load]);
 
-  const name = path.split('/').pop() ?? path;
+  const name = path.split('/').pop() || path;
 
-  return (
+  return createPortal(
     <div className="preview-scrim" onClick={onClose}>
       <div className="preview" role="dialog" aria-modal="true" aria-label={t('preview.label', name)} onClick={(e) => e.stopPropagation()}>
         <div className="preview-bar">
@@ -71,6 +76,7 @@ export function PreviewPanel({ api, threadId, path, onClose, onError }: Props) {
         </div>
         {url ? (
           <iframe
+            ref={frame}
             key={`${url}#${refreshedAt}`}
             className="preview-frame"
             src={url}
@@ -83,7 +89,8 @@ export function PreviewPanel({ api, threadId, path, onClose, onError }: Props) {
         ) : (
           <div className="preview-loading">{t('preview.opening')}</div>
         )}
+        <PreviewAnnotations api={api} threadId={threadId} path={path} url={url} frame={frame} generation={refreshedAt} />
       </div>
-    </div>
+    </div>, document.body
   );
 }

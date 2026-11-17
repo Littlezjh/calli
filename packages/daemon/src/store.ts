@@ -20,9 +20,11 @@ import { MessageEdits } from './message-edits.js';
 import type { MeetingReference, SignalMaterial, SignalMaterialRead } from './channels/lark-material.js';
 
 /** Storage cap for one tool snapshot's output; see docs/tool-output-storage-design.md. */
-const MAX_OUTPUT_CHARS = 128 * 1024;
-const OUTPUT_HEAD_CHARS = 96 * 1024;
-const OUTPUT_TAIL_CHARS = 32 * 1024;
+// The hub keeps a preview of a tool's output, not the output: the agent's own session file is the
+// full copy. 4K is enough to read a command's start and its last lines in the timeline.
+const MAX_OUTPUT_CHARS = 4 * 1024;
+const OUTPUT_HEAD_CHARS = 3 * 1024;
+const OUTPUT_TAIL_CHARS = 1024;
 
 export type TitleBy = 'default' | 'user' | 'auto';
 
@@ -201,8 +203,9 @@ export function urgencyOf(todo: Pick<TodoRecord, 'done' | 'state' | 'dueAt' | 'u
 /** One entry on the plan page. `parentId` is only ever a top-level todo: one level of nesting. */
 export interface TodoNote { text: string; updatedAt: string | null; threadId: string | null }
 export interface TodoProposal { id: string; todoId: string; kind: 'add' | 'done'; evidence: string; threadId: string; createdAt: string; state: 'open' | 'accepted' | 'dismissed' }
-export type TodoPatch = Partial<Pick<TodoRecord, 'text' | 'done' | 'owner' | 'state' | 'lane' | 'importance' | 'urgentUntil' | 'source' | 'subscriptions' | 'waitingOn' | 'dueAt' | 'followUpAt' | 'followUpNoProgress' | 'followUpPaused' | 'proposed'>>;
+export type TodoPatch = Partial<Pick<TodoRecord, 'text' | 'done' | 'owner' | 'state' | 'lane' | 'importance' | 'horizon' | 'urgentUntil' | 'source' | 'subscriptions' | 'waitingOn' | 'dueAt' | 'followUpAt' | 'followUpNoProgress' | 'followUpPaused' | 'proposed'>>;
 export interface TodoRecord {
+  horizon: 'week' | 'month' | null;
   owner: 'me' | 'agent';
   state: 'open' | 'waiting' | 'done';
   /** Explicit group; null lets the page infer it from the due date and waiting state. */
@@ -238,7 +241,7 @@ export interface TodoRecord {
 interface TodoRow {
   subscriptions: string;
   owner: 'me' | 'agent'; state: 'open' | 'waiting' | 'done'; lane: string | null; importance: string | null; urgent_until: string | null; source: string | null; waiting_on: string | null;
-  due_at: string | null; follow_up_at: string | null; rev: number; proposed: number;
+  horizon: 'week' | 'month' | null; due_at: string | null; follow_up_at: string | null; rev: number; proposed: number;
   follow_up_no_progress: number; follow_up_paused: number;
   has_note: number; note_preview: string | null; note_updated_at: string | null;
   id: string;
@@ -340,7 +343,7 @@ const toTodo = (r: TodoRow): TodoRecord => ({
   urgentUntil: r.urgent_until,
   source: toTodoSource(r.source),
   subscriptions: todoSubscriptions(JSON.parse(r.subscriptions)),
-  waitingOn: r.waiting_on, dueAt: r.due_at, followUpAt: r.follow_up_at,
+  horizon: r.horizon ?? null, waitingOn: r.waiting_on, dueAt: r.due_at, followUpAt: r.follow_up_at,
   followUpNoProgress: r.follow_up_no_progress, followUpPaused: r.follow_up_paused === 1,
   rev: r.rev, proposed: r.proposed === 1, hasNote: r.has_note === 1, notePreview: r.note_preview, noteUpdatedAt: r.note_updated_at,
   id: r.id,
@@ -507,6 +510,9 @@ export class Store {
       CREATE INDEX IF NOT EXISTS idx_events_conversation_starts ON events(thread_id, seq) WHERE type IN ('turn.started', 'voice.message');
       CREATE INDEX IF NOT EXISTS idx_events_turn_lifecycle ON events(thread_id, seq) WHERE type IN ('turn.started', 'turn.done', 'turn.error');
       CREATE INDEX IF NOT EXISTS idx_events_tool_starts ON events(ts) WHERE type = 'tool.start';
+      -- Covers history paging, which reads everything but data: a cold cache then walks this
+      -- compact index instead of seeking into 5GB of interleaved event bodies.
+      CREATE INDEX IF NOT EXISTS idx_events_cover ON events(thread_id, seq, type, ts, turn_id);
       DROP INDEX IF EXISTS idx_events_tool_ids;
     `);
     // Migration: add pinned column if it doesn't exist
@@ -629,7 +635,7 @@ export class Store {
     `));
     if (!runColumns.some(c => c.name === 'note_before_hash')) this.db.exec('ALTER TABLE schedule_runs ADD COLUMN note_before_hash TEXT');
     const todoColumns = new Set((this.db.prepare('PRAGMA table_info(todos)').all() as Array<{ name: string }>).map(c => c.name));
-    for (const [column, definition] of Object.entries({ owner: "TEXT NOT NULL DEFAULT 'me'", state: "TEXT NOT NULL DEFAULT 'open'", lane: 'TEXT', importance: 'TEXT', urgent_until: 'TEXT', source: 'TEXT', subscriptions: "TEXT NOT NULL DEFAULT '[]'", waiting_on: 'TEXT', due_at: 'TEXT', follow_up_at: 'TEXT', follow_up_no_progress: 'INTEGER NOT NULL DEFAULT 0', follow_up_paused: 'INTEGER NOT NULL DEFAULT 0', rev: 'INTEGER NOT NULL DEFAULT 1', proposed: 'INTEGER NOT NULL DEFAULT 0', has_note: 'INTEGER NOT NULL DEFAULT 0', note_preview: 'TEXT', note_updated_at: 'TEXT', updated_at: 'TEXT' })) {
+    for (const [column, definition] of Object.entries({ owner: "TEXT NOT NULL DEFAULT 'me'", state: "TEXT NOT NULL DEFAULT 'open'", lane: 'TEXT', importance: 'TEXT', urgent_until: 'TEXT', source: 'TEXT', subscriptions: "TEXT NOT NULL DEFAULT '[]'", waiting_on: 'TEXT', horizon: 'TEXT', due_at: 'TEXT', follow_up_at: 'TEXT', follow_up_no_progress: 'INTEGER NOT NULL DEFAULT 0', follow_up_paused: 'INTEGER NOT NULL DEFAULT 0', rev: 'INTEGER NOT NULL DEFAULT 1', proposed: 'INTEGER NOT NULL DEFAULT 0', has_note: 'INTEGER NOT NULL DEFAULT 0', note_preview: 'TEXT', note_updated_at: 'TEXT', updated_at: 'TEXT' })) {
       if (!todoColumns.has(column)) this.db.exec(`ALTER TABLE todos ADD COLUMN ${column} ${definition}`);
     }
     // Old items were last touched when they were created; every writer stamps from now on.
@@ -1300,8 +1306,8 @@ export class Store {
       .prepare('INSERT INTO todos (id, text, done, parent_id, position, created_at, updated_at) VALUES (?, ?, 0, ?, ?, ?, ?)')
       .run(id, text, parentId, row.next, now, now);
     if (Object.keys(fields).length) {
-      this.db.prepare('UPDATE todos SET owner = ?, due_at = ?, proposed = ?, lane = ?, importance = ?, urgent_until = ?, source = ?, subscriptions = ? WHERE id = ?')
-        .run(fields.owner ?? 'me', fields.dueAt ?? null, fields.proposed ? 1 : 0, fields.lane ?? null, fields.importance ?? null, fields.urgentUntil ?? null, fields.source === undefined ? null : JSON.stringify(fields.source), JSON.stringify(subscriptions), id);
+      this.db.prepare('UPDATE todos SET horizon = ?, owner = ?, due_at = ?, proposed = ?, lane = ?, importance = ?, urgent_until = ?, source = ?, subscriptions = ? WHERE id = ?')
+        .run(fields.horizon ?? null, fields.owner ?? 'me', fields.dueAt ?? null, fields.proposed ? 1 : 0, fields.lane ?? null, fields.importance ?? null, fields.urgentUntil ?? null, fields.source === undefined ? null : JSON.stringify(fields.source), JSON.stringify(subscriptions), id);
     }
     return this.getTodo(id)!;
   }
@@ -1326,8 +1332,8 @@ export class Store {
     next.doneAt = next.done ? (current.doneAt ?? new Date().toISOString()) : null;
     if (next.state !== 'waiting') next.waitingOn = null;
     next.updatedAt = new Date().toISOString();
-    this.db.prepare('UPDATE todos SET text = ?, done = ?, done_at = ?, owner = ?, state = ?, lane = ?, importance = ?, urgent_until = ?, source = ?, subscriptions = ?, waiting_on = ?, due_at = ?, follow_up_at = ?, follow_up_no_progress = ?, follow_up_paused = ?, proposed = ?, updated_at = ?, rev = rev + 1 WHERE id = ?')
-      .run(next.text, next.done ? 1 : 0, next.doneAt, next.owner, next.state, next.lane, next.importance, next.urgentUntil, next.source === null ? null : JSON.stringify(next.source), JSON.stringify(next.subscriptions), next.waitingOn, next.dueAt, next.followUpAt, next.followUpNoProgress, next.followUpPaused ? 1 : 0, next.proposed ? 1 : 0, next.updatedAt, id);
+    this.db.prepare('UPDATE todos SET horizon = ?, text = ?, done = ?, done_at = ?, owner = ?, state = ?, lane = ?, importance = ?, urgent_until = ?, source = ?, subscriptions = ?, waiting_on = ?, due_at = ?, follow_up_at = ?, follow_up_no_progress = ?, follow_up_paused = ?, proposed = ?, updated_at = ?, rev = rev + 1 WHERE id = ?')
+      .run(next.horizon, next.text, next.done ? 1 : 0, next.doneAt, next.owner, next.state, next.lane, next.importance, next.urgentUntil, next.source === null ? null : JSON.stringify(next.source), JSON.stringify(next.subscriptions), next.waitingOn, next.dueAt, next.followUpAt, next.followUpNoProgress, next.followUpPaused ? 1 : 0, next.proposed ? 1 : 0, next.updatedAt, id);
     return this.getTodo(id)!;
   }
 
@@ -1520,6 +1526,28 @@ export class Store {
         }});
     }
     this.saveHubSetting('toolOutputCollapsed', true);
+  }
+
+  /** One-time shrink of outputs stored under the old 128K cap down to the preview size. */
+  trimStoredToolOutputs(): void {
+    if (this.hubSetting('toolOutputTrimmed', false)) return;
+    const threads = this.db.prepare('SELECT id FROM threads').all() as Array<{ id: string }>;
+    for (const { id } of threads) {
+      this.transaction(() => {
+        const rows = this.db.prepare(
+          "SELECT seq, data FROM events WHERE thread_id = ? AND type IN ('tool.update', 'tool.end') AND length(data) > ?",
+        ).all(id, MAX_OUTPUT_CHARS) as Array<{ seq: number; data: string }>;
+        for (const row of rows) {
+          let data: Record<string, unknown>;
+          try {
+            data = JSON.parse(row.data) as Record<string, unknown>;
+          } catch { continue; }
+          const stored = this.capOutput(data);
+          if (stored !== data) this.db.prepare('UPDATE events SET data = ? WHERE thread_id = ? AND seq = ?').run(JSON.stringify(stored), id, row.seq);
+        }
+      });
+    }
+    this.saveHubSetting('toolOutputTrimmed', true);
   }
 
   /** Head and tail of an oversized output, with an honest marker where the middle was. */

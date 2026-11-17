@@ -73,6 +73,23 @@ test('progress lines are read leniently and only the last one counts', () => {
   const once = progressInstructions('hi');
   assert.ok(once.startsWith('hi\n\n<calli-progress>'));
   assert.equal(progressInstructions(once), once, 'never appended twice');
+  assert.ok(progressInstructions('hi')!.includes('等外部'), 'the block teaches the waiting word');
+});
+
+test('an external wait stays doing on the board, with what it waits for and how long', () => {
+  // The stage is `doing` — the board shows it as work under way; `wait` carries the rest.
+  assert.deepEqual(parseProgress('在等。\n[进度] 等外部：等 CI 跑完，约 10 分钟'),
+    { stage: 'doing', note: '等 CI 跑完，约 10 分钟', wait: { what: '等 CI 跑完', minutes: 10 } });
+  assert.deepEqual(parseProgress('[进度] 等外部：等部署'),
+    { stage: 'doing', note: '等部署', wait: { what: '等部署' } });
+  // Hours convert; a mid-note duration keeps the whole note as the thing it waits for.
+  assert.deepEqual(parseProgress('[进度] 等外部：CI，大约 1 小时后好'),
+    { stage: 'doing', note: 'CI，大约 1 小时后好', wait: { what: 'CI，大约 1 小时后好', minutes: 60 } });
+  assert.deepEqual(parseProgress('[进度] 等外部：另一个会话完成，约 5 min'),
+    { stage: 'doing', note: '另一个会话完成，约 5 min', wait: { what: '另一个会话完成', minutes: 5 } });
+  // The last line still wins, and 等外部 loses to a later word.
+  assert.deepEqual(parseProgress('[进度] 等外部：等 CI\n[进度] 进行中：不等了'),
+    { stage: 'doing', note: '不等了' });
 });
 
 test('with consent agents are asked, their answers move the thread, and the person marks it done', async () => {

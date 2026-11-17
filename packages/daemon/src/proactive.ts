@@ -8,7 +8,7 @@ import { turnAnswer } from './coordination.js';
 import { HttpError } from './errors.js';
 import type { StoredEvent } from './events.js';
 import { turnOutcome } from './lifecycle.js';
-import type { PersonalService } from './personal.js';
+import type { DispatchTask, PersonalService } from './personal.js';
 import { advancePrompt, parseAdvance, parsePrecheck, precheckPrompt, transientError, type AdvanceDecision, type PrecheckContext } from './proactive-advance.js';
 import { ProactiveSandbox, type SandboxChanges } from './proactive-sandbox.js';
 import { urgencyOf, type Store, type ThreadRecord, type TodoRecord } from './store.js';
@@ -33,7 +33,12 @@ export interface ProactiveRun {
   precheck?: 'done' | 'doing' | 'todo';
   /** What the check cited: `session:<id>` or `commit:<id>`. */
   source?: string;
-  kind: 'prepare' | 'sandbox' | 'advance';
+  kind: 'prepare' | 'sandbox' | 'advance' | 'dispatch';
+  agent?: string;
+  cwd?: string;
+  task?: string;
+  title?: string;
+  model?: string;
   variant?: 'deadline' | 'plan';
   needsRepo?: true;
   turnId?: string;
@@ -194,6 +199,36 @@ export class ProactiveService {
     this.store.saveHubSetting(RUNS, runs.slice(-200));
     this.manager.broadcastTodo();
   }
+  proposeDispatch(task: DispatchTask): ProactiveRun {
+    const run: ProactiveRun = { ...task, id: randomUUID(), kind: 'dispatch', threadId: '',
+      startedAt: new Date().toISOString(), status: 'asking', summary: clip(task.task, 300) };
+    this.saveRun(run);
+    return run;
+  }
+
+  async startDispatch(id: string, authorize: () => void = () => {}): Promise<ProactiveRun> {
+    const run = this.get(id);
+    const check = () => {
+      authorize();
+      const current = this.get(id);
+      if (current.kind !== 'dispatch' || current.status !== 'asking') throw new HttpError(409, '只有待开始的派活卡片可以开始', { run: current });
+    };
+    check();
+    if (this.acting.has(id)) throw new HttpError(409, '派活正在开始', { run: this.get(id), starting: true });
+    this.acting.add(id);
+    try {
+      await this.personal.dispatchThread({ agent: run.agent!, cwd: run.cwd!, task: run.task!, title: run.title!,
+        matterId: run.matterId, ...(run.model ? { model: run.model } : {}) }, threadId => {
+        check();
+        this.update(id, { status: 'answered', threadId, endedAt: new Date().toISOString() });
+      });
+      return this.get(id);
+    } catch (error) {
+      if (error instanceof HttpError && error.status === 409) throw new HttpError(409, error.message, { ...error.details, run: this.get(id) });
+      throw error;
+    } finally { this.acting.delete(id); }
+  }
+
   private update(id: string, patch: Partial<ProactiveRun>): ProactiveRun {
     const run = { ...this.get(id), ...patch };
     this.saveRun(run);
@@ -243,7 +278,7 @@ export class ProactiveService {
       const today = runs.filter(run => !['observed', 'approved'].includes(run.status) && !run.needsRepo && localDay(new Date(run.startedAt)) === localDay(now));
       const todos = this.store.listTodos().filter(todo => !todo.done && todo.state !== 'done' && !todo.proposed && !this.busy(todo.id)
         && !runs.some(run => run.matterId === todo.id && ['running', 'waiting', 'asking'].includes(run.status)));
-      const canOpen = !this.atCapacity() && !runs.some(run => run.kind !== 'advance' && !run.needsRepo && now.getTime() - Date.parse(run.startedAt) < HOUR);
+      const canOpen = !this.atCapacity() && !runs.some(run => (run.kind === 'prepare' || run.kind === 'sandbox') && !run.needsRepo && now.getTime() - Date.parse(run.startedAt) < HOUR);
       const observed = (todo: TodoRecord, kind: ProactiveRun['kind']) => settings.mode === 'observe' && runs.some(run => !run.needsRepo && run.matterId === todo.id && run.kind === kind
         && ['observed', 'approved'].includes(run.status) && now.getTime() - Date.parse(run.startedAt) < DAY);
       if (canOpen && today.filter(run => run.kind === 'prepare').length < 5) {
@@ -372,7 +407,7 @@ export class ProactiveService {
 
   private invalidate(threadId?: string): void {
     for (const run of this.runs()) {
-      if (!['waiting', 'asking'].includes(run.status) || run.precheck || threadId && run.threadId !== threadId) continue;
+      if (run.kind === 'dispatch' || !['waiting', 'asking'].includes(run.status) || run.precheck || threadId && run.threadId !== threadId) continue;
       if (threadId || this.store.recentLifecycle(run.threadId, 1)[0]?.turnId !== run.turnId) {
         this.update(run.id, { status: 'discarded', discardReason: '线程已继续' });
       }
@@ -422,6 +457,9 @@ export class ProactiveService {
       const began = Date.now();
       const outcome = turnOutcome(latest.end)!;
       const transient = outcome.outcome === 'error' && transientError(outcome.code, outcome.message ?? '');
+      // The hub's own automatic retry owns transient failures; once it gives up, the next scan
+      // stops finding a watch here and asks the person, as it always did.
+      if (transient && this.manager.autoRetryView(threadId)) continue;
       let decision: AdvanceDecision = { phase: 'unsure', line: '' };
       // The agent's own [进度] line for this turn says it best; only an unclear one goes to the model.
       const report = thread.report && !thread.report.by && Date.parse(thread.report.at) >= Date.parse(latest.start.ts) ? thread.report : null;

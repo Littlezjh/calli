@@ -35,7 +35,7 @@ interface Props {
 function OptionRow({ name, description, checked, emphasised, disabled, title, role, ariaChecked, trailing, onClick }: {
   name: string;
   description?: string;
-  /** Given (even false) only where a mark belongs: a choice that can sit beside others. */
+  /** Given (even false) wherever a pick can linger on the card: beside other picks, or while a note may still come. */
   checked?: boolean;
   emphasised?: boolean;
   disabled?: boolean;
@@ -149,20 +149,27 @@ function QuestionSheet({ item, index, total, onAnswer }: {
   const [qi, setQi] = useState(0);
   const [picked, setPicked] = useState<Record<string, string[]>>({});
   const [custom, setCustom] = useState<Record<string, string>>({});
+  const [notes, setNotes] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const q: UserQuestion | undefined = questions[qi];
   const last = qi >= questions.length - 1;
 
-  const values = Object.fromEntries(questions.map((question) => [
-    question.id,
-    custom[question.id]?.trim()
+  const values = Object.fromEntries(questions.flatMap((question) => {
+    const pickedValues = custom[question.id]?.trim()
       ? question.multiple
         ? [...(picked[question.id] ?? []), custom[question.id].trim()]
         : [custom[question.id].trim()]
-      : picked[question.id] ?? [],
-  ]));
-  const ready = questions.every((question) => question.required === false || values[question.id].length);
+      : picked[question.id] ?? [];
+    // A choice's own free-text line is its own answer, beside the pick it qualifies or replaces.
+    return question.note && notes[question.note.id]?.trim()
+      ? [[question.id, pickedValues], [question.note.id, [notes[question.note.id].trim()]]]
+      : [[question.id, pickedValues]];
+  }));
+  // A choice is answered by its pick, or by its own free-text line where nothing was picked.
+  const answered = (record: Record<string, string[]>, question: UserQuestion) =>
+    (record[question.id] ?? []).length > 0 || (question.note ? (record[question.note.id] ?? []).length > 0 : false);
+  const ready = questions.every((question) => question.required === false || answered(values, question));
 
   const submit = async (answer: UserInputAnswer) => {
     if (busy) return;
@@ -203,22 +210,32 @@ function QuestionSheet({ item, index, total, onAnswer }: {
     }));
     if (q.multiple) return;
     setCustom((prev) => ({ ...prev, [q.id]: '' }));
+    // A choice with its own note line waits to be sent: the note may still be coming.
+    if (q.note) return;
     // One choice settles a single-choice question: the next one is asked, or all is sent.
     if (!last) {
       setQi(qi + 1);
       return;
     }
     const withThis = { ...values, [q.id]: [value] };
-    if (questions.every((question) => question.required === false || withThis[question.id].length)) {
+    if (questions.every((question) => question.required === false || answered(withThis, question))) {
       void submit({ answers: withThis });
     }
   };
 
   const typed = custom[q.id] ?? '';
-  const answeredHere = (values[q.id] ?? []).length > 0;
+  const note = q.note;
+  const noteText = note ? notes[note.id] ?? '' : '';
+  const answeredHere = answered(values, q);
   // Writing instead of picking answers this question; on the last one it sends everything.
   const sendTyped = () => {
     if (!typed.trim()) return;
+    if (!last) setQi(qi + 1);
+    else if (ready) void submit({ answers: values });
+  };
+  // The note line sends what its card holds, like the button above it: the next question, or everything.
+  const sendNote = () => {
+    if (!noteText.trim()) return;
     if (!last) setQi(qi + 1);
     else if (ready) void submit({ answers: values });
   };
@@ -237,19 +254,25 @@ function QuestionSheet({ item, index, total, onAnswer }: {
       title={q.question}
     >
       <div className="sheet-options" role={q.multiple ? 'group' : 'radiogroup'} aria-label={q.question}>
-        {q.options.map((o) => (
-          <OptionRow
-            key={o.value}
-            name={o.label}
-            description={o.description}
-            role={q.multiple ? 'checkbox' : 'radio'}
-            ariaChecked={q.multiple ? (picked[q.id] ?? []).includes(o.value) : (picked[q.id] ?? [])[0] === o.value && !typed.trim()}
-            checked={q.multiple ? (picked[q.id] ?? []).includes(o.value) : undefined}
-            onClick={() => pick(o.value)}
-          />
-        ))}
+        {q.options.map((o) => {
+          // A single choice that waits for its note no longer settles on click: the mark must show the pick.
+          const on = q.multiple
+            ? (picked[q.id] ?? []).includes(o.value)
+            : (picked[q.id] ?? [])[0] === o.value && !typed.trim();
+          return (
+            <OptionRow
+              key={o.value}
+              name={o.label}
+              description={o.description}
+              role={q.multiple ? 'checkbox' : 'radio'}
+              ariaChecked={on}
+              checked={on}
+              onClick={() => pick(o.value)}
+            />
+          );
+        })}
       </div>
-      {(q.multiple || !q.options.length) && (
+      {(q.multiple || !q.options.length || q.note) && (
         <div className="sheet-next">
           <button
             type="button"
@@ -261,7 +284,15 @@ function QuestionSheet({ item, index, total, onAnswer }: {
           </button>
         </div>
       )}
-      {q.freeText ? (
+      {note ? (
+        <SheetInput
+          placeholder={t('sheet.question.note')}
+          value={noteText}
+          onChange={(value) => setNotes((prev) => ({ ...prev, [note.id]: value }))}
+          onSend={sendNote}
+          right={skip}
+        />
+      ) : q.freeText ? (
         <SheetInput
           placeholder={q.options.length ? t('sheet.question.otherAnswer') : t('sheet.question.typeAnswer')}
           value={typed}

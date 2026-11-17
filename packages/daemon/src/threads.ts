@@ -1,3 +1,6 @@
+import { SessionWarmups, type WarmSession } from './session-warmups.js';
+import { applyModelPreference, readModelPreferences, type DraftModelPreference, type DraftModelPreferences, type ModelPreferencePatch } from './model-preferences.js';
+import { PreviewNotes } from './preview-notes.js';
 import { ContextReferences } from './context-references.js';
 import { GitManager, gitWorktreeRoot } from './git.js';
 import { PersonalBriefSchedule } from './personal-brief-schedule.js';
@@ -8,6 +11,9 @@ import { AutoHandover, type AutoHandoverView, type HandoverTarget, type SettledO
 import { AutoCompact } from './auto-compact.js';
 import type { HandoverLink } from './handover-mode.js';
 import { QuotaResume, type ResumeView } from './quota-resume.js';
+import { AutoRetry, type RetryView } from './auto-retry.js';
+import { AutoAdvance, type AdvanceView } from './auto-advance.js';
+import { transientError } from './proactive-advance.js';
 import type { VoiceTransport } from './voice-sessions.js';
 import { VoiceConversation } from './voice-conversation.js';
 import { turnOutcome } from './lifecycle.js';
@@ -37,13 +43,14 @@ import {
   type SlashCommand,
   type TurnHooks,
   type TurnInput,
+  type StartOptions,
 } from './adapters/types.js';
 import type { GoalSnapshot } from './adapters/native-goal.js';
 import { findFiles, listDir, readText, type Listing, type TextFile } from './browse.js';
 import { referencedFile } from './artifacts.js';
 import { imagePathNote, isVideoType, MAX_IMAGES, sniffImageType, sniffSvg, type AttachmentStore, type StoredAttachment, type StoredVideo } from './attachments.js';
 import { HttpError } from './errors.js';
-import { handoverBrief, handoverPrompt, synthesizeBrief, turnMessage } from './handover.js';
+import { chainOutlineText, chainSegments, handoverBrief, handoverChainBlock, handoverChainInstructions, handoverPrompt, synthesizeBrief, turnMessage, type ChainSegment } from './handover.js';
 import { McpManager } from './mcp.js';
 import { SkillsManager } from './skills.js';
 import { isWithinWorkdirs, Workdirs } from './workdirs.js';
@@ -59,6 +66,18 @@ import { askedText } from './util.js';
 import { MessageEdits } from './message-edits.js';
 import { addWorktree, countChanges, findCheckout, initRepository, removeWorktree, samePath, worktreeLeftovers, type Checkout, type Worktree } from './worktrees.js';
 import { isProbeSession } from './local-sessions.js';
+
+type SessionContext = Pick<ThreadRecord, 'id' | 'agent' | 'cwd' | 'permissionMode' | 'workMode' | 'model' | 'effort' | 'speed'> & { agentSessionId?: string | null };
+export interface DraftSessionInput {
+  agent: string;
+  cwd: string;
+  permissionMode?: string;
+  workMode?: WorkMode;
+  model?: string | null;
+  effort?: string | null;
+  speed?: string | null;
+  scratch?: boolean;
+}
 
 /** Why a copy cannot get a worktree of its own, said to whoever asked for one anyway. */
 const WORKTREE_REFUSALS = {
@@ -80,17 +99,6 @@ export interface GeneralSettings {
   autoArchiveDays: AutoArchiveDays;
 }
 
-export interface DraftModelPreference {
-  /** Null means the agent should use its own default model. */
-  model: string | null;
-  /** Null means the agent should use its own/default thinking effort. */
-  effort: EffortLevel | null;
-  /** Null means the agent should use its own/default speed. */
-  speed: string | null;
-}
-
-export type DraftModelPreferences = Record<string, DraftModelPreference>;
-
 function storedAutoArchiveDays(value: unknown): AutoArchiveDays {
   return AUTO_ARCHIVE_DAY_OPTIONS.includes(value as never) ? value as AutoArchiveDays : null;
 }
@@ -102,10 +110,6 @@ function parseAutoArchiveDays(value: unknown): AutoArchiveDays {
 }
 
 const DRAFT_MODEL_PREFERENCES_KEY = 'draft.model.preferences';
-
-function hasDraftModelPreference(value: DraftModelPreference): boolean {
-  return Boolean(value.model || value.effort || value.speed);
-}
 
 /** What forking a thread can offer besides a copy in the same directory. */
 export interface ForkOptions {
@@ -136,6 +140,10 @@ export type ThreadView = Omit<ThreadRecord, 'worktree' | 'handover' | 'writing'>
   writing: (WritingState & { habits: string }) | null;
   handover?: (NonNullable<ThreadRecord['handover']> & { automatic: boolean; /** The source started a turn after the handover. */ sourceMoved: boolean }) | null;
   autoHandover?: AutoHandoverView;
+  /** The daemon retrying this thread's transient failure by itself; null when nothing is pending. */
+  autoRetry?: RetryView | null;
+  /** The daemon advancing this thread by itself (an external wait, an unfinished turn); null when nothing is pending. */
+  advance?: AdvanceView | null;
   /** `doing`, on a member: its latest task while it works, the opening of its answer once it has returned. */
   coordination?: { retired?: boolean; rootId: string; children: number; paused: boolean; doing?: string; team?: { name: string; status: import('./teams.js').TaskStatus; role: string; error?: string } };
   /** Working in the hub's scratch area: a thread that is in no project. */
@@ -167,6 +175,7 @@ export type ThreadView = Omit<ThreadRecord, 'worktree' | 'handover' | 'writing'>
 };
 
 interface QueuedTurn {
+  assistantSay?: string;
   displayText?: string;
   channel?: TurnChannel;
   /** Later sends carrying a batch fold into this one instead of queueing behind it. */
@@ -315,7 +324,7 @@ export class ThreadManager {
   /** Drop an idle process so runtime-only connection context takes effect on resume. */
   async refreshRuntime(id: string): Promise<void> {
     if (this.running.has(id)) throw new HttpError(409, '请等待当前轮结束后启用协作');
-    await this.dropSession(id);
+    await this.dropSession(id, 'coordination_enabled');
   }
 
   notifyCoordination(id: string): void {
@@ -330,9 +339,13 @@ export class ThreadManager {
   private readonly nativeTurns = new Map<string, Map<string, string>>();
   private readonly voiceThreads = new Set<string>();
   private readonly sessions = new Map<string, AgentSession>();
+  private readonly warmups = new SessionWarmups();
+  private readonly prewarmed = new Map<string, WarmSession>();
+  private readonly sessionReasons = new Map<string, string>();
+  private stopping = false;
   /** Threads whose model/effort/speed was changed mid-turn: the setting is stored, the session that
    *  turn still runs in is stale. It is dropped when the turn ends, never interrupted mid-turn. */
-  private readonly refreshAfterTurn = new Set<string>();
+  private readonly refreshAfterTurn = new Map<string, string>();
   readonly git = new GitManager(
     id => this.getThread(id).cwd,
     (id, path) => { this.resolveInThread(id, path, new HttpError(403, 'Git repository is outside the readable roots')); },
@@ -382,6 +395,7 @@ export class ThreadManager {
   /** Where threads may work; directories can be added from the page while the hub runs. */
   readonly dirs: Workdirs;
   readonly references: ContextReferences;
+  readonly previewNotes: PreviewNotes;
   readonly autoHandover: AutoHandover;
   readonly autoCompact: AutoCompact;
   readonly personal: PersonalService;
@@ -400,14 +414,19 @@ export class ThreadManager {
   ) {
     this.dirs = Array.isArray(workdirs) ? new Workdirs(workdirs) : workdirs;
     this.references = new ContextReferences(store, this);
+    this.previewNotes = new PreviewNotes(store, this);
     this.injections = new Injections(store);
     this.autoHandover = new AutoHandover(store, this);
     this.quotaResume = new QuotaResume(store, this, this.autoHandover);
+    this.autoRetry = new AutoRetry(store, this);
+    this.autoAdvance = new AutoAdvance(store, this);
     this.autoHandover.onSaved = settings => this.quotaResume.onSettings(settings.resume);
     this.autoCompact = new AutoCompact(store, this);
     for (const [id, adapter] of adapters) adapter.onQuotaObserved = quota => this.observeQuota(id, quota);
     this.startQuotaWatch();
     this.quotaResume.start();
+    this.autoRetry.start();
+    this.autoAdvance.start();
     this.personal = new PersonalService(store, this, adapters);
     this.lark = new LarkChannel(store, this.personal);
     this.briefs = new PersonalBriefSchedule(store, () => this.personal.review.status().quietHours, () => todoStages(this, this.listTodos()));
@@ -418,6 +437,35 @@ export class ThreadManager {
 
   /** Watches parked threads for their quota to reset, then continues them. Owned here so the HTTP layer can reach it. */
   readonly quotaResume: QuotaResume;
+
+  /** Resends turns that died of transient provider errors. Owned here so the HTTP layer can reach it. */
+  readonly autoRetry: AutoRetry;
+
+  /** Moves threads on by themselves after an `等外部` or `进行中` report. Owned here so the HTTP layer can reach it. */
+  readonly autoAdvance: AutoAdvance;
+
+  /** The watch's view for the proactive scan: whether the hub's own retry already owns a thread. */
+  autoRetryView(id: string): RetryView | null { return this.autoRetry.view(id); }
+
+  /** Marks the timeline: a transient failure was retried by the daemon itself. */
+  recordTurnRetry(id: string, attempt: number, max: number): void {
+    this.emitThreadEvent(id, null, 'turn.retry', { attempt, max });
+  }
+
+  /** The person's cancel of the automatic retry on an error card; arming itself is automatic only. */
+  setAutoRetry(id: string, enabled: unknown): ThreadView {
+    this.getThread(id);
+    if (enabled !== false) throw new HttpError(400, 'arming the automatic retry is not manual');
+    this.autoRetry.drop(id);
+    return this.threadView(id);
+  }
+
+  /** The auto-advance watch's own message: a wakeup asking after a wait, or a plain 「继续」. */
+  async sendAdvanceWake(id: string, text: string, armingTurn: string): Promise<string> {
+    const turnId = randomUUID();
+    await this.startTurn(id, { text, autoContinuation: true }, { turnId, source: { advance: armingTurn }, displayText: text, claim: () => {} }, true);
+    return turnId;
+  }
 
   /** Marks the timeline: the quota came back and the daemon resent the failed turn by itself. */
   recordQuotaResume(id: string, resetsAt: string | null): void {
@@ -470,7 +518,7 @@ export class ThreadManager {
         ...(m?.hidden !== undefined ? { hidden: m.hidden } : {}),
         available: await a.available(),
         ...(a.startLogin ? { login: 'wizard' as const } : a.loginCommand ? { login: 'terminal' as const } : {}),
-        capabilities: a.capabilities,
+        capabilities: { ...a.capabilities, prewarm: a.prewarm === true },
         ...(a.capabilities.streamBridge ? { streamBridgeEnabled: a.streamBridgeEnabled ?? false } : {}),
       });
     }
@@ -495,7 +543,7 @@ export class ThreadManager {
    * Plan usage of an agent instance. The probe costs a CLI run (claude's takes seconds), so the
    * answer is reused for a minute and concurrent callers share one run.
    */
-  agentQuota(agent: string, refresh = false): Promise<PlanQuota> {
+  agentQuota(agent: string, refresh = false, force = false): Promise<PlanQuota> {
     const adapter = this.adapters.get(agent);
     if (!adapter) throw new HttpError(404, `unknown agent: ${agent}`);
     if (!adapter.capabilities.quota || !adapter.fetchQuota) throw new HttpError(400, `${agent} has no plan usage to read`);
@@ -504,7 +552,7 @@ export class ThreadManager {
     // Even a refresh does not probe right after the agent said it: the usage endpoint can turn a
     // probe away, and it would not know more.
     const observed = this.observedQuotaAt.get(agent);
-    if (refresh && hit && observed !== undefined && Date.now() - observed < OBSERVED_FRESH_MS) return hit.value;
+    if (refresh && !force && hit && observed !== undefined && Date.now() - observed < OBSERVED_FRESH_MS) return hit.value;
     const value = adapter.fetchQuota().catch((err) => {
       // A failed probe is not worth caching; the next caller can try again right away.
       if (this.quotaCache.get(agent)?.value === value) this.quotaCache.delete(agent);
@@ -515,12 +563,24 @@ export class ThreadManager {
     return value;
   }
 
+  /** Whether this instance has plan usage to read at all; a bridge to a third-party model has none. */
+  readsQuota(agent: string): boolean {
+    const adapter = this.adapters.get(agent);
+    return !!adapter?.capabilities.quota && !!adapter.fetchQuota;
+  }
+
+  /** The last reading that came through, however old; null when none ever did. */
+  lastQuota(agent: string): PlanQuota | null { return this.lastGoodQuota.get(agent)?.quota ?? null; }
+
   /** What the agent itself said while answering beats any probe: it feeds the same cache the
    *  probes fill, so decisions and the dashboard read one truth. */
   private observeQuota(agent: string, observed: PlanQuota): void {
     // The agent names its windows, not its plan; the plan a probe read still holds.
-    const plan = observed.plan ?? this.lastGoodQuota.get(agent)?.quota.plan;
-    const quota = plan ? { ...observed, plan } : observed;
+    const last = this.lastGoodQuota.get(agent)?.quota;
+    const plan = observed.plan ?? last?.plan;
+    // Nor does it name the balances of keys billed per use; those a probe read still hold too.
+    const balances = observed.balances ?? last?.balances;
+    const quota = { ...observed, ...(plan ? { plan } : {}), ...(balances ? { balances } : {}) };
     this.lastGoodQuota.set(agent, { at: Date.now(), quota });
     this.quotaCache.set(agent, { at: Date.now(), value: Promise.resolve(quota) });
     this.observedQuotaAt.set(agent, Date.now());
@@ -529,7 +589,7 @@ export class ThreadManager {
 
   /** Sends a new reading to open pages, so quota shown anywhere moves as the agent answers. */
   private publishQuota(agent: string, quota: PlanQuota): void {
-    const key = JSON.stringify([quota.windows, quota.plan ?? null, quota.note ?? null]);
+    const key = JSON.stringify([quota.windows, quota.balances ?? null, quota.plan ?? null, quota.note ?? null]);
     if (this.publishedQuota.get(agent) === key) return;
     this.publishedQuota.set(agent, key);
     const event: StoredEvent = { threadId: '', seq: 0, turnId: null, type: 'quota.updated', ts: new Date().toISOString(), data: { agent, quota } };
@@ -669,13 +729,21 @@ export class ThreadManager {
    * conversation; the hub copies the event log and the images. With `turnId` the copy ends where
    * that turn ended, on both sides; without it, or when that turn is the last, it is the whole thread.
    */
-  async forkThread(id: string, opts: { turnId?: string; worktree?: boolean } = {}): Promise<ThreadView> {
+  async forkThread(id: string, opts: { turnId?: string; worktree?: boolean; agent?: string } = {}): Promise<ThreadView> {
     const thread = this.getThread(id);
     const adapter = this.adapters.get(thread.agent);
-    if (!adapter?.capabilities.fork || !adapter.forkSession) throw new HttpError(400, `${thread.agent} cannot fork a conversation`);
+    // A fork to another agent carries the whole conversation over, the way a resume handover does,
+    // instead of copying it in the source agent's own format.
+    const across = Boolean(opts.agent && opts.agent !== thread.agent);
+    if (!adapter) throw new HttpError(400, `no such agent: ${thread.agent}`);
+    if (!across && (!adapter.capabilities.fork || !adapter.forkSession)) throw new HttpError(400, `${thread.agent} cannot fork a conversation`);
     if (!thread.agentSessionId) throw new HttpError(400, 'there is nothing to fork yet; send a message first');
     const running = this.running.has(id);
     if (running && !opts.turnId) throw new HttpError(409, 'wait for the running turn to finish before forking');
+    if (across) {
+      if (!(await this.canForkAcross(id, opts.agent!))) throw new HttpError(400, `${thread.agent}'s conversation cannot be copied to ${opts.agent}`);
+      if (opts.turnId) throw new HttpError(400, 'a fork to another agent copies the whole conversation; ask for no particular turn');
+    }
 
     // Where the hub's copy stops, and which of its turns that is. Null: the whole thread.
     let cut: { upToSeq: number; hubIndex: number; hubKeys: string[] } | null = null;
@@ -707,6 +775,7 @@ export class ThreadManager {
     try {
       const forkRef = cut ? await this.agentForkRef(thread, adapter, cut.hubIndex, cut.hubKeys) : undefined;
       if (opts.worktree) {
+        if (across && !this.adapters.get(opts.agent!)?.capabilities.forkInto) throw new HttpError(400, WORKTREE_REFUSALS.agent);
         const plan = await this.worktreePlan(thread);
         if (!plan.checkout) throw new HttpError(400, WORKTREE_REFUSALS[plan.reason]);
         const tree = await addWorktree(plan.checkout, copyId.slice(0, 8)).catch((err) => {
@@ -718,7 +787,13 @@ export class ThreadManager {
         if (!isWithinWorkdirs(cwd, this.workdirs)) throw new HttpError(400, WORKTREE_REFUSALS.outside_workdirs);
         worktree = { root: tree.root, branch: tree.branch, of: thread.worktree?.of ?? thread.cwd };
       }
-      forkedSessionId = await adapter.forkSession(thread.agentSessionId, thread.cwd, forkRef, added ? cwd : undefined);
+      if (across) {
+        forkedSessionId = await this.importHandoverSession(id, opts.agent!) ?? '';
+        if (!forkedSessionId) throw new HttpError(502, `could not copy the conversation of ${thread.agent} to ${opts.agent}`);
+      } else {
+        // Not across: the guard above made sure the source agent can copy its own conversation.
+        forkedSessionId = await adapter.forkSession!(thread.agentSessionId, thread.cwd, forkRef, added ? cwd : undefined);
+      }
     } catch (err) {
       await undoWorktree();
       if (err instanceof HttpError) throw err;
@@ -726,19 +801,29 @@ export class ThreadManager {
     }
 
     this.attachments.copyThread(thread.id, copyId);
+    // Another agent has names of its own for models and effort levels; a relay between accounts of
+    // the same kind keeps them, across kinds the target starts on its own default.
+    const acrossModel = across ? (await this.handoverModel(opts.agent!, thread.model)) ?? null : thread.model;
+    // A fork taken from the middle of a relay chain keeps the way back: through this link the chain
+    // outline rides along and `calli history` reaches every earlier segment. Detaching stands it alone.
+    const sourceSeq = this.store.listEvents(thread.id, 0, -1).at(-1)?.seq ?? 0;
+    const chainLink = thread.handover && !thread.handover.detached
+      ? { sourceId: thread.id, title: thread.title, agent: thread.agent, mode: 'branch' as const, method: 'resume' as const, sourceSeq }
+      : undefined;
     try {
       this.store.transaction(() => {
         this.store.createThread({
           id: copyId,
-          agent: thread.agent,
+          agent: across ? opts.agent! : thread.agent,
           cwd,
           title: `${thread.title}（分叉）`,
           permissionMode: thread.permissionMode,
           workMode: thread.workMode,
           speed: thread.speed,
-          model: thread.model,
-          effort: thread.effort,
+          model: acrossModel,
+          effort: across ? null : thread.effort,
           forkedFrom: thread.id,
+          ...(chainLink ? { handover: chainLink } : {}),
           worktree,
         });
         this.store.updateThread(copyId, { agentSessionId: forkedSessionId, sectionId: thread.sectionId }, { touch: true });
@@ -1129,7 +1214,7 @@ export class ThreadManager {
       this.backgroundThreads.delete(thread.id);
       // The answer is read from the store: the agent process and its scratch folder can go now, so
       // one question does not leave a resident process behind.
-      await this.dropSession(thread.id);
+      await this.dropSession(thread.id, 'background_question_done');
       if (this.dirs.scratchRoot && thread.cwd.startsWith(this.dirs.scratchRoot + sep)) rmSync(thread.cwd, { recursive: true, force: true });
     }
   }
@@ -1174,46 +1259,57 @@ export class ThreadManager {
   }
 
   async draftModelPreferences(): Promise<DraftModelPreferences> {
-    const stored = this.store.hubSetting<unknown>(DRAFT_MODEL_PREFERENCES_KEY, {});
-    if (!stored || typeof stored !== 'object' || Array.isArray(stored)) return {};
-    const out: DraftModelPreferences = {};
-    for (const [agent, value] of Object.entries(stored)) {
-      const preference = await this.sanitizeDraftModelPreference(agent, value);
-      if (preference) out[agent] = preference;
-    }
-    if (JSON.stringify(out) !== JSON.stringify(stored)) this.store.saveHubSetting(DRAFT_MODEL_PREFERENCES_KEY, out);
-    return out;
+    return readModelPreferences(this.store.hubSetting<unknown>(DRAFT_MODEL_PREFERENCES_KEY, {}));
   }
 
+  /** Legacy clients send a map; merge its entries without deleting another device's choices. */
   async saveDraftModelPreferences(input: unknown): Promise<DraftModelPreferences> {
     if (!input || typeof input !== 'object' || Array.isArray(input)) throw new HttpError(400, 'invalid draft model preferences');
-    const out: DraftModelPreferences = {};
     for (const [agent, value] of Object.entries(input)) {
-      const preference = await this.sanitizeDraftModelPreference(agent, value);
-      if (preference) out[agent] = preference;
+      const adapter = this.adapters.get(agent);
+      if (!adapter || !value || typeof value !== 'object') continue;
+      const raw = value as DraftModelPreference;
+      let rawModel = typeof raw.model === 'string' ? raw.model : null;
+      let rawEffort = typeof raw.effort === 'string' ? raw.effort : null;
+      if (rawModel && adapter.normalizeModel) {
+        await this.adapterModels(adapter).catch(() => []);
+        const normalized = adapter.normalizeModel(rawModel, rawEffort);
+        rawModel = normalized.model;
+        rawEffort = normalized.effort;
+      }
+      const model = rawModel ? await this.validateModelOrNull(agent, rawModel) : null;
+      const effort = rawEffort ? await this.validateEffortOrNull(agent, model, rawEffort) : null;
+      const speed = typeof raw.speed === 'string' ? await this.validateSpeedOrNull(agent, model, raw.speed) : null;
+      this.rememberModelPreference(agent, { model, effort, speed });
     }
-    this.store.saveHubSetting(DRAFT_MODEL_PREFERENCES_KEY, out);
-    return out;
+    return this.draftModelPreferences();
   }
 
-  private async sanitizeDraftModelPreference(agent: string, value: unknown): Promise<DraftModelPreference | null> {
-    const adapter = this.adapters.get(agent);
-    if (!adapter) return null;
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-    const source = value as { model?: unknown; effort?: unknown; speed?: unknown };
-    let rawModel = typeof source.model === 'string' ? source.model : null;
-    let rawEffort = typeof source.effort === 'string' ? source.effort : null;
-    if (rawModel && adapter.normalizeModel) {
-      await this.adapterModels(adapter).catch(() => []);
-      const normalized = adapter.normalizeModel(rawModel, rawEffort);
-      rawModel = normalized.model;
-      rawEffort = normalized.effort;
+  async patchDraftModelPreference(input: unknown): Promise<DraftModelPreference> {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new HttpError(400, 'invalid model preference');
+    const { agent, ...raw } = input as { agent: string } & ModelPreferencePatch;
+    if (!this.adapters.has(agent)) throw new HttpError(400, 'unknown agent');
+    const patch: ModelPreferencePatch = {};
+    for (const key of ['model', 'effort', 'speed'] as const) {
+      if (raw[key] === undefined) continue;
+      if (raw[key] !== null && (typeof raw[key] !== 'string' || !raw[key])) throw new HttpError(400, 'invalid model preference');
+      patch[key] = raw[key];
     }
-    const model = rawModel ? await this.validateModelOrNull(agent, rawModel) : null;
-    const effort = rawEffort ? await this.validateEffortOrNull(agent, model, rawEffort) : null;
-    const speed = typeof source.speed === 'string' ? await this.validateSpeedOrNull(agent, model, source.speed) : null;
-    const preference = { model, effort, speed };
-    return hasDraftModelPreference(preference) ? preference : null;
+    if (!Object.keys(patch).length) throw new HttpError(400, 'empty model preference');
+    const current = (await this.draftModelPreferences())[agent];
+    const model = patch.model === undefined ? current?.model ?? null : patch.model;
+    if (patch.model != null) await this.validateModel(agent, patch.model);
+    if (patch.effort != null) await this.validateEffort(agent, model, patch.effort);
+    if (patch.speed != null) await this.validateSpeed(agent, model, patch.speed);
+    // Re-read after asynchronous validation; concurrent edits to other fields/instances survive.
+    return this.rememberModelPreference(agent, patch);
+  }
+
+  private rememberModelPreference(agent: string, patch: ModelPreferencePatch): DraftModelPreference {
+    const all = readModelPreferences(this.store.hubSetting<unknown>(DRAFT_MODEL_PREFERENCES_KEY, {}));
+    const preference = applyModelPreference(all[agent], patch);
+    this.store.saveHubSetting(DRAFT_MODEL_PREFERENCES_KEY, { ...all, [agent]: preference });
+    return preference;
   }
 
   private async validateModelOrNull(agent: string, model: string): Promise<string | null> {
@@ -1314,7 +1410,7 @@ export class ThreadManager {
     const failed = thread.status === 'error' ? this.store.lastTurnFailure(thread.id) : null;
     const failure = failed ? { code: failed.code, message: failed.message.slice(0, 500), at: failed.at } : null;
     const normalized = adapter?.normalizeModel ? adapter.normalizeModel(thread.model, thread.effort) : { model: thread.model, effort: thread.effort };
-    return { ...thread, model: normalized.model, effort: normalized.effort, failure, writing: thread.writing ? { ...thread.writing, habits: habitsPath() } : null, handover: thread.handover ? { ...thread.handover, mode: this.store.handoverMode(thread)!, automatic: thread.handover.mode === 'continue', sourceMoved: this.store.handoverSourceMoved(thread)! } : null, autoHandover: { ...this.autoHandover.view(thread.id), resume: this.quotaResume.view(thread.id) }, worktree, resumeCommand, cwdReal, waiting, waitingReason, queued, modelQueue, terminalActivity, scratch, projectGone, runningSince, coordination: this.coordination?.metadata(thread.id) };
+    return { ...thread, model: normalized.model, effort: normalized.effort, failure, writing: thread.writing ? { ...thread.writing, habits: habitsPath() } : null, handover: thread.handover ? { ...thread.handover, mode: this.store.handoverMode(thread)!, automatic: thread.handover.mode === 'continue', sourceMoved: this.store.handoverSourceMoved(thread)! } : null, autoHandover: { ...this.autoHandover.view(thread.id), resume: this.quotaResume.view(thread.id) }, autoRetry: this.autoRetry.view(thread.id), advance: this.autoAdvance.view(thread.id), worktree, resumeCommand, cwdReal, waiting, waitingReason, queued, modelQueue, terminalActivity, scratch, projectGone, runningSince, coordination: this.coordination?.metadata(thread.id) };
   }
 
   /**
@@ -1697,6 +1793,8 @@ export class ThreadManager {
   async updateThread(
     id: string,
     updates: {
+      /** Only an explicit composer edit changes defaults for future threads. */
+      rememberModelChoice?: boolean;
       title?: string;
       pinned?: boolean;
       workMode?: WorkMode;
@@ -1713,6 +1811,16 @@ export class ThreadManager {
     },
   ): Promise<ThreadView> {
     const thread = this.getThread(id);
+    const rememberChoice = updates.rememberModelChoice === true &&
+      (updates.model !== undefined || updates.effort !== undefined || updates.speed !== undefined);
+    if (rememberChoice && updates.model !== undefined) {
+      const saved = applyModelPreference((await this.draftModelPreferences())[thread.agent], { model: updates.model });
+      updates = {
+        ...updates,
+        effort: updates.effort !== undefined ? updates.effort : saved.effort === null ? null : await this.validateEffortOrNull(thread.agent, updates.model, saved.effort),
+        speed: updates.speed !== undefined ? updates.speed : saved.speed === null ? null : await this.validateSpeedOrNull(thread.agent, updates.model, saved.speed),
+      };
+    }
     const patch: Record<string, unknown> = {};
     if (updates.done !== undefined) {
       if (typeof updates.done !== 'boolean') throw new HttpError(400, 'done must be true or false');
@@ -1744,7 +1852,7 @@ export class ThreadManager {
         throw new HttpError(409, 'stop the running turn before archiving this thread');
       }
       // Archiving stops the agent process. The record and the agent's session stay, so it can come back.
-      if (updates.archived) await this.dropSession(id);
+      if (updates.archived) await this.dropSession(id, 'archived');
       patch.archivedAt = updates.archived ? (thread.archivedAt ?? new Date().toISOString()) : null;
     }
     if (updates.unread !== undefined) {
@@ -1759,7 +1867,7 @@ export class ThreadManager {
       try {
         const session = this.sessions.get(id);
         if (session?.setWorkMode) await session.setWorkMode(mode);
-        else if (session) await this.dropSession(id);
+        else if (session) await this.dropSession(id, 'work_mode_changed');
         this.store.updateThread(id, { workMode: mode });
       } finally { this.changingModes.delete(id); }
       patch.workMode = mode;
@@ -1825,6 +1933,10 @@ export class ThreadManager {
       await this.applyLive(thread, 'speed', s => s.setSpeed?.(patch.speed as string | null) ?? Promise.resolve(false));
     }
     this.store.updateThread(id, patch as any);
+    if (rememberChoice) {
+      const chosen = this.getThread(id);
+      this.rememberModelPreference(thread.agent, { model: chosen.model, effort: chosen.effort, speed: chosen.speed ?? null });
+    }
     // The person named it: nothing renames it for them again.
     if (patch.title !== undefined && patch.title !== thread.title) this.store.setTitleBy(id, 'user');
     this.emitThreadEvent(id, null, 'thread.updated', {});
@@ -1847,19 +1959,19 @@ export class ThreadManager {
     const inPlace = await apply(session).catch(() => false);
     if (inPlace) return;
     if (this.running.has(thread.id)) {
-      this.refreshAfterTurn.add(thread.id);
+      this.refreshAfterTurn.set(thread.id, `${what}_changed`);
       return;
     }
-    await this.dropSession(thread.id);
+    await this.dropSession(thread.id, `${what}_changed`);
   }
 
   private async restartForChange(thread: ThreadRecord, what: 'model' | 'effort'): Promise<void> {
     if (!this.sessions.has(thread.id)) return;
     if (this.running.has(thread.id)) {
-      this.refreshAfterTurn.add(thread.id);
+      this.refreshAfterTurn.set(thread.id, `${what}_reset`);
       return;
     }
-    await this.dropSession(thread.id);
+    await this.dropSession(thread.id, `${what}_reset`);
   }
 
   /**
@@ -1891,8 +2003,11 @@ export class ThreadManager {
       }
       doomed = { main, tree };
     }
-    await this.dropSession(id);
+    await this.dropSession(id, 'deleted');
+    this.sessionReasons.delete(id);
     this.quotaResume.drop(id);
+    this.autoRetry.drop(id);
+    this.autoAdvance.drop(id);
     if (opts.agentSession && thread.agentSessionId) {
       const adapter = this.adapters.get(thread.agent);
       if (!adapter?.capabilities.deleteSession || !adapter.deleteSession) {
@@ -2112,7 +2227,68 @@ export class ThreadManager {
     return value;
   }
 
+  private draftSessionKey(input: DraftSessionInput): string {
+    return JSON.stringify([input.agent, input.scratch ? null : realpathSync(resolve(input.cwd)), Boolean(input.scratch),
+      input.permissionMode, input.workMode, input.model, input.effort, input.speed, this.personal.directory()]);
+  }
+
+  /** Prepare one unsent draft without creating a Calli thread or submitting a model request. */
+  async warmDraft(input: DraftSessionInput): Promise<{ id: string | null }> {
+    if (this.stopping) throw new HttpError(503, 'Calli is stopping');
+    if (!input || typeof input.agent !== 'string' || (input.scratch !== true && typeof input.cwd !== 'string')) throw new HttpError(400, 'invalid draft settings');
+    const adapter = this.adapters.get(input.agent);
+    if (!adapter) throw new HttpError(400, 'unknown agent');
+    if (!adapter.prewarm) return { id: null };
+    const settings = await this.draftSessionSettings(input);
+    const threadId = randomUUID();
+    const cwd = input.scratch === true ? this.scratchDirectory(threadId) : resolve(input.cwd);
+    this.checkThreadDirectory(cwd);
+    const context = { id: threadId, agent: input.agent, cwd, ...settings };
+    const entry = this.warmups.start({ threadId, cwd, adapter, key: this.draftSessionKey({ ...input, cwd, ...settings }) },
+      signal => adapter.start(this.sessionOptions(context, signal)), () => {
+        this.borrowing?.forgetEnvironment(threadId);
+        this.personal.forgetEnvironment(threadId);
+        if (input.scratch) rmSync(cwd, { recursive: true, force: true });
+      });
+    return { id: entry.id };
+  }
+
+  cancelWarmDraft(id: string): Promise<void> { return this.warmups.remove(id); }
+
+  private scratchDirectory(id: string): string {
+    if (!this.dirs.scratchRoot) throw new HttpError(400, 'this hub has no scratch area for threads outside a project');
+    const cwd = join(this.dirs.scratchRoot, `${new Date().toISOString().slice(0, 10)}-${id.slice(0, 8)}`);
+    mkdirSync(cwd, { recursive: true });
+    return cwd;
+  }
+
+  private checkThreadDirectory(cwd: string): void {
+    if (!isWithinWorkdirs(cwd, this.workdirs)) throw new HttpError(400, 'cwd is not in the allowed workdirs');
+    if (!existsSync(cwd) || !statSync(cwd).isDirectory()) throw new HttpError(400, 'cwd does not exist');
+  }
+
+  private async draftSessionSettings(input: DraftSessionInput) {
+    const adapter = this.adapters.get(input.agent);
+    if (!adapter) throw new HttpError(400, `unknown agent: ${input.agent}`);
+    const permissionMode = adapter.capabilities.permissionModes.length === 0 ? 'auto_edit'
+      : this.validatePermissionMode(input.agent, input.permissionMode ?? adapter.capabilities.defaultPermissionMode ?? 'auto_edit');
+    const workMode = this.validateWorkMode(input.agent, input.workMode ?? 'execute');
+    let rawModel = input.model ?? null;
+    let rawEffort = input.effort ?? null;
+    if (rawModel && adapter.normalizeModel) {
+      await this.adapterModels(adapter);
+      const normalized = adapter.normalizeModel(rawModel, rawEffort);
+      rawModel = normalized.model;
+      rawEffort = normalized.effort;
+    }
+    const model = rawModel ? await this.validateModel(input.agent, rawModel) : null;
+    const effort = rawEffort ? await this.validateEffort(input.agent, model, rawEffort) : null;
+    const speed = input.speed == null ? null : await this.validateSpeed(input.agent, model, input.speed);
+    return { permissionMode, workMode, model, effort, speed };
+  }
+
   async createThread(input: {
+    warmupId?: string;
     workMode?: WorkMode;
     speed?: string | null;
     agent: string;
@@ -2131,38 +2307,20 @@ export class ThreadManager {
   }, inheritedWorktree?: ThreadWorktree | null, handover?: ThreadRecord['handover']): Promise<ThreadView> {
     const adapter = this.adapters.get(input.agent);
     if (!adapter) throw new HttpError(400, `unknown agent: ${input.agent}`);
-    const id = randomUUID();
-    let cwd: string;
-    if (input.scratch === true) {
-      if (!this.dirs.scratchRoot) throw new HttpError(400, 'this hub has no scratch area for threads outside a project');
-      cwd = join(this.dirs.scratchRoot, `${new Date().toISOString().slice(0, 10)}-${id.slice(0, 8)}`);
-      mkdirSync(cwd, { recursive: true });
-    } else {
-      cwd = resolve(input.cwd);
-    }
-    // An allowed directory or anything inside one. The directory picker offers subdirectories.
-    if (!isWithinWorkdirs(cwd, this.workdirs)) throw new HttpError(400, 'cwd is not in the allowed workdirs');
-    if (!existsSync(cwd) || !statSync(cwd).isDirectory()) throw new HttpError(400, 'cwd does not exist');
+    let id: string = randomUUID();
+    let cwd = input.scratch === true ? this.scratchDirectory(id) : resolve(input.cwd);
+    this.checkThreadDirectory(cwd);
     if (input.sectionId !== undefined && input.sectionId !== null && !this.store.getSection(input.sectionId)) {
       throw new HttpError(400, 'section not found');
     }
-    // Default for new threads: the agent's own, else auto-approve edits and still ask before other actions.
-    const permissionMode =
-      adapter.capabilities.permissionModes.length === 0
-        ? 'auto_edit'
-        : this.validatePermissionMode(input.agent, input.permissionMode ?? adapter.capabilities.defaultPermissionMode ?? 'auto_edit');
-    const workMode = this.validateWorkMode(input.agent, input.workMode ?? 'execute');
-    let rawModel = input.model ?? null;
-    let rawEffort = input.effort ?? null;
-    if (rawModel && adapter.normalizeModel) {
-      await this.adapterModels(adapter);
-      const normalized = adapter.normalizeModel(rawModel, rawEffort);
-      rawModel = normalized.model;
-      rawEffort = normalized.effort;
+    const { permissionMode, workMode, model, effort, speed } = await this.draftSessionSettings(input);
+    const warm = !input.worktree && !handover && !inheritedWorktree && !input.schedule
+      ? this.warmups.take(input.warmupId, this.draftSessionKey({ ...input, cwd, permissionMode, workMode, model, effort, speed }), adapter) : null;
+    if (warm) {
+      if (input.scratch) rmSync(cwd, { recursive: true, force: true });
+      id = warm.threadId;
+      cwd = warm.cwd;
     }
-    const model = rawModel ? await this.validateModel(input.agent, rawModel) : null;
-    const effort = rawEffort ? await this.validateEffort(input.agent, model, rawEffort) : null;
-    const speed = input.speed == null ? null : await this.validateSpeed(input.agent, model, input.speed);
     const title = (input.title ?? '').trim() || 'New thread';
     // A new thread has no conversation to move, so any agent can start in a worktree.
     let added: { main: string; tree: Worktree; cwd: string } | null = null;
@@ -2197,11 +2355,31 @@ export class ThreadManager {
         ...(added ? { worktree: { root: added.tree.root, branch: added.tree.branch, of: cwd } } : inheritedWorktree ? { worktree: inheritedWorktree } : {}),
       });
     } catch (err) {
+      if (warm) { await warm.dispose(); if (input.scratch) rmSync(cwd, { recursive: true, force: true }); }
       if (added) await removeWorktree(added.main, added.tree).catch(() => undefined);
       throw err;
     }
+    if (warm) this.prewarmed.set(thread.id, warm);
     this.emitThreadEvent(thread.id, null, 'thread.created', { agent: thread.agent, cwd: thread.cwd });
     return this.view(thread);
+  }
+
+  /**
+   * Unlinks a handover: a manual one (made from the handover dialog) leaves its chain and stands on
+   * its own, with both conversations kept as they are; an automatic one splits as below.
+   */
+  detachHandover(threadId: string): { detached: string[]; thread: ThreadView } {
+    const selected = this.getThread(threadId);
+    const link = selected.handover;
+    const all = [...this.store.listThreads(), ...this.store.listThreads({ archived: true })];
+    const continues = all.some(thread => thread.handover?.sourceId === selected.id
+      && thread.handover.mode === 'continue' && this.store.handoverMode(thread) === 'continue');
+    if (link && link.mode !== 'continue' && !link.detached && !continues) {
+      this.store.detachHandover(selected.id);
+      this.emitThreadEvent(selected.id, null, 'thread.updated', {});
+      return { detached: [selected.id], thread: this.threadView(threadId) };
+    }
+    return this.detachAutomaticHandover(threadId);
   }
 
   /**
@@ -2231,29 +2409,58 @@ export class ThreadManager {
     return { detached: detached.map(thread => thread.id), thread: this.threadView(threadId) };
   }
 
+  /** Gives a handover back: the taker loses the collaboration seat it gained (root or member, automatic
+   *  or manual takeover alike) and the still-retired source takes it again. The conversation chain stays
+   *  as it is; only the collaboration returns home. The source's auto handover is turned off so the move
+   *  is not repeated at once. */
+  handbackAutomaticHandover(threadId: string): { thread: ThreadView } {
+    const selected = this.getThread(threadId);
+    const sourceId = selected.handover?.sourceId;
+    if (!sourceId) throw new HttpError(409, 'this thread has no handover behind it');
+    if (!this.coordination?.metadata(sourceId)?.retired) throw new HttpError(409, 'the source thread has no collaboration seat to take back');
+    this.autoHandover.setOverride(sourceId, false);
+    if (!this.coordination.handbackMember(sourceId, threadId)) throw new HttpError(409, 'the collaboration seat cannot be handed back');
+    this.emitThreadEvent(sourceId, null, 'thread.updated', {});
+    this.emitThreadEvent(threadId, null, 'thread.updated', {});
+    return { thread: this.threadView(threadId) };
+  }
+
   /** A fresh conversation in the source's exact directory, sharing its existing worktree. No agent is started. */
-  async createHandoverThread(threadId: string, agent: string, model?: string, mode?: unknown, method?: HandoverLink['method']): Promise<ThreadView> {
+  async createHandoverThread(threadId: string, agent: string, model?: string, mode?: unknown, method?: HandoverLink['method'], takeTeam = true): Promise<ThreadView> {
     const source = this.getThread(threadId);
     if (mode !== undefined && mode !== 'continue' && mode !== 'branch') throw new HttpError(400, 'invalid handover mode');
     // Whoever takes over from here, the work leaves this thread; stop waiting for its quota.
     this.quotaResume.drop(threadId);
+    this.autoRetry.drop(threadId);
+    this.autoAdvance.drop(threadId);
     const selected = mode ?? 'branch';
     // A relay between accounts of the same agent keeps the thread's model and effort: without this
     // the successor falls back to the target account's default (opus, say) and the swap quietly
     // multiplies the burn and the cache rewrite. Across agent kinds the names mean different
     // things, so the target keeps its own default.
+    // Accounts of one agent can still serve different catalogs (a gateway's GLM means nothing to a
+    // subscription), so only what the target lists is carried; the rest falls back to its default.
     const kind = (id: string) => this.adapters.get(id)?.id;
     const sameKind = kind(agent) !== undefined && kind(agent) === kind(source.agent);
+    const offers = async (pick: () => Promise<boolean>) => { try { return await pick(); } catch { return false; } };
+    const target = this.adapters.get(agent);
+    const chosen = model ?? (sameKind && source.model && target
+      && await offers(async () => (await this.adapterModels(target)).some(o => o.id === source.model)) ? source.model : undefined);
+    const effort = sameKind && source.effort
+      && await offers(async () => (await this.effortsFor(agent, chosen ?? null) as readonly string[]).includes(source.effort!)) ? source.effort : undefined;
     const successor = await this.createThread({
       agent,
       cwd: source.cwd,
       title: `${source.title}（接手）`,
-      model: model ?? (sameKind ? source.model ?? undefined : undefined),
-      effort: sameKind ? source.effort ?? undefined : undefined,
+      model: chosen,
+      effort,
       sectionId: source.sectionId,
     }, source.worktree, { sourceId: source.id, title: source.title, agent: source.agent, mode: selected,
       sourceSeq: this.store.history.latest(source.id), ...(method ? { method } : {}) });
     this.personal.inherit(source.id, successor.id);
+    // A collaboration's members answer its lead: by default the successor takes the seat, so the
+    // team and its open deliveries move with the conversation instead of being left behind.
+    if (takeTeam && this.coordination?.metadata(source.id)) this.coordination.replaceHandoverMember(source.id, successor.id, null);
     return successor;
   }
 
@@ -2407,7 +2614,7 @@ export class ThreadManager {
     }
 
     const newTurnId = randomUUID();
-    await this.dropSession(threadId);
+    await this.dropSession(threadId, 'message_edited');
     this.store.transaction(() => {
       this.store.messageEdits.archive(threadId, requestId, starts[hubIndex].seq);
       this.store.updateThread(threadId, { agentSessionId: branchSession, status: 'idle' }, { touch: true });
@@ -2445,6 +2652,17 @@ export class ThreadManager {
     return { turnId: newTurnId, revision: this.store.history.latest(threadId) };
   }
 
+  /** Check before creating a team task or reopening one; invalid pictures must not change its state. */
+  async checkImages(agent: string, model: string | null, images: unknown[]): Promise<void> {
+    if (!images.length) return;
+    const adapter = this.adapters.get(agent);
+    if (!adapter?.capabilities.images) throw new HttpError(400, `${agent} does not accept images`);
+    let option = await this.modelOption(adapter, model);
+    if (adapter.modelForImages) option = await adapter.modelForImages(model);
+    if (option?.images === false && !option.imagesVia) throw new HttpError(400, `${option.label} cannot read images; pick another model`);
+    this.attachments.check(images);
+  }
+
   /**
    * Starts a turn in the background and returns its id right away.
    * A turn needs text, images, or both. Images are checked and stored before anything else changes.
@@ -2460,10 +2678,11 @@ export class ThreadManager {
     /** Sends this exact turn id, reserved by an edit; the edit's steps all use it. */
     reservedTurnId?: string,
     beforeStart?: (turnId: string) => void,
+    personalControl?: { assistantSay: string; authorize?: () => void },
   ): Promise<{ turnId: string } | { queued: true; id: string }> {
     // Setup may await discovery or an idle runtime refresh. Keep competing sends in order.
     const previous = this.startingTurns.get(threadId) ?? Promise.resolve();
-    const next = previous.catch(() => undefined).then(() => this.startTurnReady(threadId, input, delivery, fromQueue, reservedTurnId, beforeStart));
+    const next = previous.catch(() => undefined).then(() => this.startTurnReady(threadId, input, delivery, fromQueue, reservedTurnId, beforeStart, personalControl));
     this.startingTurns.set(threadId, next);
     const clean = () => {
       if (this.startingTurns.get(threadId) === next) this.startingTurns.delete(threadId);
@@ -2480,6 +2699,7 @@ export class ThreadManager {
     fromQueue = false,
     reservedTurnId?: string,
     beforeStart?: (turnId: string) => void,
+    personalControl?: { assistantSay: string; authorize?: () => void },
   ): Promise<{ turnId: string } | { queued: true; id: string }> {
     const thread = this.getThread(threadId);
     if (this.changingModes.has(threadId)) throw new HttpError(409, '模式正在切换，请稍后发送');
@@ -2495,6 +2715,7 @@ export class ThreadManager {
     const videoIds = storedVideos.map(v => v.id);
     if (storedVideos.length && /^\/\S+/.test(rawText)) throw new HttpError(400, '视频和文件请随普通消息发送，不能附在斜杠命令后');
     if (!rawText && rawImages.length === 0 && !storedVideos.length) throw new HttpError(400, 'text is empty');
+    personalControl?.authorize?.();
     if (thread.archivedAt && !this.backgroundThreads.has(threadId)) throw new HttpError(409, 'this thread is archived; restore it first');
     if (this.running.has(threadId) || this.autoHandover.held(threadId) && !input.handover && !input.autoContinuation || !fromQueue && this.queues.get(threadId)?.some(q => !q.error)) {
       const goalAction = originalText === '/goal' ? 'show' : originalText === '/goal pause' ? 'pause' : originalText === '/goal clear' ? 'clear' : null;
@@ -2526,12 +2747,12 @@ export class ThreadManager {
       const tail = queue.at(-1);
       const merged = input.coalesce && tail?.coalesce && !tail.error ? mergeBatches(tail.coalesce, input.coalesce) : null;
       if (tail && merged) {
-        this.setQueue(threadId, [...queue.slice(0, -1), { ...tail, text: merged.body + merged.context, coalesce: merged, ...batchShape(merged.parts) }]);
+        this.setQueue(threadId, [...queue.slice(0, -1), { ...tail, text: merged.body + merged.context, coalesce: merged, fromUser: merged.parts.some(part => part.kind === 'person'), ...batchShape(merged.parts) }]);
         return { queued: true, id: tail.id };
       }
       if (queue.length >= MAX_QUEUED) throw new HttpError(409, `at most ${MAX_QUEUED} messages can wait in a thread`);
       this.attachments.check(rawImages); // a bad image is refused now, not when its turn comes
-      const queued: QueuedTurn = { voiceSummary: input.voiceSummary, workMode: thread.workMode ?? 'execute', id: randomUUID(), text: originalText, displayText: input.displayText, channel: input.channel, ...(input.coalesce ? { coalesce: input.coalesce } : {}), images: rawImages, videos: videoIds, ...(mentions ? { mentions } : {}), ...(input.collaboration ? { collaboration: input.collaboration } : {}), ...(input.fromUser ? { fromUser: true } : {}) };
+      const queued: QueuedTurn = { ...(personalControl ? { assistantSay: personalControl.assistantSay } : {}), voiceSummary: input.voiceSummary, workMode: thread.workMode ?? 'execute', id: randomUUID(), text: originalText, displayText: input.displayText, channel: input.channel, ...(input.coalesce ? { coalesce: input.coalesce } : {}), images: rawImages, videos: videoIds, ...(mentions ? { mentions } : {}), ...(input.collaboration ? { collaboration: input.collaboration } : {}), ...(input.fromUser ? { fromUser: true } : {}) };
       this.references.grant(threadId, reference.references);
       this.queues.set(threadId, [...queue, queued]);
       this.emitThreadEvent(threadId, null, 'thread.updated', {});
@@ -2557,22 +2778,26 @@ export class ThreadManager {
     // Writing mode's way of working for its stage; an edit the person made is mentioned once.
     const writing = !slashCommand && rawText ? thread.writing : null;
     const written = writing ? writingInstructions(discoverable, writing) : discoverable;
+    // A thread taken over from another carries its chain. The outline is attached when the agent
+    // may no longer have it in view — a fresh session, a compaction, enough turns — so the way
+    // back to earlier segments never vanishes, whatever became of the handover brief itself.
+    const chain = !bare && !slashCommand && Boolean(rawText) && thread.handover && !thread.handover.detached ? this.handoverChain(thread) : [];
+    const chained = chain.length > 1 ? handoverChainInstructions(written, handoverChainBlock(chainOutlineText(chain, thread.id)), gate) : written;
     const askProgress = !bare && !slashCommand && Boolean(rawText) && this.progressWanted();
-    const text = askProgress ? progressInstructions(written, gate) : written;
+    const text = askProgress ? progressInstructions(chained, gate) : chained;
 
     if (rawImages.length > 0) {
-      const adapter = this.adapters.get(thread.agent);
-      if (!adapter?.capabilities.images) throw new HttpError(400, `${thread.agent} does not accept images`);
-      let option = await this.modelOption(adapter, thread.model);
-      if (adapter.modelForImages) option = await adapter.modelForImages(thread.model);
-      if (option?.images === false && !option.imagesVia) throw new HttpError(400, `${option.label} cannot read images; pick another model`);
+      await this.checkImages(thread.agent, thread.model, rawImages);
       // The model lookup above can take a moment, so check again before claiming the thread.
       if (this.running.has(threadId)) throw new HttpError(409, 'a turn is already running in this thread');
       if (this.changingModes.has(threadId) || input.workMode === undefined && this.getThread(threadId).workMode !== thread.workMode) throw new HttpError(409, '工作模式已变化，请重新发送');
     }
     this.git.assertTurnAllowed(thread.cwd);
     const { stored, images } = this.attachments.save(threadId, rawImages);
-    const promptText = text + this.attachments.videoNote(threadId, storedVideos);
+    const personalHuman = this.personal.router.status().threadId === threadId && input.fromUser === true
+      && !delivery && !input.scheduled && !input.review && !input.proactive && !input.autoContinuation;
+    const context = personalHuman && !slashCommand ? await this.personal.router.context(threadId) : null;
+    const promptText = (context?.text ?? '') + text + this.attachments.videoNote(threadId, storedVideos);
     // Internal callers may attach protocol context. Only the person's words (or a channel
     // summary) belong in the conversation, its queue, and later replay/continuation views.
     const displayText = delivery?.displayText ?? input.displayText ?? originalText.split('\n\n[指定协作对象]')[0];
@@ -2583,7 +2808,9 @@ export class ThreadManager {
       this.store.transaction(() => {
         delivery?.claim();
         this.references.grant(threadId, reference.references);
+        personalControl?.authorize?.();
         beforeStart?.(turnId);
+        context?.commit();
         // New work reopens a thread the person had marked done.
         if (thread.doneAt && !slashCommand) this.store.setThreadProgress(threadId, { doneAt: null });
         if (writing?.edited) {
@@ -2608,6 +2835,8 @@ export class ThreadManager {
           workMode: thread.workMode ?? 'execute',
           ...(delivery ? { coordination: delivery.source } : {}),
           ...(fromUser ? { fromUser: true } : {}),
+          ...(personalHuman ? { personalOrigin: 'person' } : {}),
+          ...(personalControl ? { assistantSay: personalControl.assistantSay } : {}),
           ...(promptText !== displayText ? { displayText } : {}),
           ...(stored.length ? { images: stored } : {}),
           ...(storedVideos.length ? { videos: storedVideos } : {}),
@@ -2647,6 +2876,17 @@ export class ThreadManager {
   }
 
   /**
+   * The handover chain of a thread, oldest first, ending at the thread itself. The archive is
+   * included: a chain often reaches back through quiet segments, and the successor can read those too.
+   */
+  private handoverChain(thread: { id: string }): ChainSegment[] {
+    const all = [...this.store.listThreads(), ...this.store.listThreads({ archived: true })];
+    const byId = new Map(all.map((t) => [t.id, t]));
+    const self = byId.get(thread.id);
+    return self ? chainSegments(self, (id) => byId.get(id)) : [];
+  }
+
+  /**
    * The handover summary: what the agent wrote in its handover turn, or — when the turn failed or
    * none was run — one the hub synthesizes from the event log, which holds the whole process.
    * `brief` is for a successor the hub starts itself: it can read the source with `calli`, so it gets
@@ -2655,7 +2895,7 @@ export class ThreadManager {
   async handoverSummary(
     threadId: string,
     turnId: string | null,
-    opts: { carryFailed?: boolean; compress?: boolean } = {},
+    opts: { carryFailed?: boolean; compress?: boolean | HandoverTarget[] } = {},
   ): Promise<{ pending: true } | { summary: string; source: 'agent' | 'log' }> {
     const thread = this.threadView(threadId);
     const events = this.listEventsSince(threadId, 0);
@@ -2665,8 +2905,12 @@ export class ThreadManager {
       ? { root: checkout.top, branch: checkout.branch, main: checkout.main }
       : thread.worktree ? { root: thread.worktree.root, branch: thread.worktree.branch, main: thread.worktree.of } : null;
     // The brief of the auto handover: the successor reads the source itself with `calli`, so it gets
-    // where to look and how, plus a few lines of where things stood — not a retelling.
+    // where to look and how, plus a few lines of where things stood — not a retelling. When this
+    // handover extends a chain, the outline of every earlier segment rides along as its block: the
+    // injection gate then knows it was read, so it is re-attached only when it may be out of view.
+    const chain = this.handoverChain(thread);
     const context = handoverBrief({ threadId, from: adapter?.label ?? thread.agent, cwd: thread.cwd, worktree, lead: this.coordination?.leads(threadId) })
+      + (chain.length > 1 ? `\n\n${handoverChainBlock(chainOutlineText(chain, thread.id))}` : '')
       + this.personal.context(threadId);
     if (turnId) {
       const turnEvents = events.filter((e) => e.turnId === turnId);
@@ -2682,13 +2926,19 @@ export class ThreadManager {
     const retryStart = failedTurn ? this.store.listTurnEvents(threadId, failedTurn).find(e => e.type === 'turn.started') : undefined;
     const retry = opts.carryFailed && retryStart ? String(retryStart.data.displayText ?? retryStart.data.text ?? '') : '';
     // The source could not write its own summary: another agent reads the record, when one is set up for that.
-    const written = opts.compress ? await this.autoCompact.summarizeForHandover(threadId) : null;
+    const written = opts.compress ? await this.autoCompact.summarizeForHandover(threadId, Array.isArray(opts.compress) ? opts.compress : undefined) : null;
     const brief = [context, written, synthesizeBrief(events)].filter(Boolean).join('\n\n');
     return { summary: retry ? `${brief}\n\n## 继续未完成的这一轮\n\n${retry}` : brief, source: 'log' };
   }
 
   hasAgent(id: string): boolean { return this.adapters.has(id); }
   canSwitchHandoverModel(id: string): boolean { return this.adapters.get(id)?.capabilities.modelSwitch === true; }
+  /** Whether the adapter can tell two of its models' quota pools apart by their ids alone. */
+  handoverSeparatesPools(id: string): boolean { return this.adapters.get(id)?.separateModelPools !== undefined; }
+  /** Whether the instance reaches its models through a gateway, not the account's own plan. */
+  handoverViaGateway(id: string): boolean { return this.adapters.get(id)?.routesThroughGateway?.() === true; }
+  /** Whether two models on one instance bill independently, by the adapter's own word. */
+  separateModelPools(id: string, from: string, to: string): boolean { return this.adapters.get(id)?.separateModelPools?.(from, to) === true; }
   async handoverModel(agent: string, model?: string | null): Promise<string | undefined> {
     try {
       const adapter = this.adapters.get(agent);
@@ -2773,6 +3023,8 @@ export class ThreadManager {
       }
     }
     this.quotaResume.drop(id);
+    this.autoRetry.drop(id);
+    this.autoAdvance.drop(id);
     await this.retryAutoHandoverTurn(id, failed.turnId);
     return this.threadView(id);
   }
@@ -2781,24 +3033,33 @@ export class ThreadManager {
    * The person hands the thread to `agent` now, because its own agent cannot go on (its plan ran
    * out). Same path as an automatic handover, without asking the source for a summary first: the
    * successor takes over the conversation, its queue and, in a collaboration, its place.
+   * `summary` names who writes the brief when the person chose: `source` asks the thread's own agent
+   * in a summary turn first, an agent target compresses the record; either way the brief goes over,
+   * not a copy of the conversation. Without it the configured method decides.
    */
-  async takeOver(id: string, agent: unknown, model: unknown, note: unknown): Promise<ThreadView> {
+  async takeOver(id: string, agent: unknown, model: unknown, note: unknown, summary?: unknown): Promise<ThreadView> {
     const thread = this.getThread(id);
     if (typeof agent !== 'string' || !this.adapters.has(agent) || agent === thread.agent && !model) throw new HttpError(400, 'invalid handover target');
     if (model !== undefined && typeof model !== 'string') throw new HttpError(400, 'invalid model');
     if (note !== undefined && (typeof note !== 'string' || note.length > 20_000)) throw new HttpError(400, 'invalid note');
+    const writer = summary as HandoverTarget | 'source' | undefined;
+    if (writer !== undefined && writer !== 'source' && (!writer || typeof writer !== 'object' || typeof writer.agent !== 'string' || !this.adapters.has(writer.agent)
+      || writer.model !== undefined && (typeof writer.model !== 'string' || !writer.model || writer.model.length > 200))) throw new HttpError(400, 'invalid summary writer');
     if (this.running.has(id) || this.threadView(id).waiting) throw new HttpError(409, 'the thread is busy');
     this.autoHandover.cancel(id);
     this.quotaResume.drop(id);
+    this.autoRetry.drop(id);
+    this.autoAdvance.drop(id);
     // The turn that failed is carried over, so the successor picks up the ask that was cut off.
     const last = this.store.listTurns(id).at(-1)?.turnId ?? null;
     const failed = last && this.store.listTurnEvents(id, last).some(e => e.type === 'turn.error') ? last : null;
     const target = { agent, ...(model ? { model } : {}) };
-    if (this.autoHandover.settings().method === 'resume' && await this.canResumeHandover(id, agent, failed)) {
+    if (writer === 'source') return this.executeAutoHandover(id, target, await this.autoHandoverSummary(id, agent, false), failed, note?.trim());
+    if (!writer && this.autoHandover.settings().method === 'resume' && await this.canResumeHandover(id, agent, failed)) {
       const sessionId = await this.importHandoverSession(id, agent);
       if (sessionId) return this.executeResumeHandover(id, target, sessionId, failed, note?.trim());
     }
-    const result = await this.handoverSummary(id, null, { compress: true });
+    const result = await this.handoverSummary(id, null, { compress: writer ? [{ agent: writer.agent, ...(writer.model ? { model: writer.model } : {}) }] : true });
     if (!('summary' in result)) throw new HttpError(409, 'handover summary unavailable');
     return this.executeAutoHandover(id, target, result.summary, failed, note?.trim());
   }
@@ -2818,6 +3079,20 @@ export class ThreadManager {
     const agents = await this.listAgents();
     const kind = (agent: string) => agents.find(a => a.id === agent)?.adapter;
     return kind(thread.agent) !== undefined && kind(thread.agent) === kind(target);
+  }
+
+  /**
+   * Whether a fork could carry this thread's conversation to another agent as a copy that stands on
+   * its own: the same gate as a resume handover, except a collaboration's seat is not at stake — a
+   * fork never moves the team, so a lead may be forked without a turn to resend.
+   */
+  private async canForkAcross(id: string, targetId: string): Promise<boolean> {
+    const thread = this.getThread(id);
+    if (targetId === thread.agent || !thread.agentSessionId || !this.adapters.get(thread.agent)?.sessionLocation || !this.adapters.get(targetId)?.importSession) return false;
+    if ((this.store.lastContextUsed(id) ?? 0) > RESUME_HANDOVER_MAX_CONTEXT) return false;
+    const agents = await this.listAgents();
+    const kind = (agent: string) => agents.find(a => a.id === agent)?.adapter;
+    return kind(thread.agent) !== undefined && kind(thread.agent) === kind(targetId);
   }
 
   /** Copies the thread's conversation into `target`'s account; null when it cannot be read or written. */
@@ -2840,6 +3115,8 @@ export class ThreadManager {
   async executeResumeHandover(id: string, target: HandoverTarget, sessionId: string, failedTurn: string | null, note?: string): Promise<ThreadView> {
     const source = this.getThread(id);
     this.quotaResume.drop(id);
+    this.autoRetry.drop(id);
+    this.autoAdvance.drop(id);
     const successor = await this.createHandoverThread(id, target.agent, target.model, 'continue', 'resume');
     this.store.updateThread(successor.id, { agentSessionId: sessionId });
     this.autoHandover.inherit(id, successor.id);
@@ -2873,6 +3150,8 @@ export class ThreadManager {
     const source = this.getThread(id);
     // The work moves; waiting for this agent's quota to come back is moot.
     this.quotaResume.drop(id);
+    this.autoRetry.drop(id);
+    this.autoAdvance.drop(id);
     const successor = await this.createHandoverThread(id, target.agent, target.model, 'continue', 'summary');
     this.autoHandover.inherit(id, successor.id);
     const adapter = this.adapters.get(target.agent)!;
@@ -2947,7 +3226,7 @@ export class ThreadManager {
     this.dispatchingQueues.add(threadId);
     if (rest.length) this.queues.set(threadId, rest);
     else this.queues.delete(threadId);
-    this.startTurn(threadId, { workMode: next.workMode, text: next.text, displayText: next.displayText, channel: next.channel, voiceSummary: next.voiceSummary, images: next.images, videos: next.videos, mentions: next.mentions, collaboration: next.collaboration, fromUser: next.fromUser }, undefined, true).catch((err) => {
+    this.startTurn(threadId, { workMode: next.workMode, text: next.text, displayText: next.displayText, channel: next.channel, voiceSummary: next.voiceSummary, images: next.images, videos: next.videos, mentions: next.mentions, collaboration: next.collaboration, fromUser: next.fromUser }, undefined, true, undefined, undefined, next.assistantSay ? { assistantSay: next.assistantSay } : undefined).catch((err) => {
       // The thread was archived or deleted in the meantime, or the message is no longer acceptable.
       console.error(`could not send a queued message: ${err instanceof Error ? err.message : err}`);
       if (this.store.getThread(threadId)) this.setQueue(threadId, [
@@ -2959,13 +3238,20 @@ export class ThreadManager {
     });
   }
 
+  /** A cancelled round cannot authorize new work while its process is still stopping. */
+  activeTurnId(threadId: string): string | null {
+    const run = this.running.get(threadId);
+    return run && !run.cancelRequested ? run.turnId : null;
+  }
+
   /**
    * Stops the running turn. Stopping means stopping: messages waiting behind it are not sent, they
    * are handed back (their text) so the caller can put them in front of the user again.
    */
-  async cancelTurn(threadId: string, opts: { keepQueue?: boolean } = {}): Promise<{ dropped: string[]; mentions?: unknown[] }> {
+  async cancelTurn(threadId: string, opts: { keepQueue?: boolean; authorize?: () => void } = {}): Promise<{ dropped: string[]; mentions?: unknown[] }> {
     this.getThread(threadId);
     if (!opts.keepQueue) await this.coordination?.beforeStop(threadId);
+    opts.authorize?.();
     const mentions = opts.keepQueue ? [] : (this.queues.get(threadId) ?? []).flatMap(q => q.mentions ?? []);
     const dropped = opts.keepQueue ? [] : (this.queues.get(threadId) ?? []).map((q) => q.displayText ?? q.text).filter(Boolean);
     if (!opts.keepQueue && this.queues.has(threadId)) this.setQueue(threadId, []);
@@ -3011,11 +3297,17 @@ export class ThreadManager {
 
   /** Closes live agent processes. Threads and events stay in the store. */
   async shutdown(): Promise<void> {
+    this.stopping = true;
+    await this.warmups.shutdown();
+    await Promise.all([...this.prewarmed.values()].map(warm => warm.dispose()));
+    this.prewarmed.clear();
     await this.personal.explore.dispose();
     await this.lark.dispose();
     this.autoHandover.close();
     if (this.quotaWatch) clearInterval(this.quotaWatch);
     this.quotaResume.dispose();
+    this.autoRetry.dispose();
+    this.autoAdvance.dispose();
     this.coordination?.suspendAll();
     // The file mirror must finish its queued writes before callers remove the data directory.
     await this.personal.flushMirror().catch(() => undefined);
@@ -3023,7 +3315,7 @@ export class ThreadManager {
     const deadline = Date.now() + 3000;
     while (this.running.size > 0 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 25));
     await Promise.allSettled([...this.settlingHandovers]);
-    for (const [, s] of this.sessions) await s.close().catch(() => undefined);
+    for (const id of [...this.sessions.keys()]) await this.dropSession(id, 'shutdown');
     this.sessions.clear();
     this.sessionAdapters.clear();
   }
@@ -3073,7 +3365,7 @@ export class ThreadManager {
       const adapter = this.adapters.get(thread.agent);
       const code = adapter?.sessionInUse?.(message) ? 'session_in_use' : adapter?.planExhausted?.(message) ? 'plan_exhausted' : undefined;
       this.emitThreadEvent(thread.id, turnId, 'turn.error', { message, ...(code ? { code } : {}) });
-      await this.dropSession(thread.id);
+      await this.dropSession(thread.id, 'turn_error');
     } finally {
       this.cancelApprovals(thread.id, turnId);
       this.quietTurns.delete(turnId);
@@ -3089,8 +3381,10 @@ export class ThreadManager {
       // A model/effort/speed change arrived while this turn ran: now that nothing runs in the
       // session (a native takeover keeps it busy, and its own finish hook retries), drop it so
       // the next turn resumes the agent session with the new setting.
-      if (!this.running.has(thread.id) && this.refreshAfterTurn.delete(thread.id)) {
-        await this.dropSession(thread.id).catch(() => undefined);
+      const refreshReason = this.refreshAfterTurn.get(thread.id);
+      if (!this.running.has(thread.id) && refreshReason) {
+        this.refreshAfterTurn.delete(thread.id);
+        await this.dropSession(thread.id, refreshReason).catch(() => undefined);
       }
       // The thread may have been deleted while its last turn was winding down.
       if (this.store.getThread(thread.id)) {
@@ -3114,6 +3408,15 @@ export class ThreadManager {
         const failed = this.store.listTurnEvents(thread.id, turnId).find(e => e.type === 'turn.error');
         if (failed?.data.code === 'plan_exhausted' && settled !== 'moved'
           && !this.running.has(thread.id) && !this.threadView(thread.id).waiting) this.quotaResume.parked(thread.id);
+        // A transient failure instead — the server out of capacity, a dropped connection: the hub
+        // retries the ask itself, visibly and a few times, before leaving the thread to the person.
+        // Coded failures (quota, permission, interruption) take their own paths above and elsewhere.
+        if (failed && !failed.data.code && settled !== 'moved' && !this.running.has(thread.id) && !this.threadView(thread.id).waiting
+          && start && !start.data.handover && !start.data.control && !start.data.imported && !start.data.fromTerminal
+          && transientError(null, String(failed.data.message ?? ''))) this.autoRetry.parked(thread.id, turnId);
+        // The agent said where the work stands: with auto-advance on, an external wait or unfinished
+        // work arms the hub to nudge the thread on by itself (it re-checks all facts itself).
+        this.autoAdvance.settled(thread.id, turnId);
         // Quota is closing in but the handover did not move the work: shrink the context while the
         // account can still answer, so the rest of the window is not spent re-reading it.
         if (settled !== 'moved') void this.autoCompact.settled(thread.id, turnId).catch(() => undefined);
@@ -3218,7 +3521,7 @@ export class ThreadManager {
         authorize();
         if (this.sessions.has(nativeThreadId) && this.sessionAdapters.get(nativeThreadId) !== adapter) {
           if (this.running.has(nativeThreadId)) throw new Error('voice_provider_changed');
-          await this.dropSession(nativeThreadId);
+          await this.dropSession(nativeThreadId, 'adapter_changed');
         }
         const session = await this.ensureSession(this.getThread(nativeThreadId));
         if (ended) throw new Error('voice_session_ended');
@@ -3318,19 +3621,11 @@ export class ThreadManager {
     finally { if (this.sessionStarts.get(thread.id) === task) this.sessionStarts.delete(thread.id); }
   }
 
-  private async createSession(thread: ThreadRecord): Promise<AgentSession> {
-    const personalScope = Boolean(this.personal.environment(thread.id));
-    const adapter = this.adapters.get(thread.agent);
-    if (!adapter) throw new Error(`unknown agent: ${thread.agent}`);
-    if (this.sessions.has(thread.id) && (this.personalScopes.get(thread.id) !== personalScope || this.sessionAdapters.get(thread.id) !== adapter)) await this.dropSession(thread.id);
-    const existing = this.sessions.get(thread.id);
-    if (existing) {
-      if (existing.setWorkMode) await existing.setWorkMode(thread.workMode ?? 'execute');
-      return existing;
-    }
-    const session = await adapter.start({
+  private sessionOptions(thread: SessionContext, signal?: AbortSignal): StartOptions {
+    return {
+      signal,
       borrowedTool: this.borrowing?.toolForThread(thread.id),
-      coordinationEnv: this.backgroundThreads.has(thread.id) ? {} : { ...this.coordination?.environment(thread.id), ...this.borrowing?.environment(thread.id), ...this.personal.environment(thread.id) },
+      coordinationEnv: this.backgroundThreads.has(thread.id) ? {} : { ...this.coordination?.environment(thread.id), ...this.borrowing?.environment(thread.id), ...this.personal.environment(thread.id, thread.cwd) },
       cwd: thread.cwd,
       resumeId: thread.agentSessionId ?? undefined,
       onSessionId: (id) => {
@@ -3341,7 +3636,7 @@ export class ThreadManager {
       permissionMode: thread.permissionMode as PermissionMode,
       speed: thread.speed,
       workMode: thread.workMode ?? 'execute',
-      onGoal: (goal) => this.applyGoal(thread.id, goal),
+      onGoal: (goal) => { if (this.store.getThread(thread.id)) this.applyGoal(thread.id, goal); },
       onSpeed: (speed) => {
         if (!this.store.getThread(thread.id)) return;
         this.store.updateThread(thread.id, { speed });
@@ -3352,13 +3647,56 @@ export class ThreadManager {
         this.store.updateThread(thread.id, { workMode });
         this.emitThreadEvent(thread.id, null, 'thread.updated', {});
       },
-      ...(adapter.normalizeModel
+      ...(this.adapters.get(thread.agent)?.normalizeModel
         ? (() => {
-            const normalized = adapter.normalizeModel(thread.model, thread.effort);
+            const normalized = this.adapters.get(thread.agent)!.normalizeModel!(thread.model, thread.effort);
             return { model: normalized.model ?? undefined, effort: normalized.effort ?? undefined };
           })()
         : { model: thread.model ?? undefined, effort: (thread.effort ?? undefined) as EffortLevel | undefined }),
-    });
+    };
+  }
+
+  private async createSession(thread: ThreadRecord): Promise<AgentSession> {
+    const personalScope = Boolean(this.personal.environment(thread.id));
+    const adapter = this.adapters.get(thread.agent);
+    if (!adapter) throw new Error(`unknown agent: ${thread.agent}`);
+    if (this.sessions.has(thread.id) && (this.personalScopes.get(thread.id) !== personalScope || this.sessionAdapters.get(thread.id) !== adapter)) await this.dropSession(thread.id, this.sessionAdapters.get(thread.id) !== adapter ? 'adapter_changed' : 'personal_scope_changed');
+    let existing = this.sessions.get(thread.id);
+    if (existing?.isAlive && !existing.isAlive()) {
+      await this.dropSession(thread.id, 'process_exited');
+      existing = undefined;
+    }
+    if (existing) {
+      if (existing.setWorkMode) await existing.setWorkMode(thread.workMode ?? 'execute');
+      return existing;
+    }
+    let warm = this.prewarmed.get(thread.id);
+    this.prewarmed.delete(thread.id);
+    if (warm && (warm.adapter !== adapter || warm.key !== this.draftSessionKey({ ...thread,
+      scratch: Boolean(this.dirs.scratchRoot && thread.cwd.startsWith(this.dirs.scratchRoot + sep)),
+    }))) {
+      await warm.dispose();
+      warm = undefined;
+      this.sessionReasons.set(thread.id, 'draft_settings_changed');
+    }
+    const reason = warm ? 'prewarmed' : this.sessionReasons.get(thread.id) ?? (thread.agentSessionId ? 'resume' : 'new_thread');
+    this.sessionReasons.delete(thread.id);
+    this.emitThreadEvent(thread.id, null, 'session.lifecycle', { action: 'start', reason });
+    const began = Date.now();
+    let session = warm ? await warm.ready : null;
+    if (session?.isAlive && !session.isAlive()) { await session.close(); session = null; }
+    const prewarmed = Boolean(session);
+    if (!session) {
+      if (warm) this.emitThreadEvent(thread.id, null, 'session.lifecycle', { action: 'fallback', reason: 'prewarm_failed' });
+      if (this.stopping) throw new Error('Calli is stopping');
+      try { session = await adapter.start(this.sessionOptions(thread)); }
+      catch (error) {
+        this.emitThreadEvent(thread.id, null, 'session.lifecycle', { action: 'failed', reason: 'startup_failed' });
+        throw error;
+      }
+    }
+    if (this.stopping) { await session.close(); throw new Error('Calli is stopping'); }
+    this.emitThreadEvent(thread.id, null, 'session.lifecycle', { action: 'ready', reason: warm && !prewarmed ? 'prewarm_failed' : reason, prewarmed, elapsedMs: Date.now() - began });
     session.setSessionHooks?.({
       turnStarted: (nativeId, opts) => {
         // An upstream delegation is a real user task; captions alone never resume collaboration.
@@ -3398,7 +3736,9 @@ export class ThreadManager {
           this.quietTurns.delete(turnId);
           this.emitThreadEvent(thread.id, null, 'thread.updated', {});
           // Same end-of-turn refresh as a hub turn: a setting changed mid-turn waits for this moment.
-          if (this.refreshAfterTurn.delete(thread.id)) await this.dropSession(thread.id).catch(() => undefined);
+          const reason = this.refreshAfterTurn.get(thread.id);
+          this.refreshAfterTurn.delete(thread.id);
+          if (reason) await this.dropSession(thread.id, reason).catch(() => undefined);
           this.startNextQueued(thread.id);
         }
       },
@@ -3412,10 +3752,17 @@ export class ThreadManager {
     return session;
   }
 
-  private async dropSession(threadId: string): Promise<void> {
+  private async dropSession(threadId: string, reason: string): Promise<void> {
     const pending = this.sessionStarts.get(threadId);
     if (pending) await pending.catch(() => undefined);
+    const warm = this.prewarmed.get(threadId);
+    this.prewarmed.delete(threadId);
+    await warm?.dispose();
     const s = this.sessions.get(threadId);
+    if (s || warm) {
+      this.sessionReasons.set(threadId, reason);
+      if (this.store.getThread(threadId)) this.emitThreadEvent(threadId, null, 'session.lifecycle', { action: 'close', reason });
+    }
     this.personalScopes.delete(threadId);
     this.sessions.delete(threadId);
     this.sessionAdapters.delete(threadId);

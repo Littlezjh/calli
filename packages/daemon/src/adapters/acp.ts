@@ -5,7 +5,7 @@ import { timedUsage, type LiveUsage } from './live-usage.js';
 import type { UsageSample } from '../telemetry.js';
 import { cliDiagnostic, probeWithDeadline } from './diagnostics.js';
 import { isCompaction, trackCompaction } from './compaction.js';
-import { sessionEnvironment } from './types.js';
+import { cancelSessionOnAbort, sessionEnvironment } from './types.js';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -401,10 +401,17 @@ export class AcpSession implements AgentSession {
     if (!questions?.length || !hooks?.requestInput) return { action: 'cancel' };
     const answer = await hooks.requestInput({ id: params.toolCallId, title: params.message || '需要你的意见', questions });
     if ('cancelled' in answer) return { action: 'cancel' };
-    const content = Object.fromEntries(questions.filter(q => answer.answers[q.id]?.length).map(q => {
+    const content = Object.fromEntries(questions.flatMap(q => {
+      const entries: Array<[string, unknown]> = [];
       const a = answer.answers[q.id];
-      const type = params.requestedSchema.properties[q.id].type;
-      return [q.id, type === 'array' ? a : type === 'boolean' ? a[0] === 'true' : a[0]];
+      if (a?.length) {
+        const type = params.requestedSchema.properties[q.id].type;
+        entries.push([q.id, type === 'array' ? a : type === 'boolean' ? a[0] === 'true' : a[0]]);
+      }
+      // The choice's own free-text line goes back under its field, beside the pick it qualifies.
+      const note = q.note ? answer.answers[q.note.id] : undefined;
+      if (q.note && note?.length) entries.push([q.note.id, note[0]]);
+      return entries;
     }));
     return { action: 'accept', content };
   }
@@ -485,6 +492,8 @@ export class AcpSession implements AgentSession {
     return true;
   }
 
+  isAlive(): boolean { return !this.peer.isClosed; }
+
   async prompt(input: TurnInput, hooks: TurnHooks): Promise<TurnResult> {
     this.manualCompaction = isCompaction(input.text);
     try {
@@ -548,13 +557,14 @@ export class AcpSession implements AgentSession {
 
 /** Everything an ACP agent has in common. The agent-specific parts are the abstract members. */
 export abstract class AcpAdapter implements AgentAdapter {
+  readonly prewarm = true;
   protected liveUsage(_id: string, _cwd: string, _emit: (sample: UsageSample) => void): LiveUsage | undefined { return undefined; }
   /** Plan usage observed in-band, as the agent answers; wired by whoever owns the adapter. */
   onQuotaObserved?: (quota: PlanQuota) => void;
   /** Optional protocol extensions supplied by a concrete adapter. */
   protected configureSession(_session: AcpSession, _peer: JsonRpcPeer): void {}
   /** Agent-specific options that must be present when a fresh native session is created. */
-  protected initialSessionOptions(_opts: StartOptions): { meta?: Record<string, unknown>; model?: boolean; effort?: boolean } { return {}; }
+  protected initialSessionOptions(_opts: StartOptions): { meta?: Record<string, unknown>; env?: Record<string, string>; model?: boolean; effort?: boolean } { return {}; }
   abstract readonly id: string;
   abstract readonly label: string;
   abstract readonly capabilities: AgentAdapter['capabilities'];
@@ -719,8 +729,9 @@ export abstract class AcpAdapter implements AgentAdapter {
 
   /** Starts a session and also returns the config options the agent reported for it. */
   protected async open(opts: StartOptions, probe = false): Promise<{ session: AcpSession; configOptions: ConfigOption[] }> {
+    const initial = opts.resumeId ? {} : this.initialSessionOptions(opts);
     const [bin, ...args] = this.command;
-    const child = spawn(bin, args, { cwd: opts.cwd, stdio: ['pipe', 'pipe', 'pipe'], env: sessionEnvironment(this.env, opts.coordinationEnv) });
+    const child = spawn(bin, args, { cwd: opts.cwd, stdio: ['pipe', 'pipe', 'pipe'], env: sessionEnvironment({ ...this.env, ...initial.env }, opts.coordinationEnv) });
 
     // The session object is created after the peer, but the peer's handlers need it.
     // Route through a holder so both can reference each other without a cycle at construction.
@@ -752,6 +763,8 @@ export abstract class AcpAdapter implements AgentAdapter {
       `${this.id}-acp`,
     );
 
+    cancelSessionOnAbort(opts.signal, () => peer.close());
+
     let timedOut = false;
     const timer = probe ? setTimeout(() => { timedOut = true; peer.close(); }, 30000) : undefined;
     try {
@@ -760,7 +773,6 @@ export abstract class AcpAdapter implements AgentAdapter {
         clientCapabilities: { elicitation: { form: {} } },
       });
 
-      const initial = opts.resumeId ? {} : this.initialSessionOptions(opts);
       const startParams = { cwd: opts.cwd, mcpServers: [], ...(initial.meta ? { _meta: initial.meta } : {}) };
       let sessionId: string;
       let info: any;

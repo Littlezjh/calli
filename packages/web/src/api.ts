@@ -1,3 +1,6 @@
+import type { DraftSessionInput } from '../../daemon/src/threads';
+export type { DraftSessionInput } from '../../daemon/src/threads';
+import type { PreviewNote, PreviewPick } from './preview-notes';
 import type { ContextReference } from './context-references';
 import type { GitStatus, GitLog, GitCommitFiles, GitDiff, GitOperation } from '../../daemon/src/git';
 export type { GitStatus, GitLog, GitCommitFiles, GitDiff, GitOperation, GitFile, GitCommit } from '../../daemon/src/git';
@@ -10,15 +13,9 @@ export interface GeneralSettings {
   /** Shared automatic archive window. Null means conversations stay in the sidebar. */
   autoArchiveDays: AutoArchiveDays;
 }
-export interface DraftModelPreference {
-  /** Null leaves the agent's own default model in charge. */
-  model: string | null;
-  /** Null leaves the agent's own/default thinking effort in charge. */
-  effort: string | null;
-  /** Null leaves the agent's own/default speed in charge. */
-  speed: string | null;
-}
-export interface UserQuestion { id: string; question: string; header?: string; options: Array<{ value: string; label: string; description?: string }>; multiple?: boolean; freeText?: boolean; required?: boolean }
+import type { DraftModelPreference, ModelPreferencePatch } from '../../daemon/src/model-preferences';
+export type { DraftModelPreference } from '../../daemon/src/model-preferences';
+export interface UserQuestion { id: string; question: string; header?: string; options: Array<{ value: string; label: string; description?: string }>; multiple?: boolean; freeText?: boolean; required?: boolean; note?: { id: string } }
 export type UserInputAnswer = { answers: Record<string, string[]> } | { cancelled: true };
 import type { UsageReport, AgentDiagnostic, CostReport, DailyUsage } from './observability';
 import type { StoredEvent } from './timeline';
@@ -202,7 +199,7 @@ export interface ThreadStats {
 /** The model and thinking effort members of one instance start with; null leaves the agent's own. */
 export interface MemberDefault { model: string | null; effort: string | null; /** Set where this instance's members differ from the team's level. */ permission?: string }
 export type TeamStatus = 'running' | 'awaiting_confirm' | 'needs_attention' | 'done';
-export interface TeamSummary { id: string; name: string; description?: string; entry: string; memberCount: number }
+export interface TeamSummary { id: string; name: string; description?: string; entry: string; memberCount: number; entryAgent?: string; entryModel?: string | null }
 export interface TeamMember { name: string; agent: string; model?: string; effort?: string; cwd?: string; instruction?: string }
 export interface TeamDefinition {
   id?: string; name: string; description?: string; entry: string; members: TeamMember[];
@@ -240,6 +237,13 @@ export interface AutoCompactSettings { enabled: boolean; threshold: number; agen
 export interface AutoCompactStatus { last?: { threadId: string; successorId?: string; native: boolean; chars: number; chunks: number; at: string }; error?: { threadId: string; message: string; at: string }; skipped?: { threadId: string; reason: string; chars: number; at: string } }
 /** A watch waiting for the thread's agent quota to reset; the daemon then resends the failed turn. */
 export interface ResumeView { origin: 'user' | 'global'; resetsAt: string | null; nextCheckAt: string; lastError?: string }
+/** A transient failure the daemon is retrying by itself (`turn.retry` marks each attempt). */
+export interface AutoRetryView { attempts: number; max: number; nextAt: string }
+/** The daemon advancing a thread by itself: an external wait or an unfinished turn. */
+export interface AdvanceView { reason: 'wait' | 'continue'; attempts: number; max: number; nextAt: string | null; what?: string }
+/** The auto-advance switch: off by default; a thread may override the global value. */
+export interface AdvanceSettings { enabled: boolean }
+export interface AdvanceState { enabled: boolean; source: 'thread' | 'global'; override: boolean | null }
 export interface AutoHandoverView {
   enabled: boolean; source: 'thread' | 'collaboration' | 'global'; override: boolean | null;
   state?: 'checking' | 'preparing' | 'countdown' | 'stopped' | 'failed';
@@ -261,6 +265,10 @@ export interface ThreadBrief {
 
 export interface Thread {
   autoHandover?: AutoHandoverView;
+  /** Present when the daemon retries this thread's transient failure; absent on older daemons. */
+  autoRetry?: AutoRetryView | null;
+  /** Present when the daemon advances this thread by itself; absent on older daemons. */
+  advance?: AdvanceView | null;
   /** `doing`, on a member: its latest task while it works, the opening of its answer once it has returned. */
   coordination?: { retired?: boolean; rootId: string; children: number; paused: boolean; doing?: string; team?: { name: string; status: TeamStatus; role: string; error?: string } };
   id: string;
@@ -435,7 +443,7 @@ export class ApiError extends Error {
 export const MAX_QUEUED = 5;
 
 /** One arrival in a batch the Router took in a single turn. */
-export type TurnPart = { kind: 'person'; text: string } | { kind: 'lark' | 'worker'; count: number };
+export type TurnPart = { kind: 'person'; text: string } | { kind: 'lark' | 'worker' | 'meeting-prep'; count: number };
 /** A turn a channel started on the person's behalf (a batch of Lark signals), not words they wrote. */
 export interface TurnChannel { kind: string; count: number; parts?: TurnPart[] }
 
@@ -508,6 +516,23 @@ export interface ExploreSource { id: ExploreSourceId; available: boolean; reason
 
 export interface PersonalSettings { routerThreadId?: string | null; directoryIsDefault?: boolean; defaultDirectory?: string; defaultDirectoryDisplay?: string; directoryDisplay?: string | null; directory: string | null; agent: string | null; model: string | null }
 export interface PersonalBrief { title: string; lines: string[]; text: string }
+export type PlanRange = 'hour' | 'day' | 'week' | 'month';
+export interface PlanMeeting { id: string; title: string; start: string; end: string; recurring: boolean; url?: string }
+export interface PlanTodo { id: string; text: string; dueAt: string | null; importance: string | null; horizon: 'week' | 'month' | null; parentId: string | null; stage: TodoStage | null }
+export interface PlanThread { id: string; title: string; line: string; at: string }
+/** What lies ahead in one range, put together by the hub without a model. */
+export interface PersonalPlan {
+  range: PlanRange;
+  from: string;
+  to: string;
+  /** `off`: no calendar to read; `unavailable`: reading failed. Neither is the same as no meetings. */
+  meetings: { state: 'ok' | 'unavailable' | 'off'; error?: string; items: PlanMeeting[] };
+  urgent: PlanTodo[];
+  due: PlanTodo[];
+  goals: PlanTodo[];
+  needsYou: PlanThread[];
+  running: PlanThread[];
+}
 export interface LastPersonalBrief { text: string; sentAt: string }
 export interface BriefSettings { enabled: boolean; morning: string; evening: string }
 export interface LarkChannelSettings {
@@ -615,7 +640,14 @@ export interface ProactiveRun {
   matterId: string;
   /** The session's title, for a card that has no matter to name it. */
   threadTitle?: string;
-  kind: 'prepare' | 'sandbox' | 'advance';
+  kind: 'prepare' | 'sandbox' | 'advance' | 'dispatch';
+  /** Dispatch only: the agent, directory and task proposed, as the card shows them. */
+  agent?: string;
+  cwd?: string;
+  task?: string;
+  /** Dispatch only: defaults to the task's first line, for a card with no matter to name it. */
+  title?: string;
+  model?: string;
   variant?: 'deadline' | 'plan';
   needsRepo?: true;
   turnId?: string;
@@ -642,7 +674,7 @@ export interface ProactiveRun {
   discardReason?: string;
 }
 
-export type ProactiveAction = 'merge' | 'discard' | 'revert' | 'approve' | 'answer' | 'close-matter' | 'dismiss' | 'allow-repo';
+export type ProactiveAction = 'merge' | 'discard' | 'revert' | 'approve' | 'answer' | 'close-matter' | 'dismiss' | 'allow-repo' | 'start';
 
 /** Where a matter stands, derived by the daemon. Null when nothing is going on with it. */
 export type TodoStage = 'answer' | 'review' | 'blocked' | 'working' | 'idle';
@@ -791,6 +823,7 @@ export interface AgentInfo {
   login?: 'terminal' | 'wizard';
   streamBridgeEnabled?: boolean;
   capabilities: {
+    prewarm?: boolean;
     workModes?: WorkMode[];
     speed?: boolean;
     coordination?: boolean;
@@ -856,9 +889,17 @@ export interface QuotaWindow {
   loadPercent?: number;
 }
 
+/** Money left on a pay-as-you-go key, as the vendor states it, such as "¥60.52". */
+export interface QuotaBalance {
+  scope: string;
+  amount: string;
+}
+
 /** Plan usage of an agent instance, read outside any session. */
 export interface PlanQuota {
   windows: QuotaWindow[];
+  /** Balances of keys billed per use, next to the plans' windows. */
+  balances?: QuotaBalance[];
   note?: string;
   /** The subscription the account is on, as the agent reports it (`id`) and as shown (`label`). */
   plan?: { id: string; label: string };
@@ -1241,9 +1282,12 @@ export class Api {
   exploreStatus(): Promise<ExploreStatus | null> { return this.request('GET', '/api/personal/explore'); }
   cancelExplore(): Promise<{ cancelled: boolean }> { return this.request('DELETE', '/api/personal/explore'); }
   draftModelPreferences(): Promise<Record<string, DraftModelPreference>> { return this.request('GET', '/api/draft-model-preferences'); }
-  saveDraftModelPreferences(value: Record<string, DraftModelPreference>, opts: { keepalive?: boolean } = {}): Promise<Record<string, DraftModelPreference>> { return this.request('PUT', '/api/draft-model-preferences', value, opts); }
+  patchDraftModelPreference(agent: string, patch: ModelPreferencePatch): Promise<DraftModelPreference> { return this.request('PATCH', '/api/draft-model-preferences', { agent, ...patch }, { keepalive: true }); }
   personalSettings(): Promise<PersonalSettings> { return this.request('GET', '/api/personal/settings'); }
+  /** Switches her agent in place; a conversation under way is handed over to the new one. */
+  switchPersonalAgent(agent: string): Promise<{ threadId: string | null; settings: PersonalSettings }> { return this.request('POST', '/api/personal/agent', { agent }); }
   savePersonalSettings(value: PersonalSettings): Promise<PersonalSettings> { return this.request('PUT', '/api/personal/settings', value); }
+  personalPlan(range: PlanRange, signal?: AbortSignal): Promise<PersonalPlan> { return this.request('GET', `/api/personal/plan?range=${range}`, undefined, { signal }); }
   personalBrief(kind: 'morning' | 'evening'): Promise<PersonalBrief | null> { return this.request('GET', `/api/personal/brief?kind=${kind}`); }
   lastPersonalBrief(kind: 'morning' | 'evening'): Promise<LastPersonalBrief | null> { return this.request('GET', `/api/personal/brief/last?kind=${kind}`); }
   briefSettings(): Promise<BriefSettings> { return this.request('GET', '/api/personal/brief/settings'); }
@@ -1428,7 +1472,15 @@ export class Api {
     return this.request('GET', `/api/threads/${id}/events?before=${before}`);
   }
 
+  warmDraft(input: DraftSessionInput): Promise<{ id: string | null }> {
+    return this.request('POST', '/api/thread-warmups', input);
+  }
+  cancelWarmDraft(id: string): Promise<void> {
+    return this.request('DELETE', `/api/thread-warmups/${encodeURIComponent(id)}`, undefined, { keepalive: true });
+  }
+
   createThread(input: {
+    warmupId?: string;
     workMode?: WorkMode;
     speed?: string | null;
     agent: string;
@@ -1458,7 +1510,7 @@ export class Api {
   deleteTeam(id: string): Promise<void> { return this.request('DELETE', `/api/teams/${id}`); }
   importTeam(value: unknown): Promise<TeamDefinition> { return this.request('POST', '/api/teams/import', value); }
   exportTeam(id: string): Promise<TeamDefinition> { return this.request('GET', `/api/teams/${id}/export`); }
-  dispatchTeam(id: string, text: string, cwd: string): Promise<{ taskId: string; threadId: string }> { return this.request('POST', `/api/teams/${id}/tasks`, { text, cwd, source: { kind: 'web' } }); }
+  dispatchTeam(id: string, text: string, cwd: string, images: OutgoingImage[] = []): Promise<{ taskId: string; threadId: string }> { return this.request('POST', `/api/teams/${id}/tasks`, { text, ...(images.length ? { images } : {}), cwd, source: { kind: 'web' } }); }
 
   coordination(id: string): Promise<Coordination | null> { return this.request('GET', `/api/threads/${id}/coordination`); }
   /** Turns of any thread on this machine, archived ones too, in which the words were said. */
@@ -1694,6 +1746,7 @@ export class Api {
   updateThread(
     threadId: string,
     updates: {
+      rememberModelChoice?: boolean;
       workMode?: WorkMode;
       speed?: string | null;
       title?: string;
@@ -1755,8 +1808,12 @@ export class Api {
    * the copy ends where that turn ended.
    */
   /** With `turnId` the copy ends where that turn ended; with `worktree` it runs in a git worktree of its own. */
-  forkThread(threadId: string, opts: { turnId?: string; worktree?: boolean } = {}): Promise<Thread> {
-    const body = { ...(opts.turnId ? { turnId: opts.turnId } : {}), ...(opts.worktree ? { worktree: true } : {}) };
+  forkThread(threadId: string, opts: { turnId?: string; worktree?: boolean; agent?: string } = {}): Promise<Thread> {
+    const body = {
+      ...(opts.turnId ? { turnId: opts.turnId } : {}),
+      ...(opts.worktree ? { worktree: true } : {}),
+      ...(opts.agent ? { agent: opts.agent } : {}),
+    };
     return this.request('POST', `/api/threads/${threadId}/fork`, Object.keys(body).length ? body : undefined);
   }
 
@@ -1775,6 +1832,11 @@ export class Api {
     return this.request('GET', `/api/threads/${threadId}/preview-link?path=${encodeURIComponent(path)}`);
   }
 
+  previewNotes(threadId: string, page: string): Promise<PreviewNote[]> { return this.request('GET', `/api/threads/${threadId}/preview-notes?page=${encodeURIComponent(page)}`); }
+  addPreviewNote(threadId: string, page: string, pick: PreviewPick, comment: string): Promise<PreviewNote> { return this.request('POST', `/api/threads/${threadId}/preview-notes`, { page, ...pick, comment }); }
+  removePreviewNote(threadId: string, id: string): Promise<void> { return this.request('DELETE', `/api/threads/${threadId}/preview-notes/${id}`); }
+  sendPreviewNotes(threadId: string, page: string, ids: string[]): Promise<{ turnId: string } | { queued: true; id: string }> { return this.request('POST', `/api/threads/${threadId}/preview-notes/send`, { page, ids }); }
+
   /** Creates an empty successor in the same directory and worktree, without starting an agent turn. */
   handoverSettings(): Promise<HandoverSettings> { return this.request('GET', '/api/handover-settings'); }
   saveHandoverSettings(value: HandoverSettings): Promise<HandoverSettings> { return this.request('PUT', '/api/handover-settings', value); }
@@ -1785,18 +1847,29 @@ export class Api {
   threadGoal(id: string): Promise<{ goal: GoalView | null }> { return this.request('GET', `/api/threads/${id}/goal`); }
   setAutoHandover(id: string, enabled: boolean | null): Promise<AutoHandoverView> { return this.request('PATCH', `/api/threads/${id}/auto-handover`, { enabled }); }
   setResume(id: string, armed: boolean): Promise<AutoHandoverView> { return this.request('PATCH', `/api/threads/${id}/auto-handover`, { resume: armed }); }
+  /** Cancels the daemon's automatic retry of a transient failure; arming itself is automatic. */
+  cancelAutoRetry(id: string): Promise<Thread> { return this.request('PATCH', `/api/threads/${id}/auto-retry`, { enabled: false }); }
+  advanceSettings(): Promise<AdvanceSettings> { return this.request('GET', '/api/advance/settings'); }
+  saveAdvanceSettings(value: AdvanceSettings): Promise<AdvanceSettings> { return this.request('PUT', '/api/advance/settings', value); }
+  setThreadAdvance(id: string, enabled: boolean | null): Promise<AdvanceState & { advance: AdvanceView | null }> { return this.request('PUT', `/api/threads/${id}/advance`, { enabled }); }
+  /** Cancels the daemon's own nudge of this thread (the line under the last turn). */
+  cancelAdvanceWatch(id: string): Promise<{ advance: AdvanceView | null }> { return this.request('DELETE', `/api/threads/${id}/advance/watch`); }
   cancelAutoHandover(id: string): Promise<AutoHandoverView> { return this.request('DELETE', `/api/threads/${id}/auto-handover`); }
   setCollaborationHandover(id: string, enabled: boolean): Promise<Coordination> { return this.request('PATCH', `/api/threads/${id}/collaboration-handover`, { enabled }); }
 
-  createHandoverThread(threadId: string, agent: string, model?: string, mode?: 'continue' | 'branch'): Promise<Thread> {
-    return this.request('POST', `/api/threads/${threadId}/handover-thread`, { agent, model, mode });
+  createHandoverThread(threadId: string, agent: string, model?: string, mode?: 'continue' | 'branch', takeTeam?: boolean): Promise<Thread> {
+    // The team moves with the conversation unless the person said no; only a refusal is sent.
+    return this.request('POST', `/api/threads/${threadId}/handover-thread`, { agent, model, mode, ...(takeTeam === false ? { takeTeam: false } : {}) });
   }
   /** Hands the thread to `target` now: its conversation, queue and any collaboration lead. */
-  takeOver(threadId: string, target: string | HandoverTarget, note?: string): Promise<Thread> {
-    const body: HandoverTarget & { note?: string } = typeof target === 'string' ? { agent: target } : { ...target };
+  takeOver(threadId: string, target: string | HandoverTarget, note?: string, summary?: 'source' | HandoverTarget): Promise<Thread> {
+    const body: HandoverTarget & { note?: string; summary?: 'source' | HandoverTarget } = typeof target === 'string' ? { agent: target } : { ...target };
     if (note !== undefined) body.note = note;
+    // Who writes the brief, when the person chose: the thread's own agent, or another reading the record.
+    if (summary !== undefined) body.summary = summary;
     return this.request('POST', `/api/threads/${threadId}/takeover`, body);
   }
+  /** Unlinks a handover: a manual one leaves its chain; an automatic one splits off its source. */
   detachAutomaticHandover(threadId: string): Promise<{ detached: string[]; thread: Thread }> {
     return this.request('DELETE', `/api/threads/${threadId}/handover-link`);
   }

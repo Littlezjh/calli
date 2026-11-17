@@ -10,7 +10,8 @@ import { sizeLabel } from '../files';
 import { mentionAt } from '../mentions';
 import { takeoverMention } from '../handover';
 import { MAX_IMAGES, prepareImage, restoreImage, type PreparedImage } from '../images';
-import { channelRows, splitNotes, withNotes, type Note } from '../timeline';
+import { channelRows, splitNotes, withNotes, type Note, type NoteSource } from '../timeline';
+import { pastedQuote } from '../clipboard';
 import { Popover } from './Popover';
 import { ComposerMenu, goalMenuActions, type GoalAction, type GoalCapability, type WritingMode } from './ComposerMenu';
 import { GoalCard } from './GoalCard';
@@ -185,6 +186,8 @@ interface Props {
   /** Why pictures cannot be attached right now, or null when they can. */
   attachBlocked: string | null;
   attachmentsBlocked?: string;
+  /** New team tasks accept pictures but cannot upload other files before a thread exists. */
+  uploadsBlocked?: string;
   /** Something worth knowing about how attached pictures will be read, shown on the attach button. */
   attachNote?: string | null;
   onError: (message: string) => void;
@@ -206,6 +209,11 @@ interface Props {
   onNoteConsumed?: (id: string) => void;
   /** Told which notes are in the box, so their passages can stay highlighted in the conversation. */
   onNotesChange?: (notes: DraftNote[]) => void;
+  /**
+   * Where a pasted quote came from, as the agent of this box can read it: another thread on this hub.
+   * Without it a pasted quote goes along as text only.
+   */
+  quoteSource?: (threadId: string, turnId: string) => NoteSource | undefined;
   /** The thread's latest message from the user, as it was sent; null when there is none or it is not known yet. */
   lastSent?: { turnId: string; text: string } | null;
 }
@@ -250,6 +258,7 @@ export function Composer({
   onAction,
   attachBlocked,
   attachmentsBlocked,
+  uploadsBlocked,
   attachNote,
   onError,
   queued: queuedProp,
@@ -261,6 +270,7 @@ export function Composer({
   note,
   onNoteConsumed,
   onNotesChange,
+  quoteSource,
   lastSent = null,
   mentionOptions = [],
   collaboration,
@@ -600,7 +610,8 @@ export function Composer({
     // Pictures go to the model as pictures, videos can be previewed here; anything else is a plain file.
     const pictures = files.filter((f) => f.type.startsWith('image/'));
     const uploads = files.filter((f) => !f.type.startsWith('image/'));
-    if (uploads.length) {
+    if (uploads.length && uploadsBlocked) onError(uploadsBlocked);
+    if (uploads.length && !uploadsBlocked) {
       let room = MAX_UPLOADS - videos.length;
       let videoRoom = MAX_VIDEOS - videos.filter(isPlayable).length;
       const ready: PreparedVideo[] = [];
@@ -824,6 +835,7 @@ export function Composer({
       return;
     }
     if (attachmentsBlocked && (images.length || videos.length)) return onError(attachmentsBlocked);
+    if (uploadsBlocked && videos.length) return onError(uploadsBlocked);
     if (images.length && attachBlocked) return onError(attachBlocked);
     if (taker && (images.length || videos.length)) return onError(t('composer.takeoverAttachments'));
     setBusy(true);
@@ -966,7 +978,14 @@ export function Composer({
     if (files.length) {
       e.preventDefault();
       void addFiles(files);
+      return;
     }
+    // A quote pasted whole becomes a quote above the input, as quoting from this thread would.
+    const quote = pastedQuote(e.clipboardData.getData('text/plain'));
+    if (!quote) return;
+    e.preventDefault();
+    const source = quote.threadId && quote.turnId ? quoteSource?.(quote.threadId, quote.turnId) : undefined;
+    setNotes(prev => [...prev, { id: noteId(), quote: quote.text, comment: '', ...(source ? { source } : {}) }]);
   };
 
   const hasFiles = (e: DragEvent) => [...e.dataTransfer.types].includes('Files');
@@ -1254,6 +1273,7 @@ export function Composer({
             <input
               ref={fileRef}
               type="file"
+              accept={uploadsBlocked ? 'image/*' : undefined}
               multiple
               hidden
               onChange={(e) => {

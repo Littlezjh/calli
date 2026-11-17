@@ -38,6 +38,8 @@ interface Props {
   onOpenPlans: () => void;
   setupNeeded?: boolean | null;
   onExplore?: () => void;
+  /** Back to her conversation, from the desk meta's own chat entry. */
+  onChat?: () => void;
 }
 
 const ORDER_KEY = 'calli.desk.order';
@@ -49,7 +51,7 @@ const rotation = (id: string) => ({ '--desk-tilt': `${tilt(id)}deg` } as CSSProp
 
 /** The same plans, laid out as a personal desk. Only an open pile fetches its continuation note. */
 export function DeskPage(props: Props) {
-  const { api, todos, loading, error, threads, agents, personal, personalError, refreshKey, onReload, onPersonalChange, onPersonalRetry, onOpenThread, onOpenPlans, openFinds, onFindsOpened, onSpreadChange, revealTodoId, onRevealTodo } = props;
+  const { api, todos, loading, error, threads, agents, personal, personalError, refreshKey, onReload, onPersonalChange, onPersonalRetry, onOpenThread, onOpenPlans, openFinds, onFindsOpened, onSpreadChange, revealTodoId, onRevealTodo, onChat } = props;
   const [now, setNow] = useState(() => new Date());
   useEffect(() => { const timer = setInterval(() => setNow(new Date()), 60_000); return () => clearInterval(timer); }, []);
   const desk = useMemo(() => buildDesk(todos, now), [todos, now]);
@@ -81,13 +83,6 @@ export function DeskPage(props: Props) {
   const askingCount = Object.values(asking ?? {}).reduce((total, count) => total + count, 0);
   const showAttention = asking === null || Boolean(askingError) || askingCount > 0 || askingOnly;
   useEffect(() => { if (refreshKey > 0) onReload(); }, [refreshKey, onReload]);
-  // Her conversation, once there is one: a quiet way back into it from the head of the desk.
-  const [routerThreadId, setRouterThreadId] = useState<string | null>(null);
-  useEffect(() => {
-    if (api.demo) return; let live = true;
-    void api.petRouter().then(router => { if (live) setRouterThreadId(router.threadId); }).catch(() => undefined);
-    return () => { live = false; };
-  }, [api, refreshKey]);
   const show = (id: string, source: HTMLElement) => { setActionError(''); setOpen({ id, source, from: source.getBoundingClientRect() }); };
   const closeOpen = () => {
     const source = open?.source; setOpen(null);
@@ -154,7 +149,7 @@ export function DeskPage(props: Props) {
   return <div className="desk-page">
     <header className="desk-header">
       <div><h1>{formatDate(now, { month: 'long', day: 'numeric', weekday: 'long' })}</h1>
-        {!loading && !error && (api.demo ? <p className="desk-summary"><span>{t('desk.needsYou', desk.needsYou)}</span></p> : <DeskMeta key={settingsSaved} api={api} count={t('desk.needsYou', desk.needsYou)} stale={desk.stale} now={now} refreshKey={refreshKey} onConfigure={() => { setSettingsOpen(true); if (!personal) onPersonalRetry(); }} onChat={routerThreadId ? () => onOpenThread(routerThreadId) : undefined} />)}
+        {!loading && !error && (api.demo ? <p className="desk-summary"><span>{t('desk.needsYou', desk.needsYou)}</span></p> : <DeskMeta key={settingsSaved} api={api} count={t('desk.needsYou', desk.needsYou)} stale={desk.stale} now={now} refreshKey={refreshKey} onConfigure={() => { setSettingsOpen(true); if (!personal) onPersonalRetry(); }} onChat={onChat} />)}
       </div>
       <div className="desk-views"><button className={`desk-attention${showAttention ? '' : ' empty'}`} aria-hidden={!showAttention} tabIndex={showAttention ? undefined : -1} aria-pressed={askingOnly} disabled={asking === null && !askingError} onClick={() => { if (askingError) setProactiveVersion(n => n + 1); else { setAskingOnly(on => !on); setProactiveOnly(false); } }}>{askingError || (asking === null ? t('proactive.attentionLoading') : t('proactive.attentionCount', askingCount))}</button>{(proactiveOnly || proactiveMatterCount > 0) && <button className="desk-filter" aria-pressed={proactiveOnly} onClick={() => { setProactiveOnly(on => !on); setAskingOnly(false); }}><IconSparkle size={13} />{t('proactive.filter')}{proactiveMatterCount > 0 && <span>{proactiveMatterCount}</span>}</button>}
         <div className="desk-segment" role="group" aria-label={t('desk.title')}>{ORDERS.map(value => <button key={value} aria-pressed={!proactiveOnly && !askingOnly && order === value} onClick={() => { setProactiveOnly(false); setAskingOnly(false); setOrder(value); try { localStorage.setItem(ORDER_KEY, value); } catch { /* Keep the choice for this visit. */ } }}>{t(`desk.${value}`)}</button>)}</div></div>

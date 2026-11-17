@@ -26,7 +26,7 @@ Agent 各自的会话文件仍是源头（hub 只读）。hub 侧事件日志的
    `tool.end` 带最终输出，适用同一规则。每个工具调用因此最多留一条中间快照和一条结束。
    活跃轮的 SSE 推送不变（推送的是新事件本身），刷新后从日志回放拿到的也是最后一条快照，
    与现状一致；`seq` 只增不减，删除留下空洞不影响游标续读。
-2. **封顶。** 单条 `output` 超过 128K 字符时只存前 96K 与后 32K，中间一行
+2. **封顶。** 单条 `output` 超过 4K 字符时只存前 3K 与后 1K（只留预览，完整输出以 agent 会话文件为准；存量由启动迁移 `trimStoredToolOutputs` 一次性压缩），中间一行
    `[truncated, N chars omitted]`，并记 `outputTruncated: true`、`outputOmitted: N`。
    diff content 不封顶：`history.record` 要对它算 diffStats，截断会算错增删行数。
 3. **按需回读。** 详情接口（`history.detail`）的返回带上截断标记与"能否回读"

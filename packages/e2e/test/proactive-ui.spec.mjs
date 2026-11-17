@@ -6,7 +6,8 @@ import { startDaemon, launchBrowser, openUi } from '../harness.mjs';
 import { arrangeProactive, routes } from './proactive-fixture.mjs';
 
 const openDesk = async page => {
-  await page.evaluate(() => { location.hash = '#/desk'; });
+  // The desk is the drawer's own tab on the assistant's home; its address opens it directly.
+  await page.evaluate(() => { location.hash = '#/desk/desk'; });
   await page.locator('.desk-matrix').waitFor();
   await page.getByRole('button', { name: '按进度', exact: true }).click();
   await page.locator('.desk-lanes').waitFor();
@@ -21,12 +22,12 @@ test('a sandbox card moves through merge and revert in place, and a failed actio
     const errors = []; page.on('pageerror', error => errors.push(error.message));
     await routes(page, { runs, requests, failNext });
     await openUi(page, daemon); await openDesk(page);
-    assert.equal(requests.reads(), 0, 'covers do not read the runs');
+    assert.deepEqual(requests.searches, [''], 'the conversation reads the runs once; covers read nothing');
 
     await page.locator(`#desk-pile-${sandboxTodo.id}`).click();
     const card = page.locator('.proactive-card[data-run="sandbox-1"]');
     await card.getByText('已在沙盒做好').waitFor();
-    assert.deepEqual(requests.searches, [`?matterId=${sandboxTodo.id}`], 'a spread reads only its own matter');
+    assert.deepEqual(requests.searches, ['', `?matterId=${sandboxTodo.id}`], 'a spread reads only its own matter');
     await card.getByText('补好导出的边界测试').waitFor();
     await card.getByText('npm test: 12 passed').waitFor();
     await card.getByText('2 个文件').waitFor();

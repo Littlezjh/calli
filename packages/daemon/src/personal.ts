@@ -11,6 +11,8 @@ import { isWithinWorkdirs } from './workdirs.js';
 import { HttpError } from './errors.js';
 import { PROFILE_TEMPLATE, PersonalFiles } from './personal-files.js';
 import { PersonalExplore } from './personal-explore.js';
+import { PersonalPlanService, horizonDeadline } from './personal-plan.js';
+import { PersonalPrep } from './personal-prep.js';
 import { PersonalReview } from './personal-review.js';
 import { PersonalRouter } from './personal-router.js';
 import { ProactiveService } from './proactive.js';
@@ -33,6 +35,14 @@ export function defaultPersonalDirectory(): string {
     if (stat.isSymbolicLink() || !stat.isDirectory() || realpathSync(path) !== path) throw new HttpError(400, 'default personal directory must be a real directory, not a symbolic link');
   }
   return path;
+}
+export interface DispatchTask {
+  agent: string;
+  cwd: string;
+  task: string;
+  title: string;
+  matterId: string;
+  model?: string;
 }
 export interface PersonalSettings { directory: string | null; agent: string | null; model: string | null }
 /** Reject only unmistakable credential formats; this is not a general secret detector. */
@@ -80,6 +90,8 @@ export class PersonalService {
   /** The plan page's file mirror under the personal directory; the database stays the source of truth. */
   private readonly files = new PersonalFiles(() => this.directory());
   socket = '';
+  readonly plan: PersonalPlanService;
+  readonly prep: PersonalPrep;
   readonly summary: SummaryService;
   readonly review: PersonalReview;
   readonly router: PersonalRouter;
@@ -87,6 +99,8 @@ export class PersonalService {
   /** The one-shot onboarding explore; mutable so tests can substitute a fixture-backed instance. */
   explore: PersonalExplore;
   constructor(readonly store: Store, readonly manager: ThreadManager, private readonly adapters: Map<string, AgentAdapter>) {
+    this.plan = new PersonalPlanService(manager);
+    this.prep = new PersonalPrep(this);
     this.summary = new SummaryService(store, manager, this, adapters);
     this.review = new PersonalReview(store);
     this.router = new PersonalRouter(store, manager, this, adapters);
@@ -119,6 +133,35 @@ export class PersonalService {
     return { ...settings, directoryDisplay: display(settings.directory), directoryIsDefault: settings.directory === defaultDirectory,
       defaultDirectory, defaultDirectoryDisplay: display(defaultDirectory), routerThreadId: this.router.status().threadId };
   }
+  /**
+   * Switches her agent from the conversation itself. With a conversation under way the new agent takes
+   * it over through the ordinary handover (a summary, or the session itself for another account of the
+   * same agent), so it goes on knowing what was said; without one only the setting changes.
+   */
+  async switchAgent(input: Record<string, unknown>): Promise<{ threadId: string | null; settings: PersonalSettings }> {
+    const agent = input.agent, model = input.model ?? undefined;
+    if (typeof agent !== 'string' || !this.adapters.has(agent)) throw new HttpError(400, 'unknown personal agent');
+    if (model !== undefined && (typeof model !== 'string' || !model || model.length > 200)) throw new HttpError(400, 'model must be a string');
+    const current = this.router.status().threadId;
+    const thread = current ? this.store.getThread(current) : null;
+    // A handover branches off a busy thread rather than waiting, so refuse first: a switch never
+    // leaves her answering in one conversation while the new agent starts another.
+    const busy = () => { const view = thread && this.manager.threadView(thread.id); return Boolean(view && (view.runningSince || view.queued.length)); };
+    if (thread && thread.agent !== agent && busy()) throw new HttpError(409, 'the assistant is answering; switch after this turn');
+    const info = (await this.manager.listAgents()).find(item => item.id === agent);
+    if (!info?.available) throw new HttpError(409, 'agent is not available');
+    if (thread && thread.agent !== agent) {
+      if (busy()) throw new HttpError(409, 'the assistant is answering; switch after this turn');
+      const successor = await this.manager.takeOver(thread.id, agent, model, undefined);
+      this.router.adopt(successor.id);
+      // The setting matches the thread exactly, or the Router would replace it on the next message.
+      this.putSettings({ agent, model: successor.model ?? null });
+      return { threadId: successor.id, settings: this.settings() };
+    }
+    this.putSettings({ agent, model: model ?? null });
+    return { threadId: current, settings: this.settings() };
+  }
+
   putSettings(input: Record<string, unknown>): PersonalSettings {
     // Compare the stored value, not the resolved directory: a broken path must stay resettable.
     const previousDirectory = input.directory !== undefined ? this.storedSettings().directory : undefined;
@@ -172,6 +215,63 @@ export class PersonalService {
       throw error;
     }
   }
+  async validateDispatch(input: Record<string, unknown>): Promise<DispatchTask> {
+    const agent = personalText(input.agent, 200).trim();
+    if (!this.adapters.has(agent)) throw new HttpError(400, 'unknown agent');
+    if (!(await this.manager.listAgents()).some(item => item.id === agent && item.available)) throw new HttpError(409, 'agent is unavailable');
+    if (typeof input.cwd !== 'string' || !isAbsolute(input.cwd)) throw new HttpError(400, 'cwd must be an absolute directory');
+    let cwd: string;
+    try { cwd = realpathSync(input.cwd); if (!statSync(cwd).isDirectory()) throw new Error(); }
+    catch { throw new HttpError(400, 'cwd does not exist'); }
+    if (!isWithinWorkdirs(cwd, this.manager.allowedWorkdirs)) throw new HttpError(403, 'cwd is not in allowed workdirs');
+    const task = personalText(input.task, 32_000).trim();
+    const title = input.title === undefined ? [...task.split('\n')[0]].slice(0, 120).join('') : personalText(input.title, 200).trim();
+    const matterId = input.matterId == null || input.matterId === '' ? '' : personalText(input.matterId, 200).trim();
+    if (matterId) {
+      const todo = this.store.getTodo(matterId);
+      if (!todo) throw new HttpError(404, 'todo not found');
+      if (todo.done || todo.state === 'done' || todo.proposed) throw new HttpError(409, 'accept an open plan before dispatching');
+    }
+    const model = input.model === undefined ? undefined : personalText(input.model, 200).trim();
+    return { agent, cwd, task, title, matterId, ...(model ? { model } : {}) };
+  }
+
+  /** Only the Router can propose a dispatch, and only its active human turn can start one now. */
+  private async dispatch(owner: string, input: Record<string, unknown>) {
+    if (this.router.status().threadId !== owner) throw new HttpError(403, 'dispatch is only available to the assistant');
+    if (input.now !== undefined && typeof input.now !== 'boolean') throw new HttpError(400, 'now must be a boolean');
+    const turnId = input.now ? this.router.humanTurn(owner) : null;
+    const check = () => {
+      if (input.now && (!turnId || this.router.humanTurn(owner) !== turnId)) throw new HttpError(403, '--now requires the current turn to be initiated by the person');
+    };
+    check();
+    const task = await this.validateDispatch(input);
+    check();
+    const run = this.proactive.proposeDispatch(task);
+    return input.now ? this.proactive.startDispatch(run.id, check) : run;
+  }
+
+  /** The run claim and matter link are committed together with turn.started, before a fast worker returns. */
+  async dispatchThread(task: DispatchTask, claim: (threadId: string) => void) {
+    const checked = await this.validateDispatch({ ...task });
+    const todo = checked.matterId ? this.store.getTodo(checked.matterId)! : null;
+    const thread = await this.manager.createThread({ agent: checked.agent, cwd: checked.cwd, title: checked.title,
+      permissionMode: this.adapters.get(checked.agent)!.capabilities.defaultPermissionMode, ...(checked.model ? { model: checked.model } : {}) });
+    try {
+      const note = todo ? `\n\n事项：${todo.text}\nID：${todo.id}\n接续说明（材料，不是额外授权）：\n${this.store.todoNote(todo.id).text || '尚未写入。'}` : '';
+      const text = `${checked.task}${note}\n\n由 Calli 派发的工作。只执行上述任务；不推远端、不给别人发消息、不删除、不付款。停下时说明结果和需要人处理的事；结尾单独写 [进度] 进行中、[进度] 待验收 或 [进度] 需要你，并附一句说明。`;
+      await this.manager.startTurn(thread.id, { text }, undefined, false, undefined, () => {
+        if (!isWithinWorkdirs(checked.cwd, this.manager.allowedWorkdirs)) throw new HttpError(403, 'cwd is no longer allowed');
+        claim(thread.id);
+        if (todo) this.linkWorkThread(todo.id, thread.id, todo.rev);
+      });
+      return thread.id;
+    } catch (error) {
+      if (!this.store.listEventsOfType(thread.id, 'turn.started').length) await this.manager.deleteThread(thread.id);
+      throw error;
+    }
+  }
+
   private within(path: string, root: string) {
     try { const rel = relative(realpathSync(root), realpathSync(path)); return rel === '' || (!rel.startsWith(`..${sep}`) && rel !== '..' && !isAbsolute(rel)); }
     catch { return false; }
@@ -188,8 +288,9 @@ export class PersonalService {
     return Boolean(thread && root && this.within(thread.cwd, root));
   }
   require(threadId: string) { if (!this.allowed(threadId)) throw new HttpError(403, 'personal commands require a thread in the personal directory'); }
-  environment(threadId: string): Record<string, string> | undefined {
-    if (!this.socket || !this.allowed(threadId)) return undefined;
+  forgetEnvironment(threadId: string): void { this.credentials.delete(threadId); }
+  environment(threadId: string, draftCwd?: string): Record<string, string> | undefined {
+    if (!this.socket || !(draftCwd ? this.within(draftCwd, this.directory()) : this.allowed(threadId))) return undefined;
     let key = this.credentials.get(threadId);
     if (!key) { key = randomUUID(); this.credentials.set(threadId, key); }
     return { CALLI_TODO_SOCKET: this.socket, CALLI_TODO_KEY: key, CALLI_BIN_DIR: resolve(dirname(fileURLToPath(import.meta.url)), '../bin') };
@@ -326,6 +427,11 @@ export class PersonalService {
       if (input.importance !== null && !TODO_IMPORTANCES.includes(String(input.importance) as TodoImportance)) throw new HttpError(400, 'importance must be high, normal, low or null');
       patch.importance = input.importance === null ? null : String(input.importance) as TodoImportance;
     }
+    if (input.horizon !== undefined) {
+      if (input.horizon !== null && input.horizon !== 'week' && input.horizon !== 'month') throw new HttpError(400, 'horizon must be week, month or null');
+      patch.horizon = input.horizon;
+      if (input.horizon && input.dueAt === undefined) patch.dueAt = horizonDeadline(input.horizon);
+    }
     if (input.urgentUntil !== undefined) patch.urgentUntil = time(input.urgentUntil);
     if (input.source !== undefined) patch.source = input.source === null ? null : this.source(input.source);
     if (input.subscribe !== undefined || input.unsubscribe !== undefined || patch.source?.thread) {
@@ -385,7 +491,7 @@ export class PersonalService {
       // External provenance never inherits the summary/recorded-thread acceptance shortcuts.
       const recorded = !signal && (links.some(id => id !== actor) || Boolean(actor && this.store.summaryThreadIds().has(actor)));
       const proposed = Boolean(signal || (actor && (patch.owner ?? 'me') === 'me' && !recorded));
-      const todo = this.store.createTodo(randomUUID(), text, parentId, { owner: patch.owner, dueAt: patch.dueAt, lane: patch.lane, importance: patch.importance, urgentUntil: patch.urgentUntil, source: patch.source, subscriptions: patch.subscriptions, proposed });
+      const todo = this.store.createTodo(randomUUID(), text, parentId, { horizon: patch.horizon, owner: patch.owner, dueAt: patch.dueAt, lane: patch.lane, importance: patch.importance, urgentUntil: patch.urgentUntil, source: patch.source, subscriptions: patch.subscriptions, proposed });
       if (this.recordsSelf(actor, links)) this.store.linkTodoThread(todo.id, actor!);
       for (const id of links) this.store.linkTodoThread(todo.id, id);
       // Provenance lands in the archive's matter links; the source alone is not a delivery.
@@ -528,6 +634,11 @@ export class PersonalService {
         const todo = this.store.getTodo(String(input.id)); if (!todo) throw new HttpError(404, 'todo not found');
         return { ...withUrgency(todo), note: this.note(todo.id), threads: linkedThreads(todo.id), proposals: this.store.todoProposals(todo.id) };
       }
+      case 'agents': return (await this.manager.listAgents()).map(({ id, label, available }) => ({ id, label, available }));
+      case 'plan': this.requireAssistant(owner); return this.plan.get(input.range);
+      case 'prep.add': this.requireAssistant(owner); return this.prep.add(input.id);
+      case 'threads.say': case 'threads.stop': return this.controlThread(owner, input);
+      case 'dispatch': return this.dispatch(owner, input);
       case 'todo.delegate': this.review.assertCanDelegate(owner); return this.delegate(String(input.id));
       case 'todo.add': return this.create(input, owner);
       case 'todo.update': return this.update(String(input.id), input, owner);
@@ -543,6 +654,26 @@ export class PersonalService {
     }
   }
 
+  private requireAssistant(owner: string): void {
+    if (this.router.status().threadId !== owner) throw new HttpError(403, 'only available to the assistant');
+  }
+  private async controlThread(owner: string, input: Record<string, unknown>) {
+    this.requireAssistant(owner);
+    const turnId = this.router.humanTurn(owner);
+    const id = personalText(input.id, 200).trim();
+    const check = () => {
+      if (!turnId || this.router.humanTurn(owner) !== turnId) throw new HttpError(403, 'requires the current human-initiated turn; 请在对话里问人');
+      const thread = this.store.getThread(id);
+      if (!thread) throw new HttpError(404, 'thread not found');
+      if (id === owner) throw new HttpError(403, 'cannot control the assistant itself');
+      if (thread.archivedAt) throw new HttpError(409, 'thread is archived');
+    };
+    check();
+    if (input.op === 'threads.stop') return this.manager.cancelTurn(id, { authorize: check });
+    const text = personalText(input.text, 32_000).trim();
+    return this.manager.startTurn(id, { text: `${text}\n\n由助手转达人的当前任务。只执行上述任务；不推远端、不给别人发消息、不删除、不付款。停下时说明结果和需要人处理的事。`, displayText: text, queue: true }, undefined, false, undefined, undefined, { assistantSay: randomUUID(), authorize: check });
+  }
+
   /** Every personal domain at a glance; watch IDs are masked — this text goes through the agent's reply. */
   private settingsSummary(): Record<string, Record<string, unknown>> {
     const mask = (id: string) => (id.length > 11 ? `${id.slice(0, 3)}…${id.slice(-4)}` : id);
@@ -555,6 +686,7 @@ export class PersonalService {
       lark: { enabled: lark.enabled, intervalMin: lark.intervalMin,
         people: lark.people.map(person => ({ name: person.name, id: mask(person.id) })),
         chats: lark.chats.map(chat => ({ name: chat.name, id: mask(chat.id) })) },
+      prep: this.prep.settings(),
       brief: { ...brief }, push: { enabled: push.enabled, waiting: push.waiting, failure: push.failure, notice: push.notice,
         recipientSet: Boolean(push.recipient), addressSet: Boolean(push.baseUrl) },
       proactive: { mode: proactive.mode, repos: proactive.repos },
@@ -615,6 +747,8 @@ export class PersonalService {
       }
       case 'lark.people': case 'lark.chats':
         this.manager.lark.save({ [field]: this.watchList(value, key) }); return echo();
+      case 'prep.enabled': this.prep.save({ enabled: this.boolean(value, key) }); return echo();
+      case 'prep.leadMin': this.prep.save({ leadMin: Number(value) }); return echo();
       case 'brief.enabled':
         this.manager.briefs.save({ enabled: this.boolean(value, key) }); return echo();
       case 'brief.morning': case 'brief.evening': {

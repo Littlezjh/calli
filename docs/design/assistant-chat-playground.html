@@ -1,0 +1,1036 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>助手对话入口 · 方案对比</title>
+<style>
+  /* Tokens copied from packages/web/src/styles.css (paper palette), so the sketch opens on its own.
+     Derived tokens are mixed here once, the way the app defines them at the top of its sheet. */
+  :root {
+    --bg: #f8f6f1; --sidebar: #f1efe9; --surface: #ffffff; --surface-2: #fbfaf7;
+    --text: #1f1e1c; --muted: #827f77; --faint: #a9a69e; --border: #e5e2da; --border-strong: #d6d2c8;
+    --hover: rgba(31, 30, 28, 0.045); --active: rgba(31, 30, 28, 0.08);
+    --accent: #1f1e1c; --accent-fg: #ffffff; --positive: #2f7d5b; --positive-bg: #e6f3eb;
+    --user-bg: #eceae4; --code-bg: #efede7; --warn: #c2410c; --danger: #b42318; --danger-bg: #fdecea;
+    --scrim: rgba(24, 23, 21, 0.32); --below: #e9e6dd;
+    --chart-total: #25805a;
+    --shadow-pop: 0 14px 40px rgba(31, 30, 28, 0.14), 0 2px 6px rgba(31, 30, 28, 0.06);
+    --shadow-card: 0 1px 2px rgba(31, 30, 28, 0.04), 0 6px 20px rgba(31, 30, 28, 0.05);
+    --radius-pill: 999px; --radius-sm: 8px; --radius: 12px; --radius-lg: 18px; --radius-xl: 30px;
+    --font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Helvetica Neue', 'Noto Sans CJK SC', 'Microsoft YaHei', sans-serif;
+    --mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
+    /* Desk material, as mixed in the app. */
+    --desk-dot: color-mix(in srgb, var(--border-strong) 65%, transparent);
+    --desk-bg: color-mix(in srgb, var(--sidebar) 70%, var(--bg));
+    --desk-tape: color-mix(in srgb, var(--border) 80%, transparent);
+    --desk-paper: var(--surface);
+    --desk-lift: var(--shadow-card);
+    /* Derived once: the waiting card's quiet tint. */
+    --warn-bg: color-mix(in srgb, var(--warn) 9%, transparent);
+  }
+  [data-theme='dark'] {
+    --bg: #1b1a18; --sidebar: #161514; --surface: #252422; --surface-2: #201f1d;
+    --text: #ecebe7; --muted: #9a978f; --faint: #6f6c65; --border: #32302c; --border-strong: #423f3a;
+    --hover: rgba(236, 235, 231, 0.06); --active: rgba(236, 235, 231, 0.1);
+    --accent: #ecebe7; --accent-fg: #1b1a18; --positive: #3f9a72; --positive-bg: #1d3327;
+    --user-bg: #2f2d2a; --code-bg: #201f1d; --warn: #f0935a; --danger: #f97066; --danger-bg: #3b1f1c;
+    --scrim: rgba(0, 0, 0, 0.55); --below: #151413;
+    --chart-total: #3f9a72;
+    --shadow-pop: 0 14px 40px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.3);
+    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 6px 20px rgba(0, 0, 0, 0.25);
+    --desk-paper: color-mix(in srgb, var(--surface) 55%, var(--desk-bg));
+    --desk-lift: 0 1px 1px rgba(0, 0, 0, 0.35), 0 8px 24px rgba(0, 0, 0, 0.42);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; color: var(--text); background: var(--bg); font-family: var(--font); font-size: 14px; }
+  button { font: inherit; cursor: pointer; color: inherit; border: 0; background: none; padding: 0; }
+  [hidden] { display: none !important; }
+  svg { display: block; }
+  kbd { padding: 1px 6px; border: 1px solid var(--border-strong); border-bottom-width: 2px; border-radius: 6px;
+    background: var(--surface); color: var(--muted); font-family: var(--mono); font-size: 11px; line-height: 1.5; }
+
+  /* ── Sketch chrome ──────────────────────────────────────────────────── */
+  .bar { position: sticky; top: 0; z-index: 50; display: flex; gap: 10px 16px; align-items: center; flex-wrap: wrap;
+    padding: 12px 24px; background: var(--bg); border-bottom: 1px solid var(--border); }
+  .bar h1 { font-size: 15px; font-weight: 650; margin: 0 6px 0 0; }
+  .seg { display: inline-flex; padding: 3px; border-radius: var(--radius-pill); background: var(--sidebar); border: 1px solid var(--border); }
+  .seg button { padding: 6px 12px; border-radius: var(--radius-pill); font-size: 12.5px; color: var(--muted); white-space: nowrap; }
+  .seg button[aria-pressed='true'] { background: var(--surface); color: var(--text); box-shadow: var(--shadow-card); font-weight: 600; }
+  .seg .lab { align-self: center; padding: 0 4px 0 10px; color: var(--faint); font-size: 11px; }
+  .tip { color: var(--faint); font-size: 12px; }
+  .note { max-width: 1060px; margin: 14px auto 0; padding: 0 24px 4px; color: var(--muted); font-size: 12.5px; line-height: 1.85; }
+  .note b { color: var(--text); font-weight: 600; }
+  .note .v { display: none; margin: 0; }
+  .note .v.on { display: block; }
+
+  /* ── The frame: one screen, desktop-wide or phone-narrow ─────────────── */
+  .stage { display: flex; justify-content: center; padding: 16px 16px 64px; }
+  .frame { position: relative; width: 1440px; max-width: 100%; height: 920px; overflow: hidden;
+    border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg); box-shadow: var(--shadow-card); }
+  body[data-device='phone'] .frame { width: 390px; height: 812px; }
+  .desk-scroll { height: 100%; overflow: auto; scrollbar-width: thin; transition: padding-right .28s cubic-bezier(.2,.8,.2,1); }
+
+  /* ── The desk page as it stands today (static, fake data) ───────────── */
+  .desk-page { width: 100%; max-width: 1600px; margin: 0 auto; padding: 30px 34px 32px; }
+  .desk-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; padding: 0 2px 24px; }
+  .desk-header h1 { margin: 0; font-size: 26px; font-weight: 580; letter-spacing: -.04em; }
+  .desk-summary { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 10px 0 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
+  .desk-summary .dot::before { content: '·'; margin-right: 8px; color: var(--border-strong); }
+  .desk-link { color: inherit; font-size: inherit; text-decoration: underline; text-decoration-color: var(--border-strong); text-underline-offset: 3px; }
+  .desk-link:hover { color: var(--text); }
+  .desk-views { display: flex; align-items: center; gap: 8px; flex: none; }
+  .pill-btn { display: inline-flex; align-items: center; gap: 6px; min-height: 30px; padding: 0 12px; border: 1px solid var(--border);
+    border-radius: var(--radius-pill); background: var(--surface); font-size: 12px; color: var(--muted); box-shadow: var(--shadow-card); }
+  .pill-btn svg { color: var(--muted); }
+  .pill-btn .n { min-width: 17px; padding: 0 4px; border-radius: var(--radius-pill); background: var(--hover); color: var(--text); font-size: 11px; text-align: center; line-height: 17px; }
+  .pill-btn.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 36%, var(--border)); }
+  .desk-segment { display: flex; gap: 2px; padding: 3px; border: 1px solid var(--border); border-radius: var(--radius-pill); background: var(--surface-2); }
+  .desk-segment button { padding: 5px 11px; border-radius: var(--radius-pill); color: var(--muted); font-size: 12px; white-space: nowrap; }
+  .desk-segment button[aria-pressed='true'] { background: var(--surface); color: var(--text); box-shadow: var(--shadow-card); }
+
+  .desk-board { padding: 26px 24px 120px; border: 1px solid var(--border); border-radius: var(--radius-lg);
+    background: radial-gradient(circle, var(--desk-dot) .7px, transparent .9px) 0 0 / 16px 16px, var(--desk-bg); }
+  .desk-top { display: grid; grid-template-columns: 1.1fr 1fr; gap: 30px; max-width: 810px; }
+  .desk-paper { min-width: 0; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--desk-paper); box-shadow: var(--desk-lift); }
+  .desk-paper h2 { margin: 0; font-size: 14px; font-weight: 600; }
+  .desk-week { display: flex; flex-direction: column; padding: 16px 14px 10px; transform: rotate(.6deg); }
+  .desk-week header { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 0 3px; }
+  .desk-week header > span { color: var(--muted); font-size: 11px; white-space: nowrap; }
+  .desk-chart { display: flex; gap: 6px; height: 96px; margin-top: auto; padding-top: 13px; }
+  .desk-chart-day { position: relative; flex: 1; display: flex; flex-direction: column; align-items: center; gap: 9px; padding: 0 3px; }
+  .desk-chart-track { width: 12px; height: 66px; display: flex; align-items: flex-end; padding-bottom: 1px; border-bottom: 1px solid var(--border-strong); }
+  .desk-chart-bar { display: block; width: 100%; min-height: 2px; background: var(--chart-total); border-radius: var(--radius-xs, 4px) var(--radius-xs, 4px) 0 0; opacity: .5; }
+  .desk-chart-day.today .desk-chart-bar { opacity: .85; }
+  .desk-chart-day.future .desk-chart-track { border-bottom-style: dashed; opacity: .5; }
+  .desk-chart-label { color: var(--muted); font-size: 10px; white-space: nowrap; }
+  .desk-first { position: relative; padding: 18px 19px 13px; transform: rotate(-.7deg); }
+  .desk-first::before { content: ''; position: absolute; left: calc(50% - 24px); top: -7px; width: 48px; height: 14px; background: var(--desk-tape); transform: rotate(-3deg); }
+  .desk-first ol { padding: 0; margin: 12px 0 0; list-style: none; counter-reset: first; }
+  .desk-first li { display: flex; align-items: baseline; gap: 11px; counter-increment: first; border-top: 1px dashed var(--border); }
+  .desk-first li:first-child { border-top: 0; }
+  .desk-first li::before { content: counter(first, decimal-leading-zero); color: var(--faint); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .desk-first li span { min-width: 0; padding: 10px 0; font-size: 12px; line-height: 1.65; text-align: left; }
+
+  .desk-matrix { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr); gap: 34px 30px; margin-top: 38px; }
+  .desk-quad > h2 { display: flex; align-items: baseline; gap: 8px; margin: 0 0 16px; font-size: 13px; font-weight: 550; }
+  .desk-quad > h2 small { color: var(--muted); font-size: 11px; font-weight: 400; }
+  .desk-quad > h2 .n { color: var(--faint); font-size: 11px; font-weight: 400; font-variant-numeric: tabular-nums; }
+  .desk-quad.now > h2 { font-size: 15px; font-weight: 600; }
+  .desk-quad.quick > h2, .desk-quad.later > h2 { color: var(--muted); font-weight: 500; }
+  .desk-quad-body { display: grid; gap: 22px; }
+  .desk-quad.now .desk-quad-body { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .desk-pile { position: relative; display: block; width: 100%; text-align: left; transform: rotate(var(--tilt, 0deg)); transition: transform .2s ease; }
+  .desk-pile:hover { transform: translateY(-4px) rotate(0deg); }
+  .desk-cover { display: flex; flex-direction: column; gap: 8px; padding: 13px 8px; border: 1px solid var(--border);
+    border-radius: var(--radius-sm); background: var(--desk-paper); box-shadow: var(--desk-lift); }
+  .desk-cover-preview { padding: 1px 0 1px 10px; margin: 2px 5px 3px; border-left: 1px solid var(--border); color: var(--muted); text-align: left; }
+  .desk-cover-preview span { font-size: 11.5px; line-height: 1.75; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .desk-cover > strong { padding: 0 8px; font-size: 13px; font-weight: 580; line-height: 1.5; }
+  .desk-cover-meta { display: flex; flex-wrap: wrap; gap: 4px 10px; padding: 0 8px; color: var(--muted); font-size: 11px; }
+  .desk-cover-meta .warn { color: var(--warn); }
+  .desk-stack .desk-cover { align-items: flex-start; padding: 12px 10px; }
+  .desk-stack .desk-cover strong { font-weight: 550; font-size: 12.5px; }
+  .desk-stack .desk-cover .n { margin-left: 6px; padding: 0 5px; border-radius: var(--radius-pill); background: var(--hover); font-size: 11px; }
+  .desk-stack-preview { padding: 0 8px; color: var(--faint); font-size: 11px; line-height: 1.7;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* The companion, bottom-right. Replaced by the capsule in scheme B. */
+  .pet { position: absolute; right: 26px; bottom: 22px; z-index: 5; width: 64px; height: 66px; }
+
+  /* ── Shared chat vocabulary ──────────────────────────────────────────── */
+  .icon-btn { width: 32px; height: 32px; border-radius: var(--radius-pill); display: grid; place-items: center; color: var(--muted); }
+  .icon-btn:hover { background: var(--hover); color: var(--text); }
+  .primary { display: inline-flex; align-items: center; justify-content: center; min-height: 32px; padding: 0 15px;
+    border: 1px solid var(--accent); border-radius: var(--radius-pill); background: var(--accent); color: var(--accent-fg);
+    font-size: 13px; font-weight: 550; transition: opacity .12s; }
+  .primary:hover { opacity: .88; }
+  .ghost { display: inline-flex; align-items: center; justify-content: center; min-height: 32px; padding: 0 14px;
+    border: 1px solid var(--border-strong); border-radius: var(--radius-pill); background: transparent; color: var(--muted);
+    font-size: 13px; font-weight: 500; transition: background .12s, color .12s; }
+  .ghost:hover { background: var(--hover); color: var(--text); }
+  .send-dot { flex: none; width: 34px; height: 34px; border-radius: var(--radius-pill); display: grid; place-items: center;
+    background: var(--accent); color: var(--accent-fg); transition: opacity .12s; }
+  .send-dot:hover { opacity: .88; }
+
+  /* Scheme A: a resident input at the head of the desk. */
+  .chat-top { max-width: 810px; margin: -6px 0 26px; }
+  .chat-top-box { display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 8px 10px 8px 18px;
+    border: 1px solid var(--border); border-radius: var(--radius-pill); background: var(--surface); box-shadow: var(--shadow-card); }
+  .chat-top-box:focus-within { border-color: var(--border-strong); }
+  .chat-top-box input { flex: 1; min-width: 0; border: 0; outline: 0; background: none; color: var(--text); font: inherit; font-size: 14px; }
+  .chat-top-box input::placeholder { color: var(--faint); }
+
+  /* Scheme B: a capsule where 召唤助手 used to be. */
+  .chat-capsule { position: absolute; right: 22px; bottom: 22px; z-index: 6; display: flex; align-items: center; gap: 10px;
+    width: min(348px, calc(100% - 44px)); min-height: 48px; padding: 8px 8px 8px 18px; text-align: left;
+    border: 1px solid var(--border); border-radius: var(--radius-pill); background: var(--surface); box-shadow: var(--shadow-pop); }
+  .chat-capsule .ph { flex: 1; min-width: 0; color: var(--faint); font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .chat-capsule .send-dot { width: 32px; height: 32px; }
+
+  /* Scheme C: the right column, folded to a thin edge. */
+  .chat-edge { position: absolute; top: 0; right: 0; bottom: 0; z-index: 6; width: 18px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
+    border: 1px solid var(--border); border-right: 0; border-radius: var(--radius-lg) 0 0 var(--radius-lg);
+    background: var(--surface); box-shadow: var(--shadow-card); color: var(--muted); }
+  .chat-edge .v-label { writing-mode: vertical-rl; letter-spacing: 4px; font-size: 11px; font-weight: 550; }
+  .chat-edge svg { transition: transform .15s; }
+  .chat-edge:hover { color: var(--text); }
+  .chat-edge:hover svg { transform: translateX(-1px); }
+
+  /* ── The panel itself ────────────────────────────────────────────────── */
+  .panel { position: absolute; z-index: 8; display: none; flex-direction: column; min-height: 0;
+    border: 1px solid var(--border); background: var(--surface); box-shadow: var(--shadow-pop); overflow: hidden; }
+  body.panel-open .panel { display: flex; }
+  body[data-device='desktop'] .panel { top: 18px; right: 18px; bottom: 18px; width: 432px;
+    border-radius: var(--radius-lg); animation: panel-in .28s cubic-bezier(.2,.8,.2,1); }
+  body[data-device='desktop'][data-scheme='B'] .panel { top: auto; height: 64%; animation: panel-grow .26s cubic-bezier(.2,.8,.2,1); }
+  body[data-device='desktop'][data-scheme='C'] .panel { top: 0; right: 0; bottom: 0; width: 372px;
+    border-radius: 0; border-top: 0; border-bottom: 0; border-right: 0; box-shadow: none; animation: none; }
+  /* The resident column takes real space: the desk steps aside, it does not slide under. */
+  body[data-device='desktop'][data-scheme='C'].panel-open .desk-scroll { padding-right: 372px; }
+  @keyframes panel-in { from { transform: translateX(26px); opacity: 0; } }
+  @keyframes panel-grow { from { transform: translateY(26px) scale(.985); transform-origin: bottom right; opacity: 0; } }
+
+  .sheet-grip { display: none; }
+  .panel-head { display: flex; align-items: center; gap: 10px; flex: none; padding: 12px 10px 12px 16px; border-bottom: 1px solid var(--border); }
+  .panel-ava { flex: none; width: 30px; height: 30px; border-radius: var(--radius-pill); display: grid; place-items: center;
+    border: 1px solid var(--border); background: var(--surface-2); color: var(--muted); }
+  .panel-name { min-width: 0; }
+  .panel-name b { display: block; font-size: 13.5px; font-weight: 600; }
+  .panel-name small { display: block; color: var(--faint); font-size: 11px; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .panel-head .sp { flex: 1; }
+  .panel-hint { display: inline-flex; align-items: center; gap: 6px; color: var(--faint); font-size: 11px; }
+  .panel-collapse { display: none; }
+  body[data-scheme='C'] .panel-collapse { display: grid; }
+
+  /* What cannot wait sits above the scroll, visible the moment the panel opens. */
+  .panel-pins { flex: none; padding: 10px 14px 2px; }
+  .pin-card { border: 1px solid color-mix(in srgb, var(--warn) 30%, var(--border)); border-radius: var(--radius); background: var(--warn-bg); padding: 10px 12px; }
+  .pin-head { display: flex; align-items: center; gap: 7px; color: var(--warn); font-size: 11px; font-weight: 600; }
+  .pin-body { margin: 5px 0 0; font-size: 12.5px; line-height: 1.65; }
+  .pin-acts { display: flex; gap: 8px; margin-top: 9px; }
+  .pin-acts .ghost { min-height: 28px; font-size: 12px; }
+  .pin-acts .primary { min-height: 28px; font-size: 12px; }
+
+  .panel-scroll { flex: 1; min-height: 0; overflow: auto; padding: 14px 16px 10px; scrollbar-width: thin; }
+  .day-rule { display: flex; align-items: center; gap: 10px; color: var(--faint); font-size: 11px; margin: 2px 0 14px; }
+  .day-rule::before, .day-rule::after { content: ''; flex: 1; border-top: 1px solid var(--border); }
+  .msg { margin: 0 0 14px; }
+  .msg-user { display: flex; justify-content: flex-end; }
+  .msg-user > div { max-width: 86%; padding: 9px 13px; border-radius: var(--radius-lg); background: var(--user-bg);
+    font-size: 13px; line-height: 1.7; }
+  .msg-agent { display: flex; gap: 9px; }
+  .msg-agent .gutter { flex: none; width: 22px; padding-top: 1px; color: var(--faint); }
+  .msg-agent .gutter svg { width: 15px; height: 15px; }
+  .msg-agent .body { min-width: 0; flex: 1; font-size: 13px; line-height: 1.75; }
+  .msg-agent .body .when { margin-left: 8px; color: var(--faint); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .msg-acts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 9px; }
+
+  /* A job the assistant proposes to hand to a working agent. */
+  .dispatch { margin-top: 9px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); overflow: hidden; }
+  .dispatch-head { display: flex; align-items: center; gap: 7px; padding: 8px 12px; border-bottom: 1px solid var(--border);
+    color: var(--muted); font-size: 11.5px; font-weight: 600; }
+  .dispatch-head svg { color: var(--faint); }
+  .dispatch-head b { color: var(--text); font-weight: 600; }
+  .dispatch dl { margin: 0; padding: 9px 12px 4px; display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 12.5px; }
+  .dispatch dt { color: var(--faint); font-size: 11.5px; padding-top: 1px; }
+  .dispatch dd { margin: 0; min-width: 0; line-height: 1.6; }
+  .dispatch dd code { font-family: var(--mono); font-size: 11.5px; color: var(--muted); overflow-wrap: anywhere; }
+  .dispatch-acts { display: flex; gap: 8px; padding: 8px 12px 10px; }
+
+  .panel-composer { flex: none; padding: 10px 12px 12px; }
+  .composer-box { display: flex; align-items: flex-end; gap: 8px; padding: 7px 7px 7px 14px;
+    border: 1px solid var(--border); border-radius: var(--radius-pill); background: var(--surface); box-shadow: var(--shadow-card); }
+  .composer-box:focus-within { border-color: var(--border-strong); }
+  .composer-box textarea { flex: 1; min-width: 0; height: 22px; max-height: 96px; border: 0; outline: 0; resize: none;
+    background: none; color: var(--text); font: inherit; font-size: 13.5px; line-height: 22px; padding: 0; }
+  .composer-box textarea::placeholder { color: var(--faint); }
+
+  /* ── Phone: the panel is a bottom sheet, draggable to full ──────────── */
+  body[data-device='phone'] .sheet-scrim { position: absolute; inset: 0; z-index: 7; background: var(--scrim);
+    opacity: 0; pointer-events: none; transition: opacity .24s; }
+  body[data-device='phone'].panel-open .sheet-scrim { opacity: 1; pointer-events: auto; }
+  body[data-device='phone'] .panel { top: auto; left: 0; right: 0; bottom: 0; height: 72%;
+    border-radius: var(--radius-xl) var(--radius-xl) 0 0; animation: sheet-up .3s cubic-bezier(.2,.8,.2,1); }
+  body[data-device='phone'][data-sheet='full'] .panel { height: 100%; border-radius: 0; transition: height .26s cubic-bezier(.2,.8,.2,1); }
+  body[data-device='phone'][data-sheet='partial'] .panel { transition: height .26s cubic-bezier(.2,.8,.2,1); }
+  body[data-device='phone'] .panel.dragging { transition: none; }
+  @keyframes sheet-up { from { transform: translateY(60%); } }
+  body[data-device='phone'] .sheet-grip { display: flex; justify-content: center; flex: none; padding: 8px 0 4px; cursor: grab; touch-action: none; }
+  body[data-device='phone'] .sheet-grip i { width: 40px; height: 4px; border-radius: var(--radius-pill); background: var(--border-strong); }
+  body[data-device='phone'] .panel-hint { display: none; }
+
+  /* Scheme A on a phone: the resident input rides along under the header. */
+  body[data-device='phone'] .chat-top { position: sticky; top: 0; z-index: 4; margin: -8px 0 18px; padding: 8px 0;
+    background: linear-gradient(var(--bg) 82%, transparent); }
+  body[data-device='phone'] .chat-top-box { min-height: 46px; }
+
+  /* Scheme C on a phone: the edge is a side tab, not a full-height strip. */
+  body[data-device='phone'] .chat-edge { top: 50%; bottom: auto; width: 26px; padding: 14px 0;
+    border: 1px solid var(--border); border-right: 0; border-radius: var(--radius-lg) 0 0 var(--radius-lg); transform: translateY(-50%); }
+  body[data-device='phone'] .chat-edge .v-label { letter-spacing: 3px; }
+
+  /* The desk folds on a phone the way the real one does. */
+  body[data-device='phone'] .desk-page { padding: 22px 16px 24px; }
+  body[data-device='phone'] .desk-header { flex-direction: column; align-items: flex-start; gap: 10px; padding-bottom: 18px; }
+  body[data-device='phone'] .desk-header h1 { font-size: 22px; }
+  body[data-device='phone'] .desk-views { flex-wrap: wrap; }
+  body[data-device='phone'] .desk-board { padding: 18px 14px 110px; }
+  body[data-device='phone'] .desk-top { grid-template-columns: 1fr; gap: 18px; }
+  body[data-device='phone'] .desk-week { transform: none; }
+  body[data-device='phone'] .desk-first { transform: none; }
+  body[data-device='phone'] .desk-matrix { grid-template-columns: 1fr; gap: 24px; margin-top: 24px; }
+  body[data-device='phone'] .desk-quad.now .desk-quad-body { grid-template-columns: 1fr; }
+  body[data-device='phone'] .pet { right: 14px; bottom: 16px; width: 52px; height: 54px; }
+
+  /* Entry visibility per scheme. */
+  .chat-top { display: none; }
+  body[data-scheme='A'] .chat-top { display: block; }
+  .chat-capsule { display: none; }
+  body[data-scheme='B']:not(.panel-open) .chat-capsule { display: flex; }
+  .chat-edge { display: none; }
+  body[data-scheme='C']:not(.panel-open) .chat-edge { display: flex; }
+  body[data-scheme='B'] .pet { display: none; }
+  body[data-device='phone'][data-scheme='C'] .desk-scroll { padding-right: 26px; }
+  /* ── Scheme D: the conversation is the home ─────────────────────────── */
+  body[data-scheme='D'] :is(.desk-scroll, .pet, .chat-top, .chat-capsule, .chat-edge, .panel, .sheet-scrim) { display: none; }
+  .d-stage { position: absolute; inset: 0; z-index: 1; display: none; flex-direction: column; background: var(--bg); }
+  body[data-scheme='D'] .d-stage { display: flex; }
+  body:not([data-scheme='D']) :is(#seg-dform, #seg-dstate) { display: none; }
+
+  .d-top { flex: none; display: flex; align-items: center; gap: 10px; padding: 13px 18px 8px; }
+  .d-brand { display: inline-flex; align-items: center; gap: 9px; font-size: 14px; font-weight: 600; }
+  .d-ava { width: 28px; height: 28px; border-radius: var(--radius-pill); display: grid; place-items: center;
+    border: 1px solid var(--border); background: var(--surface-2); color: var(--muted); }
+  .d-top .sp { flex: 1; }
+  .d-entries { display: flex; align-items: center; gap: 2px; }
+  .d-entry { position: relative; display: inline-flex; align-items: center; gap: 7px; min-height: 34px; padding: 0 11px;
+    border-radius: var(--radius-pill); color: var(--muted); font-size: 12.5px; }
+  .d-entry:hover { background: var(--hover); color: var(--text); }
+  .d-badge { min-width: 17px; height: 17px; padding: 0 4px; border-radius: var(--radius-pill); background: var(--hover);
+    color: var(--muted); font-size: 10.5px; line-height: 17px; text-align: center; font-variant-numeric: tabular-nums; }
+  .d-badge.warn { background: var(--warn); color: #fff; }
+  .d-badge.danger { background: var(--danger); color: #fff; }
+
+  /* The one line of globe kept on the home: quiet, clickable, never hiding a number. */
+  .d-strip { display: flex; align-items: center; justify-content: center; gap: 8px; flex: none; width: min(760px, calc(100% - 32px));
+    margin: 0 auto; padding: 6px 10px; border-radius: var(--radius-pill); color: var(--muted); font-size: 12px; white-space: nowrap;
+    overflow: hidden; }
+  .d-strip:hover { background: var(--hover); color: var(--text); }
+  .d-strip .warn { color: var(--warn); }
+  .d-strip .dot { color: var(--border-strong); }
+  .d-strip svg { flex: none; color: var(--faint); }
+
+  .d-chat { flex: 1; min-height: 0; overflow: auto; width: min(760px, calc(100% - 32px)); margin: 0 auto; padding: 16px 0 10px; scrollbar-width: thin; }
+  .d-composer { flex: none; width: min(760px, calc(100% - 32px)); margin: 0 auto; padding: 10px 0 16px; }
+  .d-composer .composer-box { min-height: 52px; }
+
+  .d-fresh { display: none; }
+  body[data-scheme='D'][data-dstate='fresh'] .d-chat { display: none; }
+  body[data-scheme='D'][data-dstate='fresh'] .d-fresh { display: flex; }
+  .d-fresh { flex: 1; min-height: 0; flex-direction: column; align-items: center; justify-content: center; gap: 13px;
+    width: min(560px, calc(100% - 40px)); margin: 0 auto; }
+  .d-fresh .ava { width: 52px; height: 52px; border-radius: var(--radius-pill); display: grid; place-items: center;
+    border: 1px solid var(--border); background: var(--surface-2); color: var(--muted); }
+  .d-fresh h2 { margin: 0; font-size: 19px; font-weight: 600; letter-spacing: -.02em; }
+  .d-fresh p { margin: -4px 0 0; color: var(--muted); font-size: 13px; line-height: 1.7; text-align: center; }
+  .d-starters { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; width: 100%; }
+  .d-starter { display: flex; align-items: center; gap: 9px; min-height: 40px; padding: 0 15px; text-align: left;
+    border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: var(--text);
+    font-size: 13px; box-shadow: var(--shadow-card); }
+  .d-starter::before { content: ''; width: 5px; height: 5px; border-radius: var(--radius-pill); background: var(--faint); }
+  .d-starter:hover { background: var(--hover); }
+
+  /* D1: a drawer from the right. D2: the same content as a centered dialog. */
+  .d-scrim { position: absolute; inset: 0; z-index: 9; background: var(--scrim); opacity: 0; pointer-events: none; transition: opacity .24s; }
+  body.d-open .d-scrim { opacity: 1; pointer-events: auto; }
+  .d-drawer { position: absolute; z-index: 10; top: 0; right: 0; bottom: 0; width: 440px; display: flex; flex-direction: column;
+    border: 1px solid var(--border); border-right: 0; border-radius: var(--radius-lg) 0 0 var(--radius-lg);
+    background: var(--bg); box-shadow: var(--shadow-pop); transform: translateX(103%); pointer-events: none;
+    transition: transform .28s cubic-bezier(.2,.8,.2,1); }
+  body.d-open .d-drawer { transform: none; pointer-events: auto; }
+  body[data-dform='D2'] .d-drawer { top: 50%; right: auto; bottom: auto; left: 50%; width: min(860px, 92%); height: min(640px, 85%);
+    border-radius: var(--radius-lg); border-right: 1px solid var(--border);
+    transform: translate(-50%, calc(-50% + 10px)) scale(.985); opacity: 0; transition: transform .24s cubic-bezier(.2,.8,.2,1), opacity .2s; }
+  body[data-dform='D2'].d-open .d-drawer { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+
+  .d-panel-head { flex: none; display: flex; align-items: center; gap: 8px; padding: 13px 10px 11px 16px; border-bottom: 1px solid var(--border); }
+  .d-panel-head b { font-size: 14px; font-weight: 600; }
+  .d-panel-head .sp { flex: 1; }
+  .d-panel-tabs { flex: none; display: flex; gap: 2px; padding: 10px 14px 0; }
+  .d-panel-tabs button { padding: 6px 13px; border-radius: var(--radius-pill); color: var(--muted); font-size: 12.5px; }
+  .d-panel-tabs button[aria-pressed='true'] { background: var(--surface); color: var(--text); box-shadow: var(--shadow-card); font-weight: 600; }
+  .d-panel-body { flex: 1; min-height: 0; overflow: auto; padding: 14px; scrollbar-width: thin; }
+  .d-tab { display: flex; flex-direction: column; gap: 12px; }
+  .d-tab .desk-first { padding: 15px 16px 11px; }
+  .d-tab .desk-first h2 { font-size: 13.5px; }
+  .d-tab .desk-week { padding: 14px 12px 8px; }
+  .d-tab .desk-chart { height: 84px; }
+  .d-counts { display: flex; flex-direction: column; gap: 6px; }
+  .d-count { display: flex; align-items: center; gap: 8px; width: 100%; padding: 9px 11px; border-radius: var(--radius);
+    border: 1px solid var(--border); background: var(--surface); font-size: 13px; text-align: left; }
+  .d-count:hover { background: var(--hover); }
+  .d-count .n { margin-left: auto; min-width: 18px; padding: 0 5px; border-radius: var(--radius-pill); background: var(--hover);
+    color: var(--muted); font-size: 11px; text-align: center; line-height: 18px; }
+  .d-count.warn { border-color: color-mix(in srgb, var(--warn) 30%, var(--border)); }
+  .d-count.warn em { font-style: normal; color: var(--warn); font-size: 11px; }
+  .d-count.warn .n { background: var(--warn-bg); color: var(--warn); }
+
+  .d-sessions { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+  .d-sessions button { display: flex; flex-direction: column; gap: 4px; width: 100%; padding: 10px 12px; border-radius: var(--radius);
+    border: 1px solid var(--border); background: var(--surface); text-align: left; }
+  .d-sessions button:hover { background: var(--hover); }
+  .d-session-title { font-size: 13px; font-weight: 570; color: var(--text); }
+  .d-session-meta { display: flex; gap: 10px; color: var(--muted); font-size: 11px; }
+  .d-session-meta .warn { color: var(--warn); }
+  .d-session-meta .run { color: var(--positive); }
+  .d-session-meta .err { color: var(--danger); }
+  .d-session-line { color: var(--muted); font-size: 12px; line-height: 1.6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .d-detail { gap: 10px; }
+  .d-detail-status { display: flex; gap: 10px; color: var(--muted); font-size: 11.5px; }
+  .d-detail-status .warn { color: var(--warn); }
+  .d-detail-progress { margin: 2px 0 0; padding: 8px 11px; border-left: 2px solid var(--border-strong); color: var(--muted); font-size: 12px; }
+  .d-back-chat { align-self: flex-start; }
+
+  /* Phone: icons only in the corner, the panel takes the whole screen, the composer clears the safe area. */
+  body[data-device='phone'] .d-top { padding: 10px 12px 6px; }
+  body[data-device='phone'] .d-entry-label { display: none; }
+  body[data-device='phone'] .d-entry { padding: 0 9px; }
+  body[data-device='phone'] .d-strip { justify-content: flex-start; overflow-x: auto; scrollbar-width: none; }
+  body[data-device='phone'] .d-strip svg { display: none; }
+  body[data-device='phone'] .d-composer { padding-bottom: calc(12px + env(safe-area-inset-bottom)); }
+  body[data-device='phone'] .d-drawer { top: 0; right: 0; bottom: 0; left: 0; width: auto; height: auto;
+    border-radius: 0; border: 0; border-bottom: 1px solid var(--border);
+    transform: translateY(100%); transition: transform .3s cubic-bezier(.2,.8,.2,1); }
+  body[data-device='phone'].d-open .d-drawer { transform: none; }
+  body[data-device='phone'][data-dform='D2'] .d-drawer { top: 0; left: 0; right: 0; bottom: 0; width: auto; height: auto; transform: translateY(100%); border-radius: 0; }
+  body[data-device='phone'][data-dform='D2'].d-open .d-drawer { transform: none; }
+</style>
+</head>
+<body data-scheme="A" data-device="desktop" data-sheet="partial">
+
+<div class="bar">
+  <h1>助手对话入口</h1>
+  <div class="seg" id="seg-scheme">
+    <span class="lab">方案</span>
+    <button data-v="A" aria-pressed="true">A 顶部输入</button>
+    <button data-v="B" aria-pressed="false">B 右下胶囊</button>
+    <button data-v="C" aria-pressed="false">C 右侧对话栏</button>
+    <button data-v="D" aria-pressed="false">D 聊天优先</button>
+  </div>
+  <div class="seg" id="seg-device">
+    <span class="lab">设备</span>
+    <button data-v="desktop" aria-pressed="true">桌面 1440</button>
+    <button data-v="phone" aria-pressed="false">手机 390</button>
+  </div>
+  <div class="seg" id="seg-theme">
+    <span class="lab">主题</span>
+    <button data-v="light" aria-pressed="true">亮</button>
+    <button data-v="dark" aria-pressed="false">暗</button>
+  </div>
+  <div class="seg" id="seg-panel">
+    <span class="lab" id="seg-panel-lab">面板</span>
+    <button data-v="closed" aria-pressed="true">收起</button>
+    <button data-v="open" aria-pressed="false">展开</button>
+  </div>
+  <div class="seg" id="seg-dform" hidden>
+    <span class="lab">D 形态</span>
+    <button data-v="D1" aria-pressed="true">D1 右侧抽屉</button>
+    <button data-v="D2" aria-pressed="false">D2 居中弹窗</button>
+  </div>
+  <div class="seg" id="seg-dstate" hidden>
+    <span class="lab">对话</span>
+    <button data-v="chat" aria-pressed="true">有往来</button>
+    <button data-v="fresh" aria-pressed="false">起手</button>
+  </div>
+  <span class="tip">按 <kbd>/</kbd> 聚焦输入</span>
+</div>
+
+<div class="note">
+  <p class="v va on"><b>方案 A</b>：桌面顶部常驻输入框「跟助手说…」，回车（或点发送）后对话在右侧展开，桌面内容不动。手机上输入框吸在页头下方，面板从底部弹出。</p>
+  <p class="v vb"><b>方案 B</b>：右下常驻胶囊输入条，替换现在的「召唤助手」；点它或按 <kbd>/</kbd> 直接展开对话。手机上胶囊停在底部安全区上方。</p>
+  <p class="v vc"><b>方案 C</b>：右侧常驻对话栏，桌面内容让出一条真实宽度；收起时只剩一条细边（手机是右侧小把手）。对话始终在场，不用先「打开」。</p>
+  <p class="v vd"><b>方案 D 聊天优先</b>：进来就是和助手的大对话区，底部输入框常驻；「等你回答」、派活卡都长在对话流里。需要你、会话、事项、桌面、设置收进右上角一排入口（数字只标需要注意的），点开是右侧抽屉（D1）或居中弹窗（D2）。顶上留一条细概况，全局一眼可见。</p>
+</div>
+
+<div class="stage">
+  <div class="frame" id="frame">
+    <div class="desk-scroll">
+      <div class="desk-page">
+        <header class="desk-header">
+          <div>
+            <h1>11月12日 星期四</h1>
+            <div class="desk-summary">
+              <span>2 件需要你</span>
+              <span class="dot">飞书 · 25 分钟前读过</span>
+              <span class="dot">早报 08:31 已推送</span>
+              <span class="dot"><button class="desk-link" data-open-panel>和助手聊</button></span>
+              <span class="dot"><button class="desk-link">配置</button></span>
+            </div>
+          </div>
+          <div class="desk-views">
+            <button class="pill-btn warn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>需要你<span class="n">2</span></button>
+            <button class="pill-btn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 4l1.8 4.7 4.7 1.8-4.7 1.8L12 17l-1.8-4.7-4.7-1.8 4.7-1.8z"/></svg>主动<span class="n">1</span></button>
+            <div class="desk-segment">
+              <button aria-pressed="true">四象限</button>
+              <button aria-pressed="false">进度</button>
+              <button aria-pressed="false">时间</button>
+            </div>
+          </div>
+        </header>
+
+        <!-- Scheme A: the resident input -->
+        <div class="chat-top">
+          <div class="chat-top-box">
+            <input id="topInput" type="text" placeholder="跟助手说…" aria-label="跟助手说">
+            <kbd>/</kbd>
+            <button class="send-dot" data-send="topInput" aria-label="发送"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5.5 11.5L12 5l6.5 6.5"/></svg></button>
+          </div>
+        </div>
+
+        <div class="desk-board">
+          <div class="desk-top">
+            <section class="desk-week desk-paper">
+              <header><h2>本周推进</h2><span>完成 3</span></header>
+              <div class="desk-chart">
+                <span class="desk-chart-day"><span class="desk-chart-track"><span class="desk-chart-bar" style="height:46%"></span></span><span class="desk-chart-label">一</span></span>
+                <span class="desk-chart-day"><span class="desk-chart-track"><span class="desk-chart-bar" style="height:72%"></span></span><span class="desk-chart-label">二</span></span>
+                <span class="desk-chart-day"><span class="desk-chart-track"><span class="desk-chart-bar" style="height:28%"></span></span><span class="desk-chart-label">三</span></span>
+                <span class="desk-chart-day today"><span class="desk-chart-track"><span class="desk-chart-bar" style="height:64%"></span></span><span class="desk-chart-label">四</span></span>
+                <span class="desk-chart-day future"><span class="desk-chart-track"></span><span class="desk-chart-label">五</span></span>
+                <span class="desk-chart-day future"><span class="desk-chart-track"></span><span class="desk-chart-label">六</span></span>
+                <span class="desk-chart-day future"><span class="desk-chart-track"></span><span class="desk-chart-label">日</span></span>
+              </div>
+            </section>
+            <section class="desk-first desk-paper">
+              <h2>今天先做</h2>
+              <ol>
+                <li><span>回复登录页改版的验收意见</span></li>
+                <li><span>看 codex 提的发票脚本改法</span></li>
+              </ol>
+            </section>
+          </div>
+
+          <div class="desk-matrix">
+            <section class="desk-quad now">
+              <h2>重要且紧急<small>要你点头</small><span class="n">2</span></h2>
+              <div class="desk-quad-body">
+                <button class="desk-pile" style="--tilt:-.6deg">
+                  <span class="desk-cover">
+                    <span class="desk-cover-preview"><span>codex 说按钮间距统一成 12px，等你点头后一起提交</span></span>
+                    <strong>登录页改版验收</strong>
+                    <span class="desk-cover-meta"><span class="warn">等你回答</span><span>今天</span></span>
+                  </span>
+                </button>
+                <button class="desk-pile" style="--tilt:.5deg">
+                  <span class="desk-cover">
+                    <span class="desk-cover-preview"><span>支付回调重试写完了，正在补 fixtures</span></span>
+                    <strong>支付接口改造</strong>
+                    <span class="desk-cover-meta"><span>agent · 跑了 26 分</span></span>
+                  </span>
+                </button>
+              </div>
+            </section>
+            <section class="desk-quad plan">
+              <h2>重要不紧急<small>排进本周</small><span class="n">2</span></h2>
+              <div class="desk-quad-body">
+                <button class="desk-pile" style="--tilt:.4deg">
+                  <span class="desk-cover"><strong>适配器测试补齐</strong><span class="desk-cover-meta"><span>停了 3 天</span></span></span>
+                </button>
+                <button class="desk-pile" style="--tilt:-.4deg">
+                  <span class="desk-cover"><strong>整理十一月的发票</strong><span class="desk-cover-meta"><span>停了 6 天</span></span></span>
+                </button>
+              </div>
+            </section>
+            <section class="desk-quad quick">
+              <h2>紧急不重要<small>顺手清掉</small><span class="n">2</span></h2>
+              <div class="desk-quad-body">
+                <button class="desk-pile" style="--tilt:.3deg">
+                  <span class="desk-cover"><strong>回复设计师的消息</strong><span class="desk-cover-meta"><span>今天</span></span></span>
+                </button>
+                <button class="desk-pile" style="--tilt:-.5deg">
+                  <span class="desk-cover"><strong>挑周六的体检时间</strong><span class="desk-cover-meta"><span>本周</span></span></span>
+                </button>
+              </div>
+            </section>
+            <section class="desk-quad later">
+              <h2>其余<span class="n">6</span></h2>
+              <div class="desk-quad-body">
+                <button class="desk-pile desk-stack" style="--tilt:-.3deg">
+                  <span class="desk-cover">
+                    <strong>稍后再看<span class="n">6</span></strong>
+                    <span class="desk-stack-preview">适配器调研 · 帮妈妈订体检 · 换手机壳 · 旧硬盘清点 …</span>
+                  </span>
+                </button>
+              </div>
+            </section>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- The companion, as on the desk today -->
+    <svg class="pet" viewBox="0 0 64 66" aria-hidden="true">
+      <ellipse cx="32" cy="60" rx="17" ry="4" fill="var(--scrim)" opacity=".5"/>
+      <path d="M14 30c0-3 3-4 5-4l2-9 7 6h8l7-6 2 9c2 0 5 1 5 4v14c0 9-8 14-18 14s-18-5-18-14z" fill="var(--border-strong)"/>
+      <path d="M14 30c0-3 3-4 5-4l2-9 7 6h8l7-6 2 9c2 0 5 1 5 4" fill="none" stroke="var(--desk-paper)" stroke-width="1.4" stroke-linejoin="round"/>
+      <circle cx="25" cy="34" r="2.1" fill="var(--bg)"/>
+      <circle cx="39" cy="34" r="2.1" fill="var(--bg)"/>
+      <path d="M29 41c1 1.2 5 1.2 6 0" fill="none" stroke="var(--bg)" stroke-width="1.6" stroke-linecap="round"/>
+      <path d="M52 44c4-1 6-5 5-9" fill="none" stroke="var(--border-strong)" stroke-width="3.4" stroke-linecap="round"/>
+    </svg>
+
+    <!-- Scheme B: the capsule that replaces 召唤助手 -->
+    <button class="chat-capsule" data-open-panel>
+      <span class="ph">跟助手说…</span>
+      <kbd>/</kbd>
+      <span class="send-dot"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5.5 11.5L12 5l6.5 6.5"/></svg></span>
+    </button>
+
+    <!-- Scheme C: the folded edge -->
+    <button class="chat-edge" data-open-panel aria-label="展开助手对话">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 6l-6 6 6 6"/></svg>
+      <span class="v-label">助手</span>
+    </button>
+
+    <div class="sheet-scrim" id="scrim"></div>
+
+    <!-- The conversation: one thread, opened from any entry -->
+    <aside class="panel" id="panel" role="dialog" aria-label="助手对话">
+      <div class="sheet-grip" id="grip"><i></i></div>
+      <header class="panel-head">
+        <span class="panel-ava"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 4l1.8 4.7 4.7 1.8-4.7 1.8L12 17l-1.8-4.7-4.7-1.8 4.7-1.8zM18.5 15.5l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7z"/></svg></span>
+        <span class="panel-name"><b>助手</b><small>和「和助手聊」是同一个对话</small></span>
+        <span class="sp"></span>
+        <span class="panel-hint"><kbd>/</kbd> 聚焦</span>
+        <button class="icon-btn panel-collapse" data-close-panel aria-label="收起对话栏" title="收起对话栏"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 6l6 6-6 6"/></svg></button>
+        <button class="icon-btn" data-close-panel aria-label="关闭对话"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+      </header>
+
+      <div class="panel-pins">
+        <div class="pin-card">
+          <div class="pin-head">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>
+            等你回答
+          </div>
+          <p class="pin-body">「整理十一月的发票」停了 6 天，还要继续吗？</p>
+          <div class="pin-acts">
+            <button class="primary">继续</button>
+            <button class="ghost">不跟了</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel-scroll" id="msgs">
+        <div class="day-rule">今天</div>
+
+        <div class="msg msg-user"><div>帮我把适配器的测试补上，别动登录页</div></div>
+
+        <div class="msg msg-agent">
+          <span class="gutter"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 4l1.8 4.7 4.7 1.8-4.7 1.8L12 17l-1.8-4.7-4.7-1.8 4.7-1.8z"/></svg></span>
+          <div class="body">好。适配器的测试正好可以让 codex 顺手补，它就在那个目录里干活，任务这么写：<span class="when">09:14</span>
+            <div class="dispatch">
+              <div class="dispatch-head">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="7" r="3"/><path d="M3 20v-2a6 6 0 0 1 12 0v2M16 4a3 3 0 0 1 0 6M18 14a5 5 0 0 1 3 4v2"/></svg>
+                派活给 <b>codex</b>
+              </div>
+              <dl>
+                <dt>目录</dt><dd><code>~/code/remote-agent-hub</code></dd>
+                <dt>任务</dt><dd>给 packages/daemon/src/adapters 补测试；不动登录页相关文件</dd>
+              </dl>
+              <div class="dispatch-acts">
+                <button class="primary"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M8 5.5v13l10-6.5z"/></svg>开始</button>
+                <button class="ghost">不用</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="msg msg-agent">
+          <span class="gutter"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 4l1.8 4.7 4.7 1.8-4.7 1.8L12 17l-1.8-4.7-4.7-1.8 4.7-1.8z"/></svg></span>
+          <div class="body">顺带看见一件：登录页改版和支付接口今天都改了 <code style="font-family:var(--mono);font-size:11.5px;background:var(--code-bg);border-radius:4px;padding:.1em .3em">LoginForm.tsx</code>，容易撞。要让后开的那条先停一停吗？<span class="when">09:41</span>
+            <div class="msg-acts">
+              <button class="ghost">让它停</button>
+              <button class="ghost">继续跑</button>
+            </div>
+          </div>
+        </div>
+        <div id="typed"></div>
+      </div>
+
+      <div class="panel-composer">
+        <div class="composer-box">
+          <textarea id="composer" rows="1" placeholder="跟助手说…" aria-label="跟助手说"></textarea>
+          <button class="send-dot" data-send="composer" aria-label="发送"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5.5 11.5L12 5l6.5 6.5"/></svg></button>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ── Scheme D: the conversation is the home; everything else opens from the corner ── -->
+    <div class="d-stage">
+      <header class="d-top">
+        <span class="d-brand"><span class="d-ava"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 4l1.8 4.7 4.7 1.8-4.7 1.8L12 17l-1.8-4.7-4.7-1.8 4.7-1.8z"/></svg></span>助手</span>
+        <span class="sp"></span>
+        <nav class="d-entries" aria-label="其他入口">
+          <button class="d-entry" data-open-entry="need"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg><span class="d-entry-label">需要你</span><span class="d-badge warn">2</span></button>
+          <button class="d-entry" data-open-entry="sessions"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 5H7a3 3 0 00-3 3v6a3 3 0 003 3h1v3l3.5-3h2"/><path d="M13 3h4a3 3 0 013 3v5a3 3 0 01-3 3h-1"/></svg><span class="d-entry-label">会话</span><span class="d-badge danger">1</span></button>
+          <button class="d-entry" data-open-entry="matters"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 6h16M4 12h10M4 18h13"/></svg><span class="d-entry-label">事项</span></button>
+          <button class="d-entry" data-open-entry="desk"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M4 10h16M10 10v10"/></svg><span class="d-entry-label">桌面</span></button>
+          <button class="d-entry" data-open-entry="settings"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 01-.1 1.2l2 1.6-2 3.4-2.4-1a7 7 0 01-2 1.2l-.4 2.6h-4l-.4-2.6a7 7 0 01-2-1.2l-2.4 1-2-3.4 2-1.6A7 7 0 015 12a7 7 0 01.1-1.2l-2-1.6 2-3.4 2.4 1a7 7 0 012-1.2L9.9 3h4l.4 2.6a7 7 0 012 1.2l2.4-1 2 3.4-2 1.6c.2.4.3.8.3 1.2z"/></svg><span class="d-entry-label">设置</span></button>
+        </nav>
+      </header>
+      <!-- The one line of globe left on the home: quiet, clickable, no numbers hidden. -->
+      <button class="d-strip" data-open-entry="need">
+        <span class="warn">2 件需要你</span><span class="dot">·</span><span>3 个会话在跑</span><span class="dot">·</span><span>1 个出错停下</span><span class="dot">·</span><span>早报 08:31 已推送</span>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+      </button>
+
+      <div class="d-chat" id="dChat">
+        <div class="day-rule">今天</div>
+        <div class="msg msg-user"><div>帮我把适配器的测试补上，别动登录页</div></div>
+        <div class="msg msg-agent">
+          <span class="gutter"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 4l1.8 4.7 4.7 1.8-4.7 1.8L12 17l-1.8-4.7-4.7-1.8 4.7-1.8z"/></svg></span>
+          <div class="body">好。适配器的测试正好可以让 codex 顺手补，它就在那个目录里干活，任务这么写：<span class="when">09:14</span>
+            <div class="dispatch">
+              <div class="dispatch-head">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="7" r="3"/><path d="M3 20v-2a6 6 0 0 1 12 0v2M16 4a3 3 0 0 1 0 6M18 14a5 5 0 0 1 3 4v2"/></svg>
+                派活给 <b>codex</b>
+              </div>
+              <dl>
+                <dt>目录</dt><dd><code>~/code/remote-agent-hub</code></dd>
+                <dt>任务</dt><dd>给 packages/daemon/src/adapters 补测试；不动登录页相关文件</dd>
+              </dl>
+              <div class="dispatch-acts">
+                <button class="primary"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M8 5.5v13l10-6.5z"/></svg>开始</button>
+                <button class="ghost">不用</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="msg msg-agent">
+          <span class="gutter"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 4l1.8 4.7 4.7 1.8-4.7 1.8L12 17l-1.8-4.7-4.7-1.8 4.7-1.8z"/></svg></span>
+          <div class="body">还有一件等你回答：<b>「整理十一月的发票」停了 6 天</b>，还要继续吗？<span class="when">09:41</span>
+            <div class="msg-acts"><button class="primary">继续</button><button class="ghost">不跟了</button></div>
+          </div>
+        </div>
+        <div class="msg msg-agent">
+          <span class="gutter"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 4l1.8 4.7 4.7 1.8-4.7 1.8L12 17l-1.8-4.7-4.7-1.8 4.7-1.8z"/></svg></span>
+          <div class="body">顺带看见：登录页改版和支付接口今天都改了 <code style="font-family:var(--mono);font-size:11.5px;background:var(--code-bg);border-radius:4px;padding:.1em .3em">LoginForm.tsx</code>，容易撞。要让后开的那条先停一停吗？
+            <div class="msg-acts"><button class="ghost">让它停</button><button class="ghost">继续跑</button></div>
+          </div>
+        </div>
+        <div id="dTyped"></div>
+      </div>
+
+      <!-- First time in: the greeting is the home; three ways to start. -->
+      <div class="d-fresh">
+        <span class="ava"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 4l1.8 4.7 4.7 1.8-4.7 1.8L12 17l-1.8-4.7-4.7-1.8 4.7-1.8z"/></svg></span>
+        <h2>跟助手说</h2>
+        <p>她看得见你的事项和所有会话，能替你给其他 agent 派活。</p>
+        <div class="d-starters">
+          <button class="d-starter" data-starter="今天该先做什么？">今天该先做什么？</button>
+          <button class="d-starter" data-starter="哪些会话在等我？">哪些会话在等我？</button>
+          <button class="d-starter" data-starter="让 codex 去补适配器的测试">让 codex 去补适配器的测试</button>
+        </div>
+      </div>
+
+      <div class="d-composer">
+        <div class="composer-box">
+          <textarea id="dComposer" rows="1" placeholder="跟助手说…" aria-label="跟助手说"></textarea>
+          <button class="send-dot" id="dSend" aria-label="发送"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5.5 11.5L12 5l6.5 6.5"/></svg></button>
+        </div>
+      </div>
+    </div>
+
+    <!-- D1: a drawer from the right / D2: a dialog in the middle. Same content, two shapes. -->
+    <div class="d-scrim" id="dScrim"></div>
+    <aside class="d-drawer" id="dPanel" role="dialog" aria-label="桌面与会话">
+      <header class="d-panel-head">
+        <button class="icon-btn d-back" id="dBack" hidden aria-label="返回列表"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg></button>
+        <b id="dPanelTitle">桌面</b>
+        <span class="sp"></span>
+        <button class="icon-btn" data-close-d aria-label="关闭" title="关闭 (Esc)"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+      </header>
+      <nav class="d-panel-tabs" id="dTabs">
+        <button data-tab="desk" aria-pressed="true">桌面</button>
+        <button data-tab="sessions" aria-pressed="false">会话</button>
+        <button data-tab="matters" aria-pressed="false">事项</button>
+      </nav>
+      <div class="d-panel-body">
+        <div class="d-tab" data-tab-body="desk">
+          <section class="desk-first desk-paper" style="transform:none">
+            <h2>今天先做</h2>
+            <ol><li><span>回复登录页改版的验收意见</span></li><li><span>看 codex 提的发票脚本改法</span></li></ol>
+          </section>
+          <div class="d-counts">
+            <button class="d-count warn"><span>重要且紧急</span><em>等你回答</em><span class="n">2</span></button>
+            <button class="d-count"><span>重要不紧急</span><span class="n">2</span></button>
+            <button class="d-count"><span>紧急不重要</span><span class="n">2</span></button>
+            <button class="d-count"><span>其余</span><span class="n">6</span></button>
+          </div>
+          <section class="desk-week desk-paper" style="transform:none">
+            <header><h2>本周推进</h2><span>完成 3</span></header>
+            <div class="desk-chart">
+              <span class="desk-chart-day"><span class="desk-chart-track"><span class="desk-chart-bar" style="height:46%"></span></span><span class="desk-chart-label">一</span></span>
+              <span class="desk-chart-day"><span class="desk-chart-track"><span class="desk-chart-bar" style="height:72%"></span></span><span class="desk-chart-label">二</span></span>
+              <span class="desk-chart-day"><span class="desk-chart-track"><span class="desk-chart-bar" style="height:28%"></span></span><span class="desk-chart-label">三</span></span>
+              <span class="desk-chart-day today"><span class="desk-chart-track"><span class="desk-chart-bar" style="height:64%"></span></span><span class="desk-chart-label">四</span></span>
+              <span class="desk-chart-day future"><span class="desk-chart-track"></span><span class="desk-chart-label">五</span></span>
+              <span class="desk-chart-day future"><span class="desk-chart-track"></span><span class="desk-chart-label">六</span></span>
+              <span class="desk-chart-day future"><span class="desk-chart-track"></span><span class="desk-chart-label">日</span></span>
+            </div>
+          </section>
+        </div>
+        <div class="d-tab" data-tab-body="sessions" hidden>
+          <ul class="d-sessions">
+            <li><button data-session="登录页改版验收">
+              <span class="d-session-title">登录页改版验收</span>
+              <span class="d-session-meta"><span class="warn">等你回答</span><span>codex · 09:12</span></span>
+              <span class="d-session-line">按钮间距统一成 12px，等你点头后一起提交</span>
+            </button></li>
+            <li><button data-session="支付接口改造">
+              <span class="d-session-title">支付接口改造</span>
+              <span class="d-session-meta"><span class="run">在跑 26 分</span><span>codex</span></span>
+              <span class="d-session-line">支付回调重试写完了，正在补 fixtures</span>
+            </button></li>
+            <li><button data-session="语音模式回归">
+              <span class="d-session-title">语音模式回归</span>
+              <span class="d-session-meta"><span class="err">出错停下</span><span>claude · 1 小时前</span></span>
+              <span class="d-session-line">e2e 起不来：浏览器二进制缺失</span>
+            </button></li>
+            <li><button data-session="适配器调研">
+              <span class="d-session-title">适配器调研</span>
+              <span class="d-session-meta"><span>待验收</span><span>claude · 昨天</span></span>
+              <span class="d-session-line">三家适配器的会话恢复机制对比写完了</span>
+            </button></li>
+          </ul>
+        </div>
+        <div class="d-tab" data-tab-body="matters" hidden>
+          <ul class="d-sessions">
+            <li><button><span class="d-session-title">回复登录页改版的验收意见</span><span class="d-session-meta"><span class="warn">等你回答</span><span>今天</span></span></button></li>
+            <li><button><span class="d-session-title">看 codex 提的发票脚本改法</span><span class="d-session-meta"><span>今天</span></span></button></li>
+            <li><button><span class="d-session-title">适配器测试补齐</span><span class="d-session-meta"><span>停了 3 天</span></span></button></li>
+            <li><button><span class="d-session-title">整理十一月的发票</span><span class="d-session-meta"><span class="warn">停了 6 天</span></span></button></li>
+          </ul>
+        </div>
+        <!-- A session, opened from the list: enough to decide, with a way straight back to the chat. -->
+        <div class="d-tab d-detail" data-tab-body="detail" hidden>
+          <div class="d-detail-status"><span class="warn">等你回答</span><span>codex · 今天 09:12</span></div>
+          <div class="msg msg-user"><div>按钮间距统一成 12px 可以吗？验收还差什么？</div></div>
+          <div class="msg msg-agent">
+            <span class="gutter"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 4l1.8 4.7 4.7 1.8-4.7 1.8L12 17l-1.8-4.7-4.7-1.8 4.7-1.8z"/></svg></span>
+            <div class="body">间距统一改完了，样式快照都过。剩两处深色下的对比度要你点头，截图在会话里。
+              <div class="msg-acts"><button class="primary">点头，收尾</button><button class="ghost">还有问题</button></div>
+            </div>
+          </div>
+          <p class="d-detail-progress">[进度] 需要你：深色对比度两处，等你点头</p>
+          <button class="ghost d-back-chat" data-close-d><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5l-7 7 7 7M4 12h16"/></svg>回到聊天</button>
+        </div>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<script>
+  // Sketch state. Everything derives from body attributes, so the bar and real
+  // interactions (clicks, '/', Enter, drag) stay in sync both ways.
+  const body = document.body;
+  const html = document.documentElement;
+  const panel = document.getElementById('panel');
+  const msgs = document.getElementById('msgs');
+  const composer = document.getElementById('composer');
+
+  function wireSeg(id, fn) {
+    const seg = document.getElementById(id);
+    seg.addEventListener('click', e => {
+      const btn = e.target.closest('button[data-v]');
+      if (!btn) return;
+      seg.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b === btn)));
+      fn(btn.dataset.v);
+    });
+  }
+  wireSeg('seg-scheme', v => {
+    body.dataset.scheme = v; syncNote();
+    // In D the panel segment drives the drawer, and its label says so.
+    document.getElementById('seg-panel-lab').textContent = v === 'D' ? '抽屉' : '面板';
+    document.getElementById('seg-dform').hidden = v !== 'D';
+    document.getElementById('seg-dstate').hidden = v !== 'D';
+    if (v !== 'D') setDrawers(false);
+  });
+  wireSeg('seg-device', v => { body.dataset.device = v; });
+  wireSeg('seg-theme', v => { html.dataset.theme = v; });
+  wireSeg('seg-panel', v => setOpen(v === 'open'));
+  wireSeg('seg-dform', v => { body.dataset.dform = v; });
+  wireSeg('seg-dstate', v => { body.dataset.dstate = v; });
+  function syncNote() {
+    document.querySelectorAll('.note .v').forEach(p => p.classList.toggle('on', p.classList.contains('v' + body.dataset.scheme.toLowerCase())));
+  }
+
+  function setOpen(open) {
+    if (body.dataset.scheme === 'D') { setDrawers(open); return; }
+    body.classList.toggle('panel-open', open);
+    document.querySelector('#seg-panel button[data-v="open"]').setAttribute('aria-pressed', String(open));
+    document.querySelector('#seg-panel button[data-v="closed"]').setAttribute('aria-pressed', String(!open));
+    if (open) requestAnimationFrame(() => { msgs.scrollTop = msgs.scrollHeight; });
+  }
+  document.querySelectorAll('[data-open-panel]').forEach(el => el.addEventListener('click', () => { setOpen(true); focusComposer(); }));
+  document.querySelectorAll('[data-close-panel]').forEach(el => el.addEventListener('click', () => setOpen(false)));
+  document.getElementById('scrim').addEventListener('click', () => setOpen(false));
+
+  function focusComposer() { setTimeout(() => composer.focus(), 60); }
+
+  // '/' summons the conversation from anywhere, unless you are already typing.
+  // In scheme A the input is the resident bar itself: '/' lands there, Enter expands.
+  // In D the conversation is already home: '/' just finds its composer.
+  document.addEventListener('keydown', e => {
+    if (e.key !== '/') return;
+    const el = e.target;
+    if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+    e.preventDefault();
+    if (body.dataset.scheme === 'D') {
+      document.getElementById('dComposer').focus();
+      return;
+    }
+    if (body.dataset.scheme === 'A' && !body.classList.contains('panel-open')) {
+      document.getElementById('topInput').focus();
+      return;
+    }
+    setOpen(true);
+    focusComposer();
+  });
+
+  // Enter sends: a bubble appears in the panel (sketch behaviour, not persistence).
+  function send(text) {
+    text = (text || '').trim();
+    setOpen(true);
+    if (text) {
+      const row = document.createElement('div');
+      row.className = 'msg msg-user';
+      const bub = document.createElement('div');
+      bub.textContent = text;
+      row.appendChild(bub);
+      document.getElementById('typed').appendChild(row);
+      msgs.scrollTop = msgs.scrollHeight;
+    }
+    focusComposer();
+  }
+  document.querySelectorAll('[data-send]').forEach(btn => btn.addEventListener('click', () => {
+    const input = document.getElementById(btn.dataset.send);
+    send(input.value); input.value = '';
+  }));
+  document.getElementById('topInput').addEventListener('keydown', e => {
+    if (e.key === 'Enter') { send(e.target.value); e.target.value = ''; }
+  });
+  composer.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(composer.value); composer.value = ''; }
+  });
+  composer.addEventListener('input', () => {
+    composer.style.height = 'auto';
+    composer.style.height = Math.min(composer.scrollHeight, 96) + 'px';
+  });
+
+  // Phone: drag the sheet. Up past the top → full screen, down far → close.
+  const grip = document.getElementById('grip');
+  let dragY = null;
+  grip.addEventListener('pointerdown', e => {
+    if (body.dataset.device !== 'phone') return;
+    dragY = e.clientY;
+    panel.classList.add('dragging');
+    grip.setPointerCapture(e.pointerId);
+  });
+  grip.addEventListener('pointermove', e => {
+    if (dragY === null) return;
+    const dy = Math.max(-80, e.clientY - dragY);
+    panel.style.transform = dy < 0 ? `translateY(${dy * .35}px) scale(${1 + dy * .0004})` : `translateY(${dy}px)`;
+  });
+  const endDrag = e => {
+    if (dragY === null) return;
+    const dy = e.clientY - dragY;
+    dragY = null;
+    panel.style.transform = '';
+    panel.classList.remove('dragging');
+    if (dy > 90) setOpen(false);
+    else if (dy < -36) body.dataset.sheet = 'full';
+    else if (dy > 36) body.dataset.sheet = 'partial';
+  };
+  grip.addEventListener('pointerup', endDrag);
+  grip.addEventListener('pointercancel', endDrag);
+
+  // ——— Scheme D: the home conversation and its corner drawers ———
+  const dPanel = document.getElementById('dPanel');
+  const dChat = document.getElementById('dChat');
+  const dComposer = document.getElementById('dComposer');
+  const dTabs = document.getElementById('dTabs');
+  const dBack = document.getElementById('dBack');
+  const dPanelTitle = document.getElementById('dPanelTitle');
+  const TAB_TITLES = { desk: '桌面', sessions: '会话', matters: '事项', detail: '会话' };
+
+  function setDrawers(open) {
+    body.classList.toggle('d-open', open);
+    document.querySelector('#seg-panel button[data-v="open"]').setAttribute('aria-pressed', String(open));
+    document.querySelector('#seg-panel button[data-v="closed"]').setAttribute('aria-pressed', String(!open));
+    if (!open) showTab('desk'); // Reopening starts from the desk, not a stale detail.
+  }
+  function showTab(tab) {
+    dTabs.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.tab === tab)));
+    document.querySelectorAll('.d-tab[data-tab-body]').forEach(el => { el.hidden = el.dataset.tabBody !== tab; });
+    const detail = tab === 'detail';
+    dBack.hidden = !detail;
+    dPanelTitle.textContent = detail ? (dPanelTitle.dataset.name ?? TAB_TITLES[tab]) : TAB_TITLES[tab];
+  }
+  dTabs.addEventListener('click', e => {
+    const btn = e.target.closest('button[data-tab]');
+    if (btn) showTab(btn.dataset.tab);
+  });
+  dBack.addEventListener('click', () => showTab('sessions'));
+  document.getElementById('dScrim').addEventListener('click', () => setDrawers(false));
+  document.querySelectorAll('[data-close-d]').forEach(el => el.addEventListener('click', () => setDrawers(false)));
+  // Which tab each corner entry opens. 需要你 lands on matters: what waits is a decision, not a page.
+  const ENTRY_TAB = { need: 'matters', sessions: 'sessions', matters: 'matters', desk: 'desk', settings: 'desk' };
+  document.querySelectorAll('[data-open-entry]').forEach(el => el.addEventListener('click', () => {
+    showTab(ENTRY_TAB[el.dataset.openEntry] ?? 'desk');
+    setDrawers(true);
+  }));
+  // A session in the list opens a detail inside the same drawer, one click from back to chat.
+  document.querySelectorAll('.d-sessions [data-session]').forEach(btn => btn.addEventListener('click', () => {
+    dPanelTitle.dataset.name = btn.dataset.session;
+    showTab('detail');
+  }));
+  // Esc closes the drawer first; everything else keeps its meaning.
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && !e.isComposing && body.classList.contains('d-open')) setDrawers(false);
+  });
+
+  // Sending from the home: a bubble in the flow; a first word leaves the greeting behind.
+  function dSend(text) {
+    text = (text || '').trim();
+    if (body.dataset.dstate === 'fresh' && text) {
+      body.dataset.dstate = 'chat';
+      document.querySelector('#seg-dstate button[data-v="chat"]').setAttribute('aria-pressed', 'true');
+      document.querySelector('#seg-dstate button[data-v="fresh"]').setAttribute('aria-pressed', 'false');
+    }
+    if (text) {
+      const row = document.createElement('div');
+      row.className = 'msg msg-user';
+      const bub = document.createElement('div');
+      bub.textContent = text;
+      row.appendChild(bub);
+      document.getElementById('dTyped').appendChild(row);
+      dChat.scrollTop = dChat.scrollHeight;
+    }
+    dComposer.focus();
+  }
+  document.getElementById('dSend').addEventListener('click', () => { dSend(dComposer.value); dComposer.value = ''; });
+  dComposer.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); dSend(dComposer.value); dComposer.value = ''; }
+  });
+  dComposer.addEventListener('input', () => {
+    dComposer.style.height = 'auto';
+    dComposer.style.height = Math.min(dComposer.scrollHeight, 120) + 'px';
+  });
+  document.querySelectorAll('.d-starter').forEach(btn => btn.addEventListener('click', () => { dSend(btn.dataset.starter); }));
+</script>
+</body>
+</html>

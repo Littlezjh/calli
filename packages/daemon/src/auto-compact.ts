@@ -241,10 +241,11 @@ export class AutoCompact {
    * A summary for a handover whose source cannot write one itself (its plan ran out, or its summary
    * turn failed): the compression agent reads the hub's record, so neither the source's quota nor
    * the successor's context pays for it. Null without a compression agent, or when it fails, and
-   * the handover goes on with the brief the hub assembles from the log.
+   * the handover goes on with the brief the hub assembles from the log. `agents` overrides the
+   * configured ones, for a handover where the person named who writes the summary.
    */
-  async summarizeForHandover(threadId: string): Promise<string | null> {
-    const settings = this.settings();
+  async summarizeForHandover(threadId: string, agents?: HandoverTarget[]): Promise<string | null> {
+    const settings = { ...this.settings(), ...(agents ? { agents } : {}) };
     if (!settings.agents.length) return null;
     try {
       const text = await this.chainTranscript(threadId, settings.maxChars);

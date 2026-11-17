@@ -11,7 +11,7 @@ export const removeRepo = (settings: ProactiveSettings, path: string): Proactive
 /** What the person can still do about a run: say an observation was right, decide on sandbox work, clear away a failed attempt. */
 export type RunControl = 'diff' | ProactiveAction;
 export function runControls(run: ProactiveRun): RunControl[] {
-  if (run.status === 'asking') return run.reason === 'done' ? ['close-matter', 'dismiss'] : ['answer'];
+  if (run.status === 'asking') return run.kind === 'dispatch' ? ['start', 'dismiss'] : run.reason === 'done' ? ['close-matter', 'dismiss'] : ['answer'];
   if (run.status === 'waiting') return ['dismiss'];
   if (run.status === 'observed' && run.needsRepo) return ['allow-repo', 'dismiss'];
   if (run.status === 'observed') return ['approve'];
@@ -20,6 +20,40 @@ export function runControls(run: ProactiveRun): RunControl[] {
   if (run.status === 'merged') return ['revert'];
   if (run.status === 'failed' && run.branch) return ['discard'];
   return [];
+}
+
+/** What a refused `start` says, from the run the daemon sent back with the 409. Jumping is only for
+ *  one that has truly begun; a concurrent start still on its way keeps its button busy instead. */
+export type StartConflict = { threadId: string } | 'starting';
+export function startConflict(details: Record<string, unknown>): StartConflict | null {
+  const run = details.run;
+  if (!run || typeof run !== 'object') return null;
+  const candidate = run as ProactiveRun;
+  if (candidate.kind !== 'dispatch') return null;
+  if (candidate.status === 'answered' && typeof candidate.threadId === 'string' && candidate.threadId) return { threadId: candidate.threadId };
+  return candidate.status === 'asking' && details.starting === true ? 'starting' : null;
+}
+
+/** The runs a conversation panel pins at its top: only what asks the person, newest first. */
+/** The one line a waiting decision is known by while folded: what is asked, else what is proposed. */
+export const askLine = (run: ProactiveRun): string =>
+  (run.kind === 'dispatch' ? run.title || run.task || run.summary : run.question?.text || run.line || run.summary || run.threadTitle || '')
+    ?.split('\n').map(line => line.trim()).find(Boolean) ?? '';
+
+export const askingPins = (runs: ProactiveRun[] | null): ProactiveRun[] =>
+  (runs ?? []).filter(run => run.status === 'asking').sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt));
+
+/** Where a「需要你」row from the plan leads. A session's own entry opens as itself; one of her asks
+ *  (`run:<id>` in the plan, an id no thread answers) opens as the ask in the tray above the composer,
+ *  where its answer controls live; an ask already over opens the session it became, and one gone
+ *  entirely leads nowhere, so the caller refreshes the list rather than open what does not exist. */
+export type NeedTarget = { kind: 'thread'; id: string } | { kind: 'ask'; run: ProactiveRun } | { kind: 'gone' };
+export function needTarget(id: string, runs: ProactiveRun[] | null): NeedTarget {
+  if (!id.startsWith('run:')) return { kind: 'thread', id };
+  const run = runs?.find(item => item.id === id.slice(4));
+  if (run?.status === 'asking') return { kind: 'ask', run };
+  if (run?.threadId) return { kind: 'thread', id: run.threadId };
+  return { kind: 'gone' };
 }
 
 /** Sandbox work in hand or waiting for a decision comes before the note; materials and observations sit quietly after it. */

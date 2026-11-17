@@ -9,8 +9,11 @@ export interface AdvanceDecision {
 }
 const clip = (text: string, length: number) => [...text].slice(0, length).join('');
 export function transientError(code: string | null, text: string): boolean {
-  if (/auth|unauthorized|forbidden|401|403|quota|credit|billing|exhaust|context|token.limit|insufficient|余额|额度|认证|上下文/i.test(`${code ?? ''} ${text}`)) return false;
-  return /\b(?:408|429|5\d\d)\b|overloaded|rate.?limit|Connection error|timed out|ECONNRESET|fetch failed|socket hang up/i.test(text);
+  // 上限/限额 as the GLM plans word their windows: a plan running out is never transient, even
+  // when it arrives on a 429 that looks like a rate limit.
+  if (/auth|unauthorized|forbidden|401|403|quota|credit|billing|exhaust|context|token.limit|insufficient|余额|额度|上限|限额|认证|上下文/i.test(`${code ?? ''} ${text}`)) return false;
+  // Capacity, queue and disconnect wording comes from real turn errors seen on the gateways.
+  return /\b(?:408|429|5\d\d)\b|overloaded|rate.?limit|no capacity|at capacity|queue|disconnected|connection (?:error|reset|lost)|timed out|timeout|ECONNRESET|fetch failed|socket hang up/i.test(text);
 }
 export function parseAdvance(text: string, answer: string): AdvanceDecision {
   const unsure: AdvanceDecision = { phase: 'unsure', line: '' };

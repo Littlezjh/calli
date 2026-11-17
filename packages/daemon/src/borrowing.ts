@@ -68,6 +68,8 @@ export class BorrowingService {
   /** Whether the thread runs a borrowed task for another thread. */
   owns(threadId: string): boolean { return this.byThread.has(threadId); }
 
+  forgetEnvironment(threadId: string): void { this.credentials.delete(threadId); }
+
   environment(threadId: string): Record<string, string> | undefined {
     // A provider task must not recursively borrow another provider.
     if (this.byThread.has(threadId)) return undefined;
@@ -137,6 +139,7 @@ export class BorrowingService {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new HttpError(400, 'command must be an object');
     const input = raw as Record<string, unknown>;
     switch (input.op) {
+      case 'preview.note': return this.manager.previewNotes.read(owner, input.id, true);
       case 'references.read': return this.manager.references.read(owner, input);
       case 'signals.show': {
         if (owner === 'operator') throw new HttpError(403, 'signals require thread-scoped credentials');

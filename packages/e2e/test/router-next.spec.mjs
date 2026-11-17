@@ -42,7 +42,7 @@ test('observe mode only records; the record can be approved once, in the spread 
     const run = await waitFor(async () => (await json(daemon, '/api/personal/proactive')).runs[0], 'an observation', 60_000);
     assert.equal(run.status, 'observed');
     assert.equal(run.threadId, '', 'nothing really ran');
-    await page.evaluate(() => { location.hash = '#/desk'; });
+    await page.evaluate(() => { location.hash = '#/desk/desk'; });
     await page.getByRole('button', { name: '按进度', exact: true }).click();
     await page.locator(`#desk-pile-${todo.id}`).click();
     const card = page.locator(`.proactive-card[data-run="${run.id}"]`);
@@ -85,8 +85,8 @@ test('a merged batch reads part by part, while queued and in the conversation', 
       return route.fulfill({ response, json: enrich(parsed) });
     });
     await openUi(page, daemon);
+    // Her home is the conversation itself now; no button between the desk and the queue.
     await page.evaluate(() => { location.hash = '#/desk'; });
-    await page.getByRole('button', { name: '和助手聊', exact: true }).click();
     const queue = page.locator('.queue-text').first();
     await queue.waitFor();
     const shown = await queue.evaluate(node => ({ text: node.textContent, quiet: [...node.querySelectorAll('.muted')].map(part => part.textContent.replace(/^ · /, '')) }));
@@ -114,7 +114,7 @@ test('the desk says where matters stand, in the head and on each pile', async ()
     const sent = [];
     await page.route(`**/api/todos/${stages.quiet.id}`, async route => { if (route.request().method() !== 'GET') sent.push(route.request().postDataJSON()); return route.continue(); });
     await openUi(page, daemon);
-    await page.evaluate(() => { location.hash = '#/desk'; });
+    await page.evaluate(() => { location.hash = '#/desk/desk'; });
     await page.getByRole('button', { name: '按进度', exact: true }).click();
     await page.locator('.desk-summary, .desk-header').getByText('1 件需要你').waitFor();
     const answer = page.locator(`#desk-pile-${stages.answer.id} .desk-cover-meta .personal-warning`, { hasText: '等你回答' });

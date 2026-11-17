@@ -72,10 +72,10 @@ test('two fake Codex instances hand the rollout itself over, staged and forked b
     const staged = join(homes.codex2, 'sessions', 'imported', `rollout-fixture-${sourceSession}.jsonl`);
     assert.ok(existsSync(staged));
     assert.equal(manager.getThread(next.id).agentSessionId, `imported-rollout-fixture-${sourceSession}`);
-    // The failed ask is resent as it was, with no brief in front of it.
+    // The failed ask is resent as it was, with no brief in front of it; the chain block follows.
     const starts = store.listEvents(next.id, 0, -1).filter(e => e.type === 'turn.started');
     assert.equal(starts.length, 1);
-    assert.equal(starts[0].data.text, 'quota-exhausted');
+    assert.match(String(starts[0].data.text), /^quota-exhausted\n\n<calli-handover>/);
     assert.ok(store.listEvents(next.id, 0, -1).some(e => e.type === 'turn.done'), 'the second account finishes the retried ask');
     // The copy is a portable rollout: it carries no sealed reasoning of the source account.
     assert.ok(!readFileSync(staged, 'utf8').includes('encrypted_content'));
@@ -129,10 +129,10 @@ test('an exhausted account hands the conversation itself to another account of t
     const project = h.dir.replace(/[^a-zA-Z0-9]/g, '-');
     assert.ok(existsSync(join(h.accounts.claude2, 'projects', project, `${next.agentSessionId}.jsonl`)));
     assert.ok(readFileSync(h.loads, 'utf8').includes(`${h.accounts.claude2}\t${next.agentSessionId}\n`));
-    // The failed ask is resent as it was, with no brief in front of it.
+    // The failed ask is resent as it was, with no brief in front of it; the chain block follows.
     const starts = h.store.listEvents(next.id, 0, -1).filter(e => e.type === 'turn.started');
     assert.equal(starts.length, 1);
-    assert.equal(starts[0].data.text, 'out of plan: finish the report');
+    assert.match(String(starts[0].data.text), /^out of plan: finish the report\n\n<calli-handover>/);
     assert.ok(h.store.listEvents(next.id, 0, -1).some(e => e.type === 'turn.done'));
   } finally { await h.close(); }
 });
@@ -190,6 +190,6 @@ test('taking over by hand also goes on in the conversation, with the note after 
     assert.equal(next.handover?.mode, 'continue');
     assert.ok(readFileSync(h.loads, 'utf8').includes(`${h.accounts.claude2}\t${next.agentSessionId}\n`));
     const start = h.store.listEvents(next.id, 0, -1).find(e => e.type === 'turn.started')!;
-    assert.equal(start.data.text, 'out of plan: finish the report\n\nkeep it short');
+    assert.match(String(start.data.text), /^out of plan: finish the report\n\nkeep it short\n\n<calli-handover>/);
   } finally { await h.close(); }
 });

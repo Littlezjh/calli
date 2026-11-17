@@ -314,7 +314,7 @@ test('Router rides the profile digest on every trigger, truncated with a pointer
     writeFile(join(h.cwd, 'profile.md'), long);
     await h.say('第二句'); await wait(() => h.router.status().status === 'idle');
     const turns = h.store.listEventsOfType(threadId, 'turn.started').map(e => String(e.data.text));
-    const withDigest = turns.find(t => t.startsWith('第二句'))!;
+    const withDigest = turns.find(t => t.includes('</calli-context>\n\n第二句'))!;
     assert.ok(withDigest.includes('<calli-personal-profile>'));
     assert.ok(withDigest.includes('在意交付质量与结果。'));
     assert.ok(withDigest.includes('calli profile show'), 'the truncated digest points at the full read');
@@ -372,6 +372,8 @@ test('a burst while the Router is busy folds into one next turn with every perso
     await wait(() => h.store.listEventsOfType(threadId, 'turn.started').length === 2 && !h.manager.threadView(threadId).runningSince);
     const started = h.store.listEventsOfType(threadId, 'turn.started');
     assert.equal(started.length, 2, 'one running turn and one merged turn');
+    assert.equal(started[1].data.personalOrigin, 'person', 'a person arriving after an internal message stays a human origin');
+    assert.match(String(started[1].data.text), /^<calli-context>/);
     const text = String(started[1].data.text);
     for (const word of [words[0], words[1].trim(), words[2]]) assert.ok(text.includes(word), word);
     assert.ok(text.indexOf(words[0]) < text.indexOf(words[1].trim()) && text.indexOf(words[1].trim()) < text.indexOf(words[2]), 'in arrival order');
@@ -477,5 +479,298 @@ test('calli ask says the text to the Router and prints its reply once the turn e
     const second = await ask(['--text-file', '-', '--timeout', '30'], '再看看发布');
     assert.equal(second.threadId, first.threadId); assert.match(second.reply, /再看看发布/);
     await assert.rejects(ask(['--timeout', '5'], ''), /--text-file/);
+  } finally { await h.close(); }
+});
+
+test('live context is hidden, acknowledged by the fixture, absent on signals, and attached to direct human turns', async () => {
+  const h = await setup(); try {
+    const { threadId } = await h.say('router-fixture-context'); await wait(() => h.router.status().status === 'idle');
+    const first = h.store.listEventsOfType(threadId, 'turn.started')[0];
+    assert.match(String(first.data.text), /^<calli-context>/); assert.match(String(first.data.text), /全量概况/);
+    assert.equal(first.data.personalOrigin, 'person'); assert.equal(first.data.displayText, 'router-fixture-context');
+    assert.match(String(h.store.listEventsOfType(threadId, 'message.delta').at(-1)!.data.text), /全量概况/);
+    assert.doesNotMatch(String(first.data.text), /\bfail\b/);
+    const before = h.store.hubSetting('personalContext', null);
+    await h.router.receiveSignals(JSON.stringify({ summary: 'FYI', delivered: true, source: { type: 'lark-message', ref: 'ctx-signal' } }));
+    await wait(() => h.router.status().status === 'idle');
+    const internal = h.store.listEventsOfType(threadId, 'turn.started').at(-1)!;
+    assert.doesNotMatch(String(internal.data.text), /<calli-context>/); assert.equal(internal.data.personalOrigin, undefined);
+    assert.deepEqual(h.store.hubSetting('personalContext', null), before);
+    assert.equal((await h.request(`/api/threads/${threadId}/turns`, { text: 'router-fixture-context' })).status, 202);
+    await wait(() => h.router.status().status === 'idle');
+    const direct = h.store.listEventsOfType(threadId, 'turn.started').at(-1)!;
+    assert.match(String(direct.data.text), /^<calli-context>/); assert.equal(direct.data.personalOrigin, 'person');
+    assert.equal(direct.data.displayText, 'router-fixture-context');
+  } finally { await h.close(); }
+});
+
+test('dispatch CLI proposes; HTTP starts once, links a matter; dismiss opens no thread', async () => {
+  const h = await setup(); try {
+    const todo = h.manager.personal.create({ text: '整理测试结果' });
+    h.manager.personal.update(todo.id, { note: '## 下一步\n检查构建输出' });
+    const { threadId } = await h.say(`router-fixture-dispatch ${JSON.stringify({ agent: 'pi', cwd: h.cwd, task: 'Inspect result', title: '检查结果', model: 'fake/plain', matter: todo.id })}`);
+    await wait(() => h.router.status().status === 'idle');
+    const [run] = h.manager.personal.proactive.runs();
+    assert.ok(run); assert.equal(run.kind, 'dispatch'); assert.equal(run.status, 'asking'); assert.equal(run.threadId, '');
+    assert.equal(h.store.listThreads().length, 1);
+    assert.equal((await (await h.request('/api/personal/proactive?summary=true')).json()).asking[todo.id], 1);
+    // Hold the first request in validation so the second reliably sees an in-flight start.
+    const listAgents = h.manager.listAgents.bind(h.manager);
+    let release!: () => void, validating = false;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    h.manager.listAgents = async () => { validating = true; await gate; return listAgents(); };
+    const first = h.request(`/api/personal/proactive/runs/${run.id}/start`, {});
+    try {
+      await wait(() => validating);
+      const second = await h.request(`/api/personal/proactive/runs/${run.id}/start`, {});
+      assert.equal(second.status, 409);
+      const conflict = await second.json();
+      assert.equal(conflict.starting, true);
+      assert.equal(conflict.run.id, run.id); assert.equal(conflict.run.kind, 'dispatch');
+      assert.equal(conflict.run.status, 'asking'); assert.equal(conflict.run.threadId, '');
+      assert.equal(typeof conflict.error, 'string');
+      release();
+      assert.equal((await first).status, 200);
+    } finally { release(); h.manager.listAgents = listAgents; await first; }
+    const started = h.manager.personal.proactive.runs()[0];
+    assert.equal(started.status, 'answered'); assert.ok(started.threadId);
+    const duplicate = await h.request(`/api/personal/proactive/runs/${run.id}/start`, {});
+    assert.equal(duplicate.status, 409);
+    const existing = await duplicate.json();
+    assert.equal(existing.run.status, 'answered'); assert.equal(existing.run.threadId, started.threadId);
+    assert.equal(existing.starting, undefined, 'an already-started card is not an in-flight start');
+    assert.deepEqual(h.store.todoThreadIds(todo.id), [started.threadId]);
+    const prompt = String(h.store.listEventsOfType(started.threadId, 'turn.started')[0].data.text);
+    for (const text of ['Inspect result', '检查构建输出', '不推远端、不给别人发消息、不删除、不付款']) assert.ok(prompt.includes(text));
+    assert.equal(h.store.getThread(started.threadId)!.model, 'fake/plain');
+    assert.equal((await h.request(`/api/personal/proactive/runs/${run.id}/dismiss`, {})).status, 409);
+    assert.equal((await h.request('/api/personal/proactive/runs/missing/start', {})).status, 404);
+    const second = await h.manager.personal.command(threadId, { op: 'dispatch', agent: 'pi', cwd: h.cwd, task: 'Another task' }) as { id: string };
+    assert.equal((await (await h.request('/api/personal/proactive?summary=true')).json()).asking[''], 1);
+    const count = h.store.listThreads().length;
+    assert.equal((await h.request(`/api/personal/proactive/runs/${second.id}/dismiss`, {})).status, 200);
+    assert.equal((await h.request(`/api/personal/proactive/runs/${second.id}/start`, {})).status, 409);
+    assert.equal(h.store.listThreads().length, count);
+    const agents = await h.manager.personal.command(threadId, { op: 'agents' }) as Array<{ id: string; available: boolean }>;
+    assert.ok(agents.some(agent => agent.id === 'pi' && agent.available));
+  } finally { await h.close(); }
+});
+
+test('dispatch validates input and rechecks a card before starting', async () => {
+  const h = await setup(), outside = mkdtempSync(join(tmpdir(), 'calli-dispatch-outside-')); try {
+    const { threadId } = await h.say('hello'); await wait(() => h.router.status().status === 'idle');
+    const input = { op: 'dispatch', agent: 'pi', cwd: h.cwd, task: 'Inspect project' };
+    for (const [patch, status] of [[{ agent: 'missing' }, 400], [{ cwd: 'relative' }, 400], [{ cwd: '/missing-directory-fixture' }, 400], [{ cwd: outside }, 403], [{ task: '' }, 400], [{ task: 'a'.repeat(32_001) }, 400], [{ title: '' }, 400], [{ model: 1 }, 400], [{ matterId: 'missing' }, 404], [{ now: 'true' }, 400], [{ now: true }, 403]] as const) {
+      await assert.rejects(h.manager.personal.command(threadId, { ...input, ...patch }), (error: unknown) => (error as { status: number }).status === status);
+    }
+    const { symlinkSync } = await import('node:fs'); symlinkSync(outside, join(h.cwd, 'escape'));
+    await assert.rejects(h.manager.personal.command(threadId, { ...input, cwd: join(h.cwd, 'escape') }), /allowed workdirs/);
+    const unavailableRun = await h.manager.personal.command(threadId, input) as { id: string };
+    const available = h.manager.listAgents.bind(h.manager);
+    h.manager.listAgents = async () => (await available()).map(agent => ({ ...agent, available: false }));
+    try {
+      await assert.rejects(h.manager.personal.command(threadId, input), /unavailable/);
+      const unavailable = await h.request(`/api/personal/proactive/runs/${unavailableRun.id}/start`, {});
+      assert.equal(unavailable.status, 409);
+      const details = await unavailable.json();
+      assert.equal(details.starting, undefined);
+      assert.equal(details.run.id, unavailableRun.id); assert.equal(details.run.status, 'asking');
+      assert.match(details.error, /unavailable/);
+    } finally { h.manager.listAgents = available; }
+    const other = await h.manager.createThread({ agent: 'pi', cwd: h.cwd });
+    await assert.rejects(h.manager.personal.command(other.id, input), /only available to the assistant/);
+    const todo = h.manager.personal.create({ text: 'finish later' });
+    const run = await h.manager.personal.command(threadId, { ...input, matterId: todo.id }) as { id: string };
+    h.manager.personal.update(todo.id, { done: true });
+    const closed = await h.request(`/api/personal/proactive/runs/${run.id}/start`, {});
+    assert.equal(closed.status, 409);
+    const closedDetails = await closed.json();
+    assert.equal(closedDetails.starting, undefined);
+    assert.equal(closedDetails.run.id, run.id); assert.equal(closedDetails.run.status, 'asking');
+    assert.equal(h.manager.personal.proactive.runs().find(item => item.id === run.id)!.status, 'asking');
+    await assert.rejects(h.manager.personal.command(threadId, { ...input, matterId: todo.id }), /open plan/);
+    const run2 = await h.manager.personal.command(threadId, { ...input, cwd: resolve(h.cwd, '..') }) as { id: string };
+    const dirs = h.manager.dirs.roots.bind(h.manager.dirs); h.manager.dirs.roots = () => [];
+    assert.equal((await h.request(`/api/personal/proactive/runs/${run2.id}/start`, {})).status, 403); h.manager.dirs.roots = dirs;
+    assert.equal(h.store.listThreads().length, 2);
+  } finally { await h.close(); rmSync(outside, { recursive: true, force: true }); }
+});
+
+test('--now requires the active human turn; a signal, report, review or queued human message cannot grant it', async () => {
+  const h = await setup(); try {
+    const { threadId } = await h.say('hello'); await wait(() => h.router.status().status === 'idle');
+    const input = { op: 'dispatch', agent: 'pi', cwd: h.cwd, task: 'Inspect project', now: true };
+    for (const source of [{ channel: { kind: 'lark' as const, count: 1 } }, { channel: { kind: 'worker' as const, count: 1 } }, { review: true }, { scheduled: true }]) {
+      await h.manager.startTurn(threadId, { text: 'router-fixture-slow', ...source });
+      await assert.rejects(h.manager.personal.command(threadId, input), (error: unknown) => (error as { status: number }).status === 403);
+      await h.say('person waiting in queue');
+      await assert.rejects(h.manager.personal.command(threadId, input), /current turn/);
+      await h.manager.cancelTurn(threadId); await wait(() => h.router.status().status === 'idle');
+    }
+    assert.equal(h.manager.personal.proactive.runs().length, 0);
+    await h.say(`router-fixture-dispatch ${JSON.stringify({ agent: 'pi', cwd: h.cwd, task: 'Human requested task', now: true })}`);
+    await wait(() => h.router.status().status === 'idle');
+    const [run] = h.manager.personal.proactive.runs();
+    assert.equal(run.status, 'answered'); assert.ok(run.threadId); assert.equal(run.matterId, '');
+    assert.equal(h.store.listThreads().length, 2);
+    await assert.rejects(h.manager.personal.command(threadId, input), /current turn/);
+  } finally { await h.close(); }
+});
+
+test('dispatch rechecks a dismissed card and expired human turn after asynchronous validation', async () => {
+  const h = await setup(); const agents = h.manager.listAgents.bind(h.manager); try {
+    const { threadId } = await h.say('hello'); await wait(() => h.router.status().status === 'idle');
+    const input = { op: 'dispatch', agent: 'pi', cwd: h.cwd, task: 'Inspect project' };
+    const run = await h.manager.personal.command(threadId, input) as { id: string };
+    let release!: () => void;
+    let entered = false;
+    const hold = () => { entered = false; const gate = new Promise<void>(resolve => { release = resolve; }); h.manager.listAgents = async () => { entered = true; await gate; return agents(); }; };
+    hold();
+    const starting = h.manager.personal.proactive.startDispatch(run.id);
+    const rejected = assert.rejects(starting, /待开始/);
+    await wait(() => entered);
+    h.manager.personal.proactive.dismiss(run.id); release(); await rejected;
+    assert.equal(h.store.listThreads().length, 1, 'the empty shell from a dismissed card is removed');
+    assert.equal(h.manager.personal.proactive.runs()[0].status, 'discarded');
+    h.manager.listAgents = agents;
+    await h.say('router-fixture-slow');
+    hold();
+    const now = h.manager.personal.command(threadId, { ...input, now: true });
+    const expired = assert.rejects(now, /current turn/);
+    await wait(() => entered); await h.manager.cancelTurn(threadId); release(); await expired;
+    assert.equal(h.manager.personal.proactive.runs().length, 1, 'expired authorization creates no proposal or thread');
+  } finally { h.manager.listAgents = agents; await h.close(); }
+});
+
+test('an existing assistant receives the dispatch rules once after an instruction upgrade', async () => {
+  const h = await setup(); try {
+    const { threadId } = await h.say('hello'); await wait(() => h.router.status().status === 'idle');
+    const state = h.store.hubSetting<Record<string, unknown>>('personalRouter', {});
+    delete state.instructionsVersion; h.store.saveHubSetting('personalRouter', state);
+    for (const expected of [true, false]) {
+      await h.say('router-fixture-inspect'); await wait(() => h.router.status().status === 'idle');
+      const prompt = String(h.store.listEventsOfType(threadId, 'turn.started').at(-1)!.data.text);
+      assert.equal(prompt.includes('calli dispatch --agent'), expected);
+    }
+  } finally { await h.close(); }
+});
+
+test('plan HTTP and fixture CLI agree; invalid range and authentication have explicit status', async () => {
+  const h = await setup(); try {
+    assert.equal((await fetch(h.base + '/api/personal/plan')).status, 401);
+    assert.equal((await h.request('/api/personal/plan?range=year')).status, 400);
+    const response = await h.request('/api/personal/plan'); assert.equal(response.status, 200);
+    const plan = await response.json() as { range: string; meetings: unknown };
+    assert.equal(plan.range, 'day'); assert.deepEqual(plan.meetings, { state: 'off', items: [] });
+    const { threadId } = await h.say('router-fixture-plan hour');
+    await wait(() => h.router.status().status === 'idle');
+    const reply = routerReply(h.store.voiceAnswerEvents(threadId, h.store.recentLifecycle(threadId, 1)[0].turnId!));
+    assert.match(reply!, /"range":"hour"/);
+    const other = await h.manager.createThread({ agent: 'pi', cwd: h.cwd });
+    await assert.rejects(h.manager.personal.command(other.id, { op: 'plan' }), /assistant/);
+    const env = h.manager.personal.environment(threadId)!;
+    const run = (args: string[], input = '') => new Promise<string>((resolve, reject) => {
+      const child = execFile(process.execPath, [join(env.CALLI_BIN_DIR, 'calli'), ...args], { env: { ...process.env, ...env }, encoding: 'utf8' }, (error, stdout) => error ? reject(error) : resolve(stdout));
+      child.stdin!.end(input);
+    });
+    const todo = JSON.parse(await run(['todo', 'add', '--owner', 'me', '--text-file', '-', '--horizon', 'week'], 'Weekly goal'));
+    assert.equal(todo.horizon, 'week'); assert.equal(todo.proposed, true);
+    const updated = JSON.parse(await run(['todo', 'update', todo.id, '--rev', String(todo.rev), '--horizon', 'month']));
+    assert.equal(updated.horizon, 'month');
+    assert.deepEqual(JSON.parse(await run(['prep', 'add', 'event-id'])), { eventId: 'event-id' });
+    assert.equal(JSON.parse(await run(['settings', 'set', 'prep.leadMin', '45'])).settings.leadMin, 45);
+  } finally { await h.close(); }
+});
+
+test('threads control rejects nonhuman turns, queued human permission, self and archived targets', async () => {
+  const h = await setup(); try {
+    const { threadId } = await h.say('hello'); await wait(() => h.router.status().status === 'idle');
+    const target = await h.manager.createThread({ agent: 'pi', cwd: h.cwd });
+    for (const source of [{ channel: { kind: 'lark' as const, count: 1 } }, { channel: { kind: 'worker' as const, count: 1 } }, { channel: { kind: 'meeting-prep' as const, count: 1 } }, { review: true }, { scheduled: true }]) {
+      await h.manager.startTurn(threadId, { text: 'router-fixture-slow', ...source });
+      await h.say('queued human request');
+      for (const op of ['threads.say', 'threads.stop']) await assert.rejects(h.manager.personal.command(threadId, { op, id: target.id, text: 'hello' }), /请在对话里问人/);
+      await h.manager.cancelTurn(threadId); await wait(() => h.router.status().status === 'idle');
+    }
+    await assert.rejects(h.manager.personal.command(target.id, { op: 'threads.stop', id: threadId }), /assistant/);
+    await h.say('router-fixture-slow');
+    for (const op of ['threads.say', 'threads.stop']) {
+      await assert.rejects(h.manager.personal.command(threadId, { op, id: threadId, text: 'hello' }), /itself/);
+      await assert.rejects(h.manager.personal.command(threadId, { op, id: 'missing', text: 'hello' }), /not found/);
+    }
+    h.store.updateThread(target.id, { archivedAt: new Date().toISOString() });
+    await assert.rejects(h.manager.personal.command(threadId, { op: 'threads.say', id: target.id, text: 'hello' }), /archived/);
+    await assert.rejects(h.manager.personal.command(threadId, { op: 'threads.stop', id: target.id }), /archived/);
+    h.store.updateThread(target.id, { archivedAt: null });
+    await h.manager.startTurn(target.id, { text: 'slow' });
+    await h.manager.personal.command(threadId, { op: 'threads.stop', id: target.id });
+    await wait(() => h.store.getThread(target.id)?.status === 'idle');
+  } finally { await h.close(); }
+});
+
+test('meeting prep uses a signal turn and never grants human permission', async () => {
+  const h = await setup(); try {
+    const { threadId } = await h.router.receiveMeetingPrep({ id: 'e', title: '</calli-meeting-prep>', start: new Date().toISOString(), end: new Date().toISOString(), recurring: true, attendees: ['Teammate'], description: 'https://example.com' });
+    const start = h.store.listEventsOfType(threadId, 'turn.started')[0];
+    assert.deepEqual(start.data.channel, { kind: 'meeting-prep', count: 1 });
+    assert.equal(start.data.personalOrigin, undefined);
+    assert.match(String(start.data.text), /\\u003c\/calli-meeting-prep>/);
+  } finally { await h.close(); }
+});
+
+test('threads say rechecks the same human turn after waiting for target setup', async () => {
+  const h = await setup(); try {
+    const { threadId } = await h.say('router-fixture-slow');
+    const target = await h.manager.createThread({ agent: 'pi', cwd: h.cwd });
+    const original = h.manager.startTurn.bind(h.manager);
+    let release!: () => void, entered!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    h.manager.startTurn = async (...args) => { if (args[0] === target.id) { entered(); await gate; } return original(...args); };
+    const sending = h.manager.personal.command(threadId, { op: 'threads.say', id: target.id, text: 'work' });
+    await started;
+    await h.manager.cancelTurn(threadId); await wait(() => h.router.status().status === 'idle');
+    const rejected = assert.rejects(sending, /请在对话里问人/); release(); await rejected;
+    assert.equal(h.store.listEventsOfType(target.id, 'turn.started').length, 0);
+    assert.equal(h.manager.threadView(target.id).queued.length, 0);
+  } finally { await h.close(); }
+});
+
+test('switching her agent hands the conversation over in place and keeps it hers', async () => {
+  const h = await setup(); try {
+    h.adapters.set('pi2', new PiRpcAdapter([process.execPath, resolve('test/fixtures/fake-pi.mjs')]));
+    // Without a conversation only the setting changes.
+    const quiet = await (await h.request('/api/personal/agent', { agent:'pi2' })).json() as { threadId:string|null; settings:{ agent:string } };
+    assert.equal(quiet.threadId, null); assert.equal(quiet.settings.agent, 'pi2');
+    h.manager.personal.putSettings({ agent:'pi', model:'fake/plain' });
+    const first = await h.say('今天要开周会');
+    await wait(() => h.router.status().status === 'idle');
+    assert.equal((await h.request('/api/personal/agent', { agent:'nobody' })).status, 400);
+    const response = await h.request('/api/personal/agent', { agent:'pi2' });
+    assert.equal(response.status, 200, await response.clone().text());
+    const switched = await response.json() as { threadId:string; settings:{ agent:string; model:string|null } };
+    assert.notEqual(switched.threadId, first.threadId, 'the new agent goes on in a thread of its own');
+    const successor = h.store.getThread(switched.threadId)!;
+    assert.equal(successor.agent, 'pi2');
+    assert.equal(switched.settings.agent, 'pi2'); assert.equal(switched.settings.model, successor.model ?? null);
+    assert.equal(h.router.status().threadId, switched.threadId, 'she adopts the successor');
+    const brief = String(h.store.listEventsOfType(switched.threadId, 'turn.started')[0].data.text);
+    assert.match(brief, /接手/, 'the successor starts from the handover brief');
+    await wait(() => h.router.status().status === 'idle');
+    await wait(() => Boolean(h.store.getThread(first.threadId)!.archivedAt));
+    // The next message stays in the successor instead of starting yet another conversation.
+    await wait(() => !h.manager.threadView(switched.threadId).runningSince);
+    const next = await h.say('接着说');
+    assert.equal(next.threadId, switched.threadId);
+    await wait(() => h.store.listEventsOfType(switched.threadId, 'turn.started').length === 2 && !h.manager.threadView(switched.threadId).runningSince);
+    assert.match(String(h.store.listEventsOfType(switched.threadId, 'turn.started')[1].data.text), /<calli-personal-router>/, 'her instructions come back with the next message');
+    // A conversation mid-answer is never cut off. (The fixture's turns end too fast to catch, so the
+    // thread reports itself running.)
+    const view = h.manager.threadView.bind(h.manager);
+    h.manager.threadView = (id: string) => id === switched.threadId ? { ...view(id), runningSince: new Date().toISOString() } : view(id);
+    assert.equal((await h.request('/api/personal/agent', { agent:'pi' })).status, 409);
+    h.manager.threadView = view;
+    assert.equal(h.router.status().threadId, switched.threadId, 'a refused switch leaves her conversation alone');
+    assert.equal(h.manager.personal.settings().agent, 'pi2');
   } finally { await h.close(); }
 });
