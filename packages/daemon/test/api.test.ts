@@ -1648,7 +1648,7 @@ test('agy: two permission levels, no approvals, no images; settings are flags of
   assert.ok(first.list.some((e) => e.type === 'tool.end' && e.data.output === 'hi\r\n'));
   const view = (await (await api(`/api/threads/${thread.id}`)).json()) as { agentSessionId: string; resumeCommand: string };
   assert.equal(view.agentSessionId, 'agy-conv-1');
-  assert.equal(view.resumeCommand, `cd ${workdir} && agy --conversation agy-conv-1`);
+  assert.equal(view.resumeCommand, `cd ${workdir} && '${process.execPath}' '${join(here, 'fixtures', 'fake-agy.mjs')}' --conversation 'agy-conv-1'`);
 
   // A command needs a permission it cannot ask for: the turn ends with an explanation.
   const refused = await sendAndWait('run a command');

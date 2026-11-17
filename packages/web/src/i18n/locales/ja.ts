@@ -1142,6 +1142,8 @@ export const ja: Messages = {
   "agentAccount.create": "アカウントを追加",
   "agentAccount.creating": "コピー中…",
   "agentLogin.hint": "リンク先で認証し、表示されたコードをここに貼り付けてください。",
+  "agentLogin.hintCodeOrUrl": "リンク先で Google 認証を行い、認証コードまたはブラウザに最後に表示された URL 全体を貼り付けてください。",
+  "agentLogin.codeOrUrl": "認証コードまたはリダイレクト URL",
   "agentLogin.open": "ログインリンクを開く",
   "agentLogin.copy": "リンクをコピー",
   "agentLogin.copied": "コピーしました",

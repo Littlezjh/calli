@@ -1144,6 +1144,8 @@ export const zh = {
   "agentAccount.create": "添加账号",
   "agentAccount.creating": "正在复制…",
   "agentLogin.hint": "打开链接完成授权，再将网页给出的验证码粘贴到这里。",
+  "agentLogin.hintCodeOrUrl": "打开链接完成 Google 授权，再粘贴授权码或浏览器最后显示的完整地址。",
+  "agentLogin.codeOrUrl": "授权码或回跳地址",
   "agentLogin.open": "打开登录链接",
   "agentLogin.copy": "复制链接",
   "agentLogin.copied": "已复制",

@@ -788,7 +788,7 @@ test('AgyAdapter: models, a turn with a tool, and several turns in one process',
   assert.equal(await new AgyAdapter(['definitely-not-installed-agy']).available(), false);
   assert.deepEqual((await adapter.models()).map((m) => m.id), ['fast-low', 'fast-high', 'big-thinking']);
   assert.ok((await adapter.commands()).some((c) => c.name === 'usage'));
-  assert.equal(adapter.resumeCommand('abc'), 'agy --conversation abc');
+  assert.equal(adapter.resumeCommand('abc'), `'${process.execPath}' '${fakeAgy}' --conversation 'abc'`);
 
   const session = await adapter.start({ cwd: here, model: 'fast-low' });
   try {
