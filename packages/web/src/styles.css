@@ -13104,6 +13104,9 @@ button.trace-step-head:hover { background: var(--hover); }
 .agent-notice a { color: var(--muted); text-underline-offset: 3px; }
 .agent-notice-link { padding: 0; border: 0; background: none; color: var(--muted); font: inherit; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
 .agent-notice-link:hover { color: var(--text); }
+.agent-warning { flex-wrap: nowrap; align-items: flex-start; overflow-wrap: anywhere; }
+.agent-warning > svg { align-self: flex-start; margin-top: 3px; }
+.agent-warning.warn > svg { color: var(--warn); }
 /* A turn a channel started: a quiet centred line where a bubble would be. */
 .row.channel-note { display: flex; flex-direction: row; align-items: center; justify-content: center; gap: 6px; color: var(--muted); font-size: 12px; line-height: 1.6; }
 .row.channel-note > svg { flex-shrink: 0; }

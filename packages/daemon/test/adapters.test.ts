@@ -39,6 +39,9 @@ test('mapAcpUpdate maps message, thought, tool and plan updates', () => {
     data: { text: 'hi' },
   });
   assert.equal(mapAcpUpdate({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'x' } })?.type, 'reasoning.delta');
+  assert.deepEqual(mapAcpUpdate({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '**Notice:** Hook blocked' }, _meta: { claudeCode: { kind: 'informational', level: 'notice' } } }), {
+    type: 'agent.warning', data: { level: 'notice', text: 'Hook blocked' },
+  });
   assert.equal(mapAcpUpdate({ sessionUpdate: 'tool_call', toolCallId: 'a', title: 'ls', status: 'pending' })?.type, 'tool.start');
   // The raw tool name rides along when the bridge sends it, so the activity page can tell MCP calls.
   assert.equal(mapAcpUpdate({ sessionUpdate: 'tool_call', toolCallId: 'a', title: 'ls', status: 'pending', name: 'mcp__github__create_issue' })?.data.tool, 'mcp__github__create_issue');
@@ -185,6 +188,24 @@ test('ClaudeAcpAdapter: resume uses session/load and keeps the same id', async (
   // The replayed text sent during session/load must not leak into this turn.
   assert.ok(!events.some((e) => String(e.data.text ?? '').includes('replayed')));
   await session.close();
+});
+
+test('ClaudeAcpAdapter: a resumed session starts its process on the selected model', async (t) => {
+  const env = { FAKE_CLAUDE_REFUSED_MODEL: 'refused' };
+  const unselected = await new ClaudeAcpAdapter([process.execPath, fakeAcp], env).start({ cwd: here, resumeId: 'previous-session' });
+  t.after(() => unselected.close());
+  const before = collectingHooks();
+  await unselected.prompt(turn('hi'), before.hooks);
+  // Without a selection the agent's own warning is shown as such, not as the model's answer.
+  assert.deepEqual(before.events.find(e => e.type === 'agent.warning')?.data, { level: 'warning', text: 'Model "refused" is restricted by your organization\'s settings. Using fallback instead.' });
+  assert.ok(!before.events.some(e => e.type === 'message.delta' && String(e.data.text).includes('restricted')));
+
+  const session = await new ClaudeAcpAdapter([process.execPath, fakeAcp], env).start({ cwd: here, resumeId: 'previous-session', model: 'big' });
+  t.after(() => session.close());
+  const { hooks, events } = collectingHooks();
+  await session.prompt(turn('model?'), hooks);
+  assert.ok(!events.some(e => e.type === 'agent.warning'), 'the refused settings model must not be started on');
+  assert.equal(events.at(-1)?.data.text, 'model:big;mode:default;effort:default');
 });
 
 test('DshAcpAdapter: resume goes through session/resume, which never replays', async (t) => {

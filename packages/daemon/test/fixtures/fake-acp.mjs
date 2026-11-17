@@ -53,6 +53,7 @@ let nextAgentRequestId = 1000;
 const awaitingInput = new Map();
 let currentMode = 'default';
 let currentModel = dsh ? '["deepseek-official","deepseek-v4-pro"]' : process.env.FAKE_ACP_MODELS?.split(',')[0]?.split('|')[0] || 'default';
+let refusedModelWarning = null;
 let currentEffort = dsh ? '' : 'default';
 let currentSpeed = 'off';
 // No "auto" mode on purpose: the adapter must fall back to acceptEdits for auto_edit.
@@ -223,6 +224,7 @@ rl.on('line', async (line) => {
           if (!efforts?.some(value => value.value === initial.effort)) return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32602, message: 'unsupported effort' } });
           currentEffort = initial.effort;
         }
+        if (process.env.FAKE_CLAUDE_REFUSED_MODEL && !process.env.ANTHROPIC_MODEL) refusedModelWarning = `Model "${process.env.FAKE_CLAUDE_REFUSED_MODEL}" is restricted by your organization's settings. Using fallback instead.`;
         if (process.env.FAKE_ACP_NEW_LOG) appendFileSync(process.env.FAKE_ACP_NEW_LOG, JSON.stringify(msg.params) + '\n');
       }
       if (!dsh) out({
@@ -279,6 +281,9 @@ rl.on('line', async (line) => {
       if (dsh) return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32601, message: 'not found' } });
       // Tests read this file to see which account resumed which session.
       if (process.env.FAKE_ACP_LOAD_LOG) appendFileSync(process.env.FAKE_ACP_LOAD_LOG, `${process.env.CLAUDE_CONFIG_DIR ?? ''}\t${msg.params.sessionId}\n`);
+      // Like Claude Code: a process started without ANTHROPIC_MODEL runs on its settings model, and
+      // a refused one is reported through the bridge as an informational warning on the next turn.
+      if (process.env.FAKE_CLAUDE_REFUSED_MODEL && !process.env.ANTHROPIC_MODEL) refusedModelWarning = `Model "${process.env.FAKE_CLAUDE_REFUSED_MODEL}" is restricted by your organization's settings. Using fallback instead.`;
       const replay = (u) => out({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: msg.params.sessionId, update: u } });
       if (String(msg.params.sessionId).startsWith('hist-')) {
         // A two-turn conversation, replayed the way the real agent does: all of it before the response.
@@ -360,6 +365,10 @@ rl.on('line', async (line) => {
       recordSession(dsh ? 'dsh' : traex ? 'traex' : 'claude', msg.params.sessionId);
       const blocks = msg.params.prompt;
       const text = blocks.filter((p) => p.type === 'text').map((p) => p.text).join('');
+      if (refusedModelWarning) {
+        update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `**Warning:** ${refusedModelWarning}` }, _meta: { claudeCode: { kind: 'informational', level: 'warning' } } });
+        refusedModelWarning = null;
+      }
       const lifecycle = text.match(/approval lifecycle (after-cancel|error|end|exit)/)?.[1];
       if (lifecycle) {
         if (lifecycle === 'after-cancel') {

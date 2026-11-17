@@ -1181,3 +1181,16 @@ test('single channels are one quiet line, and a batch that cannot say what it ho
   assert.equal(turnChannel({ kind: 'mixed', count: 2, parts: [{ kind: 'nonsense' }] }), null);
   assert.deepEqual(turnChannel({ kind: 'mixed', count: 2, parts: [{ kind: 'nonsense' }, { kind: 'person', text: '话' }] })!.parts, [{ kind: 'person', text: '话' }]);
 });
+
+test("an agent program's own warning is a quiet line, not part of the answer", () => {
+  const timeline = buildTimeline([
+    ev('turn.started', { text: 'continue' }),
+    ev('agent.warning', { level: 'warning', text: 'Model "x" is restricted by your organization\'s settings.' }),
+    ev('message.delta', { text: 'answer' }),
+    ev('turn.done', {}),
+  ]);
+  const warning = timeline.items.find(item => item.kind === 'agent-warning');
+  assert.ok(warning?.kind === 'agent-warning' && warning.warning);
+  const answer = timeline.items.find(item => item.kind === 'assistant');
+  assert.ok(answer?.kind === 'assistant' && answer.text === 'answer');
+});

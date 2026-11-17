@@ -104,8 +104,17 @@ export function mapAcpUpdate(update: any): EmittedEvent | null {
     } };
   }
   switch (update?.sessionUpdate) {
-    case 'agent_message_chunk':
+    case 'agent_message_chunk': {
+      // Claude's bridge folds the SDK's own notices (e.g. a configured model the gateway refuses)
+      // into the message as "**Warning:** …". They are not the model's answer.
+      const notice = update._meta?.claudeCode;
+      if (notice?.kind === 'informational') {
+        const level = typeof notice.level === 'string' ? notice.level : 'info';
+        const text = textOf(update.content).replace(/^\*\*[A-Za-z]+:\*\*\s*/, '').trim();
+        return text ? { type: 'agent.warning', data: { level, text } } : null;
+      }
       return { type: 'message.delta', data: { text: textOf(update.content) } };
+    }
     case 'agent_thought_chunk':
       return { type: 'reasoning.delta', data: { text: textOf(update.content) } };
     case 'tool_call':
@@ -729,7 +738,11 @@ export abstract class AcpAdapter implements AgentAdapter {
 
   /** Starts a session and also returns the config options the agent reported for it. */
   protected async open(opts: StartOptions, probe = false): Promise<{ session: AcpSession; configOptions: ConfigOption[] }> {
-    const initial = opts.resumeId ? {} : this.initialSessionOptions(opts);
+    const fresh = this.initialSessionOptions(opts);
+    // A resumed session still starts its process with the selected model, so the agent does not
+    // first start on its configured default (which may be refused) before setModel below. The
+    // options themselves are not resent: on load they could rebuild the session.
+    const initial = opts.resumeId ? (fresh.env ? { env: fresh.env } : {}) : fresh;
     const [bin, ...args] = this.command;
     const child = spawn(bin, args, { cwd: opts.cwd, stdio: ['pipe', 'pipe', 'pipe'], env: sessionEnvironment({ ...this.env, ...initial.env }, opts.coordinationEnv) });
 

@@ -58,7 +58,7 @@ import {
 import { VoiceCloud } from './VoiceOrb';
 import { Lightbox } from './Lightbox';
 import { PlanCopyButton, PlanDownloadButton } from './plan-tools';
-import { IconBell, ActivityIcon, IconArrowRight, IconCheck, IconChevron, IconClipboard, IconClose, IconCompact, IconCopy, IconEdit, IconExternal, IconFile, IconFork, IconHand, IconHandover, IconPaperclip, IconQuote, IconRead, IconSparkle, IconTray, IconWorktree } from './icons';
+import { IconBell, ActivityIcon, IconArrowRight, IconCheck, IconChevron, IconClipboard, IconClose, IconCompact, IconCopy, IconEdit, IconExternal, IconFile, IconFork, IconHand, IconHandover, IconInfo, IconPaperclip, IconQuote, IconRead, IconSparkle, IconTray, IconWorktree } from './icons';
 import { t } from '../i18n';
 
 // The daemon's confirmation marker is replaced by the localized notice label.
@@ -319,6 +319,7 @@ export function ThreadView({ onOpenFinds, chain = false, observeOlder = true, be
           const go = onOpenFinds ? <button type="button" className="agent-notice-link" onClick={onOpenFinds}>{t('personal.openFinds')}</button> : <a href="#/todos">{t('personal.openPlans')}</a>;
           return <div key={item.key} className="agent-notice"><IconBell size={14} /><span>{item.confirmation ? (title ? t('personal.confirmTitle', title) : t('personal.confirm')) : <>{t('personal.notice')} {title}</>}{item.confirmation && <> · {go}</>}</span></div>;
         }
+        case 'agent-warning': return <div key={item.key} className={'agent-notice agent-warning' + (item.warning ? ' warn' : '')}><IconInfo size={14} /><span>{item.text}</span></div>;
         case 'model-switch': return <div key={item.key} className="context-compaction handover-divider">{t('auto.switched', item.model, item.previous, t(item.reason === 'exhausted' ? 'auto.exhausted' : 'auto.near'))}</div>;
         case 'quota-resume': return <div key={item.key} className="context-compaction handover-divider">{t('auto.resumed')}</div>;
         case 'turn-retry': return <div key={item.key} className="context-compaction handover-divider">{t('auto.retried', item.attempt, item.max)}</div>;

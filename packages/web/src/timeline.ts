@@ -236,6 +236,8 @@ export function channelRows(channel: TurnChannel, text: string): Array<{ kind: '
 export type Item =
   | { kind: 'handover-summary'; key: string; turnId: string; target: string; done: boolean; version: number }
   | { kind: 'notice'; key: string; turnId: string; text: string; confirmation: boolean }
+  /** A notice from the agent program, not the model's answer; `warning` is the level that wants attention. */
+  | { kind: 'agent-warning'; key: string; turnId: string; text: string; warning: boolean }
   | { kind: 'model-switch'; key: string; turnId: string; model: string; previous: string; reason: string }
   | { kind: 'quota-resume'; key: string; turnId: string | null; resetsAt?: string }
   | { kind: 'turn-retry'; key: string; turnId: string | null; attempt: number; max: number }
@@ -616,6 +618,7 @@ export function buildTimeline(events: StoredEvent[], speech: readonly VoiceTrans
       continue;
     }
     if (ev.type === 'agent.notice') { items.push({ kind: 'notice', key, turnId: turn, text: String(ev.data.text ?? ''), confirmation: Boolean(ev.data.confirmation) }); continue; }
+    if (ev.type === 'agent.warning') { items.push({ kind: 'agent-warning', key, turnId: turn, text: String(ev.data.text ?? ''), warning: ev.data.level === 'warning' }); continue; }
     if (ev.type === 'handover.model') { items.push({ kind: 'model-switch', key, turnId: turn, model: String(ev.data.model ?? ''), previous: String(ev.data.previous ?? ''), reason: String(ev.data.reason ?? 'near') }); continue; }
     if (ev.type === 'handover.resume') { items.push({ kind: 'quota-resume', key, turnId: turn, ...(ev.data.resetsAt ? { resetsAt: String(ev.data.resetsAt) } : {}) }); continue; }
     if (ev.type === 'turn.retry') { items.push({ kind: 'turn-retry', key, turnId: turn, attempt: Number(ev.data.attempt ?? 1) || 1, max: Number(ev.data.max ?? 1) || 1 }); continue; }
