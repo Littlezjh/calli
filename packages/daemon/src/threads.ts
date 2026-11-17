@@ -1111,16 +1111,45 @@ export class ThreadManager {
     return entry.value;
   }
 
+  private splitCombinedModel(models: ModelOption[], model: string | null | undefined): { option: ModelOption; effort: EffortLevel } | null {
+    if (!model || models.some((m) => m.id === model)) return null;
+    for (const option of models) {
+      for (const effort of option.efforts ?? []) {
+        if (model === `${option.id}-${effort}`) return { option, effort };
+      }
+    }
+    return null;
+  }
+
+  private migrateCombinedModels(agent: string, models: ModelOption[]): void {
+    if (!models.length) return;
+    for (const thread of [...this.store.listThreads(), ...this.store.listThreads({ archived: true })]) {
+      if (thread.agent !== agent || !thread.model) continue;
+      const split = this.splitCombinedModel(models, thread.model);
+      if (!split) continue;
+      this.store.updateThread(thread.id, { model: split.option.id, effort: (thread.effort as EffortLevel | null) ?? split.effort });
+      this.emitThreadEvent(thread.id, null, 'thread.updated', {});
+    }
+    const saved = readModelPreferences(this.store.hubSetting<unknown>(DRAFT_MODEL_PREFERENCES_KEY, {}))[agent];
+    const split = this.splitCombinedModel(models, saved?.model);
+    if (split) this.rememberModelPreference(agent, { model: split.option.id, effort: (saved?.effort as EffortLevel | null) ?? split.effort });
+  }
+
   private adapterModels(adapter: AgentAdapter, refresh = false): Promise<ModelOption[]> {
+    const agent = [...this.adapters].find(([, current]) => current === adapter)?.[0];
     adapter.onModelsChanged = models => {
       // Instance ids can differ from adapter ids; removed/replaced instances must not publish.
-      const agent = [...this.adapters].find(([, current]) => current === adapter)?.[0];
-      if (!agent) return;
+      const id = [...this.adapters].find(([, current]) => current === adapter)?.[0];
+      if (!id) return;
+      this.migrateCombinedModels(id, models);
       const event: StoredEvent = { threadId: '', seq: 0, turnId: null, type: 'agent.modelsChanged',
-        ts: new Date().toISOString(), data: { agent, models } };
+        ts: new Date().toISOString(), data: { agent: id, models } };
       for (const listener of this.listeners) listener(event);
     };
-    return adapter.models(refresh);
+    return adapter.models(refresh).then(models => {
+      if (agent) this.migrateCombinedModels(agent, models);
+      return models;
+    });
   }
 
   async listModels(agent: string, refresh = false): Promise<ModelOption[]> {
@@ -2016,7 +2045,7 @@ export class ThreadManager {
    */
   private async modelOption(adapter: AgentAdapter, model: string | null): Promise<ModelOption | undefined> {
     const options = await this.adapterModels(adapter);
-    if (model !== null) return options.find((o) => o.id === model);
+    if (model !== null) return options.find((o) => o.id === model) ?? this.splitCombinedModel(options, model)?.option;
     return options.find((o) => o.id === 'default') ?? options.find((o) => o.isDefault);
   }
 

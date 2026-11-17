@@ -19,6 +19,7 @@ import { agyBrowserTool, agySearchTool } from './agy-web.js';
 import type {
   AgentAdapter,
   AgentSession,
+  EffortLevel,
   ModelOption,
   PermissionMode,
   PlanQuota,
@@ -231,29 +232,79 @@ export function agyTurnResult(result: any, cancelled: boolean): TurnResult {
   return { stopReason: 'end_turn' };
 }
 
-/** The model list as `agy models` prints it: one `id<TAB>label` per line. Anything else is ignored. */
+/** Reasoning effort levels accepted by `agy --effort`. */
+export const AGY_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+const AGY_EFFORT_SUFFIX = /^(.+)-(low|medium|high|xhigh|max)$/;
+const AGY_EFFORT_LABEL = /\s*\((?:low|medium|high|xhigh|max)\)\s*$/i;
+
+/**
+ * The model list as `agy models` prints it: one `id<TAB>label` per line. Variants of one model
+ * family (`gemini-4-argon-low`, `-medium`, `-high`) fold into a single family entry with its
+ * ordered `efforts`, matching `agy`'s own model/effort picker; single-variant models stay fixed.
+ */
 export function parseAgyModels(stdout: string): ModelOption[] {
-  const models: ModelOption[] = [];
+  const rows: Array<{ id: string; label: string; baseId?: string; effort?: EffortLevel }> = [];
+  const familyEfforts = new Map<string, Set<EffortLevel>>();
   for (const line of stdout.split('\n')) {
     const tab = line.indexOf('\t');
     if (tab <= 0) continue;
     const id = line.slice(0, tab).trim();
     const label = line.slice(tab + 1).trim();
-    // Effort is part of the model id here ("…-high", "…-low"). Images go in as paths, for every model.
-    if (id && !/\s/.test(id)) models.push({ id, label: label || id, efforts: [] });
+    if (!id || /\s/.test(id)) continue;
+    const m = AGY_EFFORT_SUFFIX.exec(id);
+    if (m) {
+      const baseId = m[1];
+      const effort = m[2] as EffortLevel;
+      let set = familyEfforts.get(baseId);
+      if (!set) {
+        set = new Set();
+        familyEfforts.set(baseId, set);
+      }
+      set.add(effort);
+      rows.push({ id, label: label || id, baseId, effort });
+    } else {
+      rows.push({ id, label: label || id });
+    }
+  }
+  const models: ModelOption[] = [];
+  const seen = new Set<string>();
+  for (const row of rows) {
+    const efforts = row.baseId ? familyEfforts.get(row.baseId) : undefined;
+    if (row.baseId && efforts && efforts.size > 1) {
+      if (seen.has(row.baseId)) continue;
+      seen.add(row.baseId);
+      const label = row.label.replace(AGY_EFFORT_LABEL, '').trim() || row.baseId;
+      models.push({
+        id: row.baseId,
+        label,
+        efforts: AGY_EFFORTS.filter((e) => efforts.has(e)),
+        ...(models.length === 0 ? { isDefault: true } : {}),
+      });
+    } else {
+      if (seen.has(row.id)) continue;
+      seen.add(row.id);
+      models.push({
+        id: row.id,
+        label: row.label,
+        efforts: [],
+        ...(models.length === 0 ? { isDefault: true } : {}),
+      });
+    }
   }
   return models;
 }
 
 /** Flags for one process. Exported so the mapping from the hub's settings is tested directly. */
-export function agyArgs(opts: { conversationId?: string; permissionMode?: PermissionMode; model?: string; workMode?: WorkMode }): string[] {
+export function agyArgs(opts: { conversationId?: string; permissionMode?: PermissionMode; model?: string; effort?: EffortLevel; workMode?: WorkMode }): string[] {
+  const model = opts.effort && opts.model ? opts.model.replace(AGY_EFFORT_SUFFIX, '$1') : opts.model;
   return [
     '--input-format',
     'stream-json',
     '--output-format',
     'stream-json',
     ...(opts.workMode === 'plan' ? ['--mode', 'plan'] : opts.permissionMode === 'full_access' ? ['--dangerously-skip-permissions'] : ['--mode', 'accept-edits']),
-    ...(opts.model ? ['--model', opts.model] : []),
+    ...(model ? ['--model', model] : []),
+    ...(opts.effort ? ['--effort', opts.effort] : []),
     ...(opts.conversationId ? ['--conversation', opts.conversationId] : []),
     '-p=', // print mode with no prompt of its own: prompts arrive on stdin
   ];
@@ -296,7 +347,7 @@ class AgySession implements AgentSession {
   /** Starts a process on this session's conversation and waits until it has announced itself. */
   async launch(): Promise<void> {
     const [bin, ...base] = this.command;
-    const args = agyArgs({ conversationId: this.agentSessionId || undefined, permissionMode: this.permissionMode, model: this.opts.model, workMode: this.opts.workMode });
+    const args = agyArgs({ conversationId: this.agentSessionId || undefined, permissionMode: this.permissionMode, model: this.opts.model, effort: this.opts.effort, workMode: this.opts.workMode });
     const child = spawn(bin, [...base, ...args], { cwd: this.opts.cwd, stdio: ['pipe', 'pipe', 'pipe'], env: sessionEnvironment(this.env, this.opts.coordinationEnv) });
     this.child = child;
     this.buffer = '';
@@ -505,7 +556,7 @@ export class AgyAdapter implements AgentAdapter {
     // It cannot ask, so at the lower level every command is refused and the turn stops; new threads
     // start where it can actually work.
     defaultPermissionMode: 'full_access' as const,
-    effortLevels: [] as const,
+    effortLevels: AGY_EFFORTS,
     images: true,
     deleteSession: false,
     history: false,

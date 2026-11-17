@@ -1614,19 +1614,23 @@ test('agy: two permission levels, no approvals, no images; settings are flags of
   assert.equal(agy.label, 'Antigravity');
   assert.equal(agy.available, true);
   assert.deepEqual(agy.capabilities.permissionModes, ['auto_edit', 'full_access']);
-  assert.deepEqual([agy.capabilities.approvals, agy.capabilities.images, agy.capabilities.effortLevels.length], [false, true, 0]);
-  const models = (await (await api('/api/agents/agy/models')).json()) as Array<{ id: string; efforts: string[] }>;
-  assert.deepEqual(models.map((m) => m.id), ['fast-low', 'fast-high', 'big-thinking']);
+  assert.deepEqual([agy.capabilities.approvals, agy.capabilities.images, agy.capabilities.effortLevels], [false, true, ['low', 'medium', 'high', 'xhigh', 'max']]);
+  const models = (await (await api('/api/agents/agy/models')).json()) as Array<{ id: string; label: string; efforts: string[]; isDefault?: boolean }>;
+  assert.deepEqual(models, [
+    { id: 'fast', label: 'Fast', efforts: ['low', 'high'], isDefault: true },
+    { id: 'big-thinking', label: 'Big (Thinking)', efforts: [] },
+  ]);
 
   // It cannot ask, so "ask" is not offered, and a new thread starts with full access: at the lower
   // level every command is refused. The lower level can still be chosen; other agents keep theirs.
   assert.equal(agy.capabilities.defaultPermissionMode, 'full_access');
   const ask = await api('/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'agy', cwd: workdir, permissionMode: 'ask' }) });
   assert.equal(ask.status, 400);
-  assert.equal((await api('/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'agy', cwd: workdir, effort: 'high' }) })).status, 400);
+  assert.equal((await api('/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'agy', cwd: workdir, effort: 'max' }) })).status, 400);
+  assert.equal((await api('/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'agy', cwd: workdir, model: 'big-thinking', effort: 'low' }) })).status, 400);
   assert.equal(((await newThread({ agent: 'agy' })) as { permissionMode?: string }).permissionMode, 'full_access');
   assert.equal(((await newThread({ agent: 'claude' })) as { permissionMode?: string }).permissionMode, 'auto_edit');
-  const thread = (await newThread({ agent: 'agy', model: 'fast-low', permissionMode: 'auto_edit' })) as { id: string; permissionMode?: string };
+  const thread = (await newThread({ agent: 'agy', model: 'fast', effort: 'low', permissionMode: 'auto_edit' })) as { id: string; permissionMode?: string };
   assert.equal(thread.permissionMode, 'auto_edit');
 
   const replyOf = (list: Array<{ type: string; turnId: string | null; data: any }>, turnId: string | null) =>
@@ -1644,7 +1648,7 @@ test('agy: two permission levels, no approvals, no images; settings are flags of
 
   const first = await sendAndWait('use a tool');
   assert.equal(first.end.type, 'turn.done');
-  assert.equal(replyOf(first.list, first.turnId), 'echo:use a tool;model:fast-low;mode:accept-edits;conv:agy-conv-1');
+  assert.equal(replyOf(first.list, first.turnId), 'echo:use a tool;model:fast;effort:low;mode:accept-edits;conv:agy-conv-1');
   assert.ok(first.list.some((e) => e.type === 'tool.end' && e.data.output === 'hi\r\n'));
   const view = (await (await api(`/api/threads/${thread.id}`)).json()) as { agentSessionId: string; resumeCommand: string };
   assert.equal(view.agentSessionId, 'agy-conv-1');
@@ -1656,7 +1660,12 @@ test('agy: two permission levels, no approvals, no images; settings are flags of
   assert.match(refused.end.data.message, /full access/);
   assert.deepEqual([refused.end.data.code, refused.end.data.refused], ['permission_refused', ['RunCommand']]);
 
-  // Raising the level and changing the model both carry on in the same conversation.
+  // Raising the level, changing the effort, and switching to a fixed-effort model all carry on in the same conversation.
+  assert.equal((await api(`/api/threads/${thread.id}`, { method: 'PATCH', body: JSON.stringify({ effort: 'high' }) })).status, 200);
+  const higher = await sendAndWait('think harder');
+  assert.equal(higher.end.type, 'turn.done');
+  assert.equal(replyOf(higher.list, higher.turnId), 'echo:think harder;model:fast;effort:high;mode:accept-edits;conv:agy-conv-1');
+
   assert.equal((await api(`/api/threads/${thread.id}`, { method: 'PATCH', body: JSON.stringify({ permissionMode: 'full_access', model: 'big-thinking' }) })).status, 200);
   const allowed = await sendAndWait('run a command');
   assert.equal(allowed.end.type, 'turn.done');

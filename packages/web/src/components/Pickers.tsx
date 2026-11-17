@@ -119,7 +119,10 @@ const AGENT_DEFAULT = 'default';
  * entry with the id "default" if there is one (Claude), else the entry flagged as default (pi).
  */
 export function resolveModel(models: ModelOption[], id: string | null): ModelOption | undefined {
-  if (id !== null) return models.find((m) => m.id === id);
+  if (id !== null) {
+    return models.find((m) => m.id === id)
+      ?? models.find((m) => m.efforts?.some((e) => `${m.id}-${e}` === id));
+  }
   return models.find((m) => m.id === AGENT_DEFAULT) ?? models.find((m) => m.isDefault);
 }
 
@@ -133,7 +136,7 @@ function defaultTarget(models: ModelOption[]): string | undefined {
 /** The name shown for a model id. With no override, the model the agent's default points at. */
 export function modelName(models: ModelOption[], id: string | null): string {
   if (id === null) return defaultTarget(models) ?? t('pickers.defaultModel');
-  return models.find((m) => m.id === id)?.label ?? id;
+  return resolveModel(models, id)?.label ?? id;
 }
 
 /** Current load for the selected model, including an agent-owned default alias. */
@@ -242,8 +245,11 @@ export function ModelPicker(props: ModelProps) {
       </Popover>
     );
   }
+  const resolved = resolveModel(models, model);
+  const impliedEffort = !effort && model && resolved && resolved.id !== model && model.startsWith(resolved.id + '-') ? model.slice(resolved.id.length + 1) : null;
+  const effectiveEffort = effort ?? impliedEffort;
   const levels = effortsForModel(models, model, efforts);
-  const shownEffort = effort && levels.includes(effort) ? effort : null;
+  const shownEffort = effectiveEffort && levels.includes(effectiveEffort) ? effectiveEffort : null;
   if (quietFor !== undefined) {
     const chosen = [model ? modelName(models, model) : '', shownEffort ? (EFFORT_LABELS[shownEffort] ?? shownEffort) : ''].filter(Boolean).join(' · ');
     // Named even when nothing was chosen: the default model's name, quieter than a choice.
@@ -309,8 +315,11 @@ function ModelControl({ models, model, efforts, effort, onModel, onEffort, speed
   const accelerated = speeds.some(s => s.id === speed && isFastSpeed(s));
   const [showModels, setShowModels] = useState(levels.length === 0 && !canAccelerate);
   const [preview, setPreview] = useState<string | null | undefined>(undefined);
-  const selected = effort && levels.includes(effort) ? effort : null;
+  const impliedEffort = !effort && model && selectedModel && selectedModel.id !== model && model.startsWith(selectedModel.id + '-') ? model.slice(selectedModel.id.length + 1) : null;
+  const effectiveEffort = effort ?? impliedEffort;
+  const selected = effectiveEffort && levels.includes(effectiveEffort) ? effectiveEffort : null;
   const shown = preview === undefined ? selected : preview;
+  const checkedModel = model === AGENT_DEFAULT ? null : (selectedModel && model !== null ? selectedModel.id : model);
   return showModels ? (
     <>
       <div className="model-list-head">
@@ -320,10 +329,10 @@ function ModelControl({ models, model, efforts, effort, onModel, onEffort, speed
       </div>
       <div className="pop-scroll">
         {modelRows(models, now).map((row) => (
-          <button key={row.value ?? 'default'} type="button" role="menuitemradio" aria-checked={row.value === (model === AGENT_DEFAULT ? null : model)} className="pop-item compact"
+          <button key={row.value ?? 'default'} type="button" role="menuitemradio" aria-checked={row.value === checkedModel} className="pop-item compact"
             onClick={() => { onModel(row.value); setPreview(undefined); setShowModels(false); }}>
             <span className="pop-item-text"><span className="pop-item-label">{row.label}</span><span className="pop-item-hint">{row.hint}</span></span>
-            {row.value === (model === AGENT_DEFAULT ? null : model) && <span className="pop-item-check"><IconCheck size={16} /></span>}
+            {row.value === checkedModel && <span className="pop-item-check"><IconCheck size={16} /></span>}
           </button>
         ))}
       </div>

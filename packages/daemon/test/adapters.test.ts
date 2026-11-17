@@ -767,17 +767,23 @@ test('agyTurnResult: success, interruption, errors, and actions refused for lack
   assert.match(denied.error!, /full access/);
 });
 
-test('parseAgyModels reads id and label pairs and skips everything else', () => {
-  const models = parseAgyModels('Fetching available models...\nfast-low\tFast (Low)\n\nbroken line\nbig\tBig (Thinking)\n\tno id\n');
-  assert.deepEqual(models.map((m) => [m.id, m.label]), [['fast-low', 'Fast (Low)'], ['big', 'Big (Thinking)']]);
-  assert.ok(models.every((m) => m.efforts?.length === 0 && m.images === undefined), 'no effort setting; images go in as paths');
+test('parseAgyModels groups multi-effort families, keeps single-variant models fixed, and skips invalid lines', () => {
+  const models = parseAgyModels(
+    'Fetching available models...\nfast-high\tFast (High)\nfast-low\tFast (Low)\n\nbroken line\nsolo-medium\tSolo (Medium)\nbig\tBig (Thinking)\n\tno id\n',
+  );
+  assert.deepEqual(models, [
+    { id: 'fast', label: 'Fast', efforts: ['low', 'high'], isDefault: true },
+    { id: 'solo-medium', label: 'Solo (Medium)', efforts: [] },
+    { id: 'big', label: 'Big (Thinking)', efforts: [] },
+  ]);
   assert.deepEqual(parseAgyModels(''), []);
 });
 
-test('agyArgs turns the permission level, model and conversation into flags', () => {
+test('agyArgs turns the permission level, model, effort and conversation into flags', () => {
   const base = ['--input-format', 'stream-json', '--output-format', 'stream-json'];
   assert.deepEqual(agyArgs({}), [...base, '--mode', 'accept-edits', '-p=']);
-  assert.deepEqual(agyArgs({ permissionMode: 'auto_edit', model: 'fast-low' }), [...base, '--mode', 'accept-edits', '--model', 'fast-low', '-p=']);
+  assert.deepEqual(agyArgs({ permissionMode: 'auto_edit', model: 'fast', effort: 'low' }), [...base, '--mode', 'accept-edits', '--model', 'fast', '--effort', 'low', '-p=']);
+  assert.deepEqual(agyArgs({ model: 'fast-high', effort: 'low' }), [...base, '--mode', 'accept-edits', '--model', 'fast', '--effort', 'low', '-p=']);
   assert.deepEqual(agyArgs({ permissionMode: 'full_access', conversationId: 'c1' }), [...base, '--dangerously-skip-permissions', '--conversation', 'c1', '-p=']);
   assert.equal(agyArgs({ permissionMode: 'full_access' }).includes('--mode'), false);
 });
@@ -786,18 +792,21 @@ test('AgyAdapter: models, a turn with a tool, and several turns in one process',
   const adapter = new AgyAdapter([process.execPath, fakeAgy]);
   assert.equal(await adapter.available(), true);
   assert.equal(await new AgyAdapter(['definitely-not-installed-agy']).available(), false);
-  assert.deepEqual((await adapter.models()).map((m) => m.id), ['fast-low', 'fast-high', 'big-thinking']);
+  assert.deepEqual(await adapter.models(), [
+    { id: 'fast', label: 'Fast', efforts: ['low', 'high'], isDefault: true },
+    { id: 'big-thinking', label: 'Big (Thinking)', efforts: [] },
+  ]);
   assert.ok((await adapter.commands()).some((c) => c.name === 'usage'));
   assert.equal(adapter.resumeCommand('abc'), `'${process.execPath}' '${fakeAgy}' --conversation 'abc'`);
 
-  const session = await adapter.start({ cwd: here, model: 'fast-low' });
+  const session = await adapter.start({ cwd: here, model: 'fast', effort: 'low' });
   try {
     assert.equal(session.agentSessionId, 'agy-conv-1', 'the conversation id is known before the first message');
     const first = collectingHooks();
     assert.deepEqual(await session.prompt(turn('use a tool'), first.hooks), { stopReason: 'end_turn' });
     assert.deepEqual(first.events.map((e) => e.type), ['tool.start', 'tool.end', 'message.delta', 'message.delta']);
     assert.equal(first.events[1].data.output, 'hi\r\n');
-    assert.equal(textFrom(first.events).trim(), 'echo:use a tool;model:fast-low;mode:accept-edits;conv:agy-conv-1');
+    assert.equal(textFrom(first.events).trim(), 'echo:use a tool;model:fast;effort:low;mode:accept-edits;conv:agy-conv-1');
 
     const second = collectingHooks();
     await session.prompt(turn('again'), second.hooks);

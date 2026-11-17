@@ -90,6 +90,7 @@ if (!args.includes('-p=') || flag('--input-format') !== 'stream-json' || flag('-
 
 const conversation = flag('--conversation') ?? (process.env.FAKE_HANDOVER_EXHAUST_ONCE || process.env.FAKE_TRANSIENT_ONCE ? `agy-conv-${process.pid}` : 'agy-conv-1');
 const model = flag('--model') ?? 'default';
+const effort = flag('--effort');
 const fullAccess = args.includes('--dangerously-skip-permissions');
 const mode = fullAccess ? 'always-proceed' : (flag('--mode') ?? 'request-review');
 
@@ -263,7 +264,7 @@ function runTurn(text) {
     return result({ status: 'SUCCESS', response: '', denied_actions: [{ action: 'command', display_name: 'RunCommand' }] });
   }
   const index = stepIndex++;
-  const reply = `echo:${text};model:${model};mode:${mode};conv:${conversation}`;
+  const reply = `echo:${text};model:${model};${effort ? `effort:${effort};` : ''}mode:${mode};conv:${conversation}`;
   step({ step_index: index, state: 'ACTIVE', step_type: 'agent_response', text_delta: reply });
   step({ step_index: index, state: 'DONE', step_type: 'agent_response', text_delta: '\n' });
   result({ status: 'SUCCESS', response: reply + '\n', num_turns: 1 });
