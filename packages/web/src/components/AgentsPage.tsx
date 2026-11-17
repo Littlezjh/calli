@@ -127,6 +127,19 @@ export function AgentsPage({ api, agents, onAdd, onReload, onLogin }: Props) {
     }
   };
 
+  const created = async (accountId?: string) => {
+    try {
+      if (accountId) {
+        const agent = (await api.agents()).find(agent => agent.id === accountId);
+        if (agent?.login) await login(agent);
+      }
+    } catch (e) { fail(e); }
+    finally {
+      setAdding(false);
+      try { await onReload(); } catch (e) { fail(e); }
+    }
+  };
+
   return (
     <section className="agents-page">
       <div className="agents-page-head">
@@ -240,7 +253,7 @@ export function AgentsPage({ api, agents, onAdd, onReload, onLogin }: Props) {
         </div>
       )}
 
-      {adding && <AgentAccountDialog api={api} agents={agents} onClose={() => setAdding(false)} onDiscover={() => { setAdding(false); onAdd(); }} onCreated={async () => { setAdding(false); try { await onReload(); } catch (e) { fail(e); } }} />}
+      {adding && <AgentAccountDialog api={api} agents={agents} onClose={() => setAdding(false)} onDiscover={() => { setAdding(false); onAdd(); }} onCreated={created} />}
       {settings && <AgentSettingsDialog api={api} agent={settings} onReload={onReload} onClose={() => setSettings(null)} />}
       {signingIn && <AgentLoginDialog api={api} agent={signingIn.agent} initial={signingIn.login} onReload={onReload} onClose={() => setSigningIn(null)} />}
 

@@ -34,6 +34,8 @@ for (const adapter of ['claude', 'agy']) test(`${adapter}: independent account c
         await context.addInitScript(() => localStorage.setItem('calli_onboard_dismissed', '1'));
         const page = await context.newPage();
         const errors = [];
+        let creates = 0;
+        page.on('request', request => { if (request.method() === 'POST' && new URL(request.url()).pathname.endsWith('/api/agents/accounts')) creates++; });
         page.on('pageerror', error => errors.push(String(error)));
         const mode = `${mobile ? 'phone' : 'desktop'}-${colorScheme}`;
         const shot = async name => {
@@ -51,12 +53,18 @@ for (const adapter of ['claude', 'agy']) test(`${adapter}: independent account c
         const name = `${label} ${mode}`;
         await page.getByLabel('名称（选填）').fill(name);
         await shot('add');
+        if (mobile && colorScheme === 'dark') {
+          await page.route('**/api/agents/*/login', route => route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'Fixture login unavailable' }) }), { times: 1 });
+        }
         await page.getByRole('button', { name: '添加账号', exact: true }).click();
         await page.locator('.agent-account-dialog').waitFor({ state: 'detached' });
         const row = page.locator('.agents-row').filter({ hasText: name });
         await row.getByText('待登录', { exact: false }).waitFor();
-        await shot('list');
-        await row.getByRole('button', { name: '登录', exact: true }).click();
+        if (mobile && colorScheme === 'dark') {
+          await page.getByText('Fixture login unavailable', { exact: true }).waitFor();
+          await shot('start-failed');
+          await row.getByRole('button', { name: '登录', exact: true }).click();
+        }
         const link = page.getByRole('link', { name: '打开登录链接' });
         await link.waitFor();
         assert.equal(new URL(await link.getAttribute('href')).hostname, adapter === 'claude' ? 'claude.com' : 'accounts.google.com');
@@ -66,6 +74,13 @@ for (const adapter of ['claude', 'agy']) test(`${adapter}: independent account c
         assert.ok(box.x >= 0 && box.x + box.width <= (mobile ? 390 : 1440));
         assert.ok(box.y >= 0 && box.y + box.height <= (mobile ? 844 : 1000));
         assert.ok(await page.getByRole('button', { name: '提交验证码' }).isDisabled());
+        if (!mobile && colorScheme === 'light') {
+          await page.getByRole('button', { name: '取消', exact: true }).click();
+          await page.locator('.agent-login-dialog').waitFor({ state: 'detached' });
+          await row.getByText('待登录', { exact: false }).waitFor();
+          await row.getByRole('button', { name: '登录', exact: true }).click();
+          await link.waitFor();
+        }
         if (!mobile && colorScheme === 'dark') {
           await page.route('**/api/agents/*/login/*', route => route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ error: 'login not found' }) }), { times: 1 });
           await page.getByText('登录链接已过期，请重新登录。').waitFor();
@@ -90,6 +105,7 @@ for (const adapter of ['claude', 'agy']) test(`${adapter}: independent account c
         await link.waitFor();
         await page.getByRole('button', { name: '取消', exact: true }).click();
         await page.locator('.agent-login-dialog').waitFor({ state: 'detached' });
+        assert.equal(creates, 1, 'retrying or cancelling login must not create another account');
         assert.deepEqual(errors, []);
       } finally { await context.close(); }
     }
