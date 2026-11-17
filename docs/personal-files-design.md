@@ -100,7 +100,9 @@ threads: [<thread id>]
 
 ## 大肥鱼形象
 
-形象用 [dsh-dafeiyu](https://github.com/QCYTSN/dsh-dafeiyu) 的 `assets/pet`（MIT，Copyright (c) 2026 PC2005-cloud）。共 16 段动作、3444 帧、约 55 MB，不放进仓库：第一次打开时下载到 `~/.calli/pets/dafeiyu/`，固定 commit，带上 `LICENSE.txt` 与来源说明。状态对应：空闲 `idle`，处理输入 `thinking`，做完 `success`，点击 `poke` / `head_pat`，偶尔 `idle_yawn`。
+形象用 [dsh-dafeiyu](https://github.com/QCYTSN/dsh-dafeiyu) 的 `assets/pet`（MIT，Copyright (c) 2026 PC2005-cloud）。从固定 commit 中只取实际使用的 6 段动作，保留奇数编号帧，共 726 帧，压成约 11.24 MiB 的资源包放进仓库，随 Calli 分发。首次召唤先校验包的 SHA-256，再从本地解压到 `~/.calli/pets/dafeiyu/`，不访问 GitHub；保留 `LICENSE.txt` 与来源说明，同版本缓存继续复用。素材与更新说明见 [内置管家素材](../packages/daemon/assets/pets/README.md)。状态对应：空闲 `idle`，处理输入 `thinking`，做完 `success`，点击 `poke` / `head_pat`，偶尔 `idle_yawn`。
+
+安装提示采用所选 B 方案：失败时“重试”与文字“关闭”分开；准备中和尚未安装时同样能关闭。关闭复用本机的助手显示设置，聊天页与桌面都保持隐藏，刷新后不重新弹出，也停止安装状态轮询。后台已开始的安装继续执行，迟到的成功或失败不会重新打开提示；需要时从“私人设置 → 助手 → 常驻／有事才出来”恢复并读取最新状态。关闭动作参考 Sonner 的独立关闭入口与 VS Code 的通知操作。
 
 ## 轻重：重要 × 紧急（2026-11-01）
 

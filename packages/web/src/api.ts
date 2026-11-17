@@ -1,3 +1,6 @@
+import type { ContextReference } from './context-references';
+import type { GitStatus, GitLog, GitCommitFiles, GitDiff, GitOperation } from '../../daemon/src/git';
+export type { GitStatus, GitLog, GitCommitFiles, GitDiff, GitOperation, GitFile, GitCommit } from '../../daemon/src/git';
 import type { ExtensionState, Permission, ExtensionPackagePreview, ExtensionConfiguration, ExtensionDetection, WorkProjection, ProgressReport } from '@calli/extension-api';
 export type WorkMode = 'execute' | 'plan';
 export type AutoArchiveDays = 1 | 3 | 7 | 15 | 30 | null;
@@ -78,7 +81,8 @@ export interface WorkdirsConfig {
 }
 
 export interface AgentMention { id: string; label: string; kind: 'agent' | 'member'; cwd?: string; /** What the user asks of this one alone. */ task?: string;
-  /** An instance on another machine: its id there is `agent@host`, and its folders are that machine's. */ host?: string; directories?: string[] }
+  /** An instance on another machine: its id there is `agent@host`, and its folders are that machine's. */ host?: string; directories?: string[];
+  /** For an instance on another machine: its own name and the machine's, which `label` joins for the protocol line. */ name?: string; machine?: string }
 /** One turn a search found: where it is, who said it, and the words around the match. */
 export interface SearchHit {
   threadId: string;
@@ -240,6 +244,8 @@ export interface AutoHandoverView {
   enabled: boolean; source: 'thread' | 'collaboration' | 'global'; override: boolean | null;
   state?: 'checking' | 'preparing' | 'countdown' | 'stopped' | 'failed';
   target?: HandoverTarget; deadline?: string; reason?: 'near' | 'exhausted'; error?: string;
+  /** Where a preparing handover is; all but `summary` are past the point of calling it off. */
+  step?: 'summary' | 'switch' | 'copy' | 'handover';
   /** Present when this thread waits for its quota to come back; absent on older daemons. */
   resume?: ResumeView | null;
 }
@@ -275,7 +281,7 @@ export interface Thread {
   sectionId: string | null;
   /** The thread this one was forked from, if it is a fork. */
   forkedFrom: string | null;
-  handover?: { sourceId: string; title: string; agent: string; mode?: 'continue' | 'branch'; automatic?: boolean; detached?: boolean; method?: 'resume' | 'summary' } | null;
+  handover?: { sourceId: string; title: string; agent: string; mode?: 'continue' | 'branch'; automatic?: boolean; detached?: boolean; method?: 'resume' | 'summary'; sourceMoved?: boolean } | null;
   /**
    * The git worktree the thread runs in, when a fork was given one. `of` is the directory it would
    * be in otherwise, which is the project it is listed under; `ofReal` is that with symlinks
@@ -562,6 +568,26 @@ export interface Wish { id: string; threadId: string; text: string; createdAt: s
 export interface PushSettings { enabled: boolean; recipient: string; baseUrl: string; waiting: boolean; failure: boolean; notice: boolean; scheduled: boolean }
 export interface PushRecord { key: string; at: string; kind: string; title: string; result: 'queued' | 'sent' | 'failed' | 'dropped'; reason: string | null }
 export interface PushStatus { cli: boolean; botReady: boolean; recipient: string; reason: string | null; records: PushRecord[]; dropped: number }
+export interface FeishuSettings { enabled: boolean; agent: string; cwd: string; owner: string; echoWeb: boolean }
+export type FeishuRealtime = 'off' | 'connecting' | 'live' | 'console-off' | 'busy-elsewhere' | 'unavailable' | 'error';
+export interface FeishuRecord { key: string; at: string; direction: 'in' | 'out'; threadId: string | null; title: string; result: 'received' | 'sent' | 'failed' | 'dropped'; reason: string | null }
+export interface FeishuSetup { state: 'idle' | 'waiting' | 'done' | 'failed'; /** What the pairing is for: creating the bot, or confirming the owner's identity. */ kind: 'create' | 'login' | null; url: string | null; reason: string | null }
+export interface FeishuStatus {
+  /** Whether lark-cli is on the machine at all. */
+  cli: boolean;
+  /** Whether the dedicated bot (profile) exists; until then the page only offers to create it. */
+  configured: boolean;
+  botReady: boolean;
+  realtime: FeishuRealtime;
+  /** Why the channel is not ready, when it is not: `cli_missing` or `bot_not_ready`. */
+  reason: string | null;
+  /** The open_id of whoever messaged the bot while no owner was bound: offered as the owner to confirm. */
+  pendingOwner: string | null;
+  setup: FeishuSetup;
+  /** The latest only, unless the full status is asked for. */
+  records: FeishuRecord[];
+  dropped: number;
+}
 export interface TodoSource { type: 'lark-task' | 'lark-message' | 'lark-flag' | 'lark-calendar' | 'manual'; ref: string; url?: string; from?: string; at?: string }
 export interface TodoUrgency { urgent: boolean; reason: 'overdue' | 'due-soon' | 'pinned' | 'meeting-today' | null }
 /** Whether the assistant may act on its own, and in which repositories she may work in a sandbox. */
@@ -580,13 +606,27 @@ export interface ProactiveFile {
   deletions: number;
 }
 
-export type ProactiveStatus = 'running' | 'observed' | 'approved' | 'ready' | 'merged' | 'discarded' | 'reverted' | 'failed';
+export type ProactiveStatus = 'running' | 'observed' | 'approved' | 'ready' | 'merged' | 'discarded' | 'reverted' | 'failed' | 'waiting' | 'asking' | 'answered' | 'continued' | 'closed';
 
 /** One thing she did unasked: materials prepared for a matter, or code changed in a sandbox. */
 export interface ProactiveRun {
   id: string;
+  /** Empty for an advance on a session that belongs to no matter. */
   matterId: string;
-  kind: 'prepare' | 'sandbox';
+  /** The session's title, for a card that has no matter to name it. */
+  threadTitle?: string;
+  kind: 'prepare' | 'sandbox' | 'advance';
+  variant?: 'deadline' | 'plan';
+  needsRepo?: true;
+  turnId?: string;
+  phase?: 'done' | 'blocked' | 'unsure';
+  on?: 'user' | 'external';
+  line?: string;
+  question?: { text: string; options: string[] };
+  wait?: { what: string; then: string };
+  wakeAt?: string;
+  attempts?: number;
+  reason?: 'transient' | 'external' | 'user' | 'done';
   repo?: string;
   branch?: string;
   threadId: string;
@@ -602,7 +642,7 @@ export interface ProactiveRun {
   discardReason?: string;
 }
 
-export type ProactiveAction = 'merge' | 'discard' | 'revert' | 'approve';
+export type ProactiveAction = 'merge' | 'discard' | 'revert' | 'approve' | 'answer' | 'close-matter' | 'dismiss' | 'allow-repo';
 
 /** Where a matter stands, derived by the daemon. Null when nothing is going on with it. */
 export type TodoStage = 'answer' | 'review' | 'blocked' | 'working' | 'idle';
@@ -730,9 +770,8 @@ export interface AgentReferences {
   handoverOrders: number;
 }
 
-/** A version-limited opt-in bridge that changes only a private runtime copy. */
+/** An opt-in bridge that changes only a private runtime copy; incompatible installs fall back. */
 export interface StreamBridgeCapability {
-  version: string;
   platform: string;
   temporaryMegabytes: number;
 }
@@ -903,8 +942,8 @@ export interface TerminalInfo {
 /** One SSE frame of a terminal stream. Output is base64: programs may emit non-UTF-8 bytes. */
 export type TerminalFrame = { type: 'backlog'; data: string } | { type: 'out'; data: string } | { type: 'exit'; code: number };
 
-/** Why a machine cannot be reached, as the hub sorts what ssh said. */
-export type HostFailure = 'no_ssh' | 'host_key' | 'auth' | 'unreachable' | 'ssh_failed' | 'daemon_missing' | 'forward_denied';
+/** Connection and operation errors from another machine. */
+export type HostFailure = 'not_joined' | 'relay_lost' | 'unreachable' | 'host_offline' | 'too_large';
 
 /** A folder an agent reads skills from. `agents` are the instances that see it. */
 export interface SkillLocation {
@@ -1000,15 +1039,15 @@ export interface McpEntry {
   updatedAt: string;
 }
 
-/** Another machine this hub shows: the same daemon over there, reached over SSH. */
+/** Another machine this hub shows: a daemon connected through its relay client. */
 export interface HostInfo {
   id: string;
   label: string;
-  /** What ssh calls it. */
+  /** The name reported by the node. */
   target: string;
   status: 'connecting' | 'online' | 'offline';
   code?: HostFailure;
-  /** The failure in ssh's own words. */
+  /** The connection failure reported by the hub. */
   error?: string;
   version?: string;
 }
@@ -1134,21 +1173,16 @@ export class Api {
     return this.send('GET', `${this.base}/api/hosts`);
   }
 
-  /** Aliases in the hub user's ssh config that are not machines yet. */
-  hostCandidates(): Promise<string[]> {
-    return this.send('GET', `${this.base}/api/hosts/candidates`);
-  }
-
-  /** Signs in to the machine once to find its daemon; refused with a `code` when that fails. */
-  addHost(target: string, label?: string): Promise<HostInfo> {
-    return this.send('POST', `${this.base}/api/hosts`, { target, label });
+  /** Adds a machine that will connect out to the hub; the answer's token is shown this once. */
+  addHost(label: string): Promise<HostInfo & { token: string }> {
+    return this.send('POST', `${this.base}/api/hosts`, { label });
   }
 
   removeHost(id: string): Promise<void> {
     return this.send('DELETE', `${this.base}/api/hosts/${encodeURIComponent(id)}`);
   }
 
-  /** Tries the machine again now, and says how that went. */
+  /** Refreshes the connection state; the node reconnects automatically. */
   reconnectHost(id: string): Promise<HostInfo> {
     return this.send('POST', `${this.base}/api/hosts/${encodeURIComponent(id)}/reconnect`);
   }
@@ -1215,10 +1249,10 @@ export class Api {
   briefSettings(): Promise<BriefSettings> { return this.request('GET', '/api/personal/brief/settings'); }
   saveBriefSettings(value: BriefSettings): Promise<BriefSettings> { return this.request('PUT', '/api/personal/brief/settings', value); }
   proactive(matterId?: string): Promise<{ settings: ProactiveSettings; runs: ProactiveRun[] }> { return this.request('GET', `/api/personal/proactive${matterId ? `?matterId=${encodeURIComponent(matterId)}` : ''}`); }
-  proactiveSettings(): Promise<{ settings: ProactiveSettings }> { return this.request('GET', '/api/personal/proactive?summary=true'); }
+  proactiveSettings(): Promise<{ settings: ProactiveSettings; counts: Record<string, number>; asking: Record<string, number> }> { return this.request('GET', '/api/personal/proactive?summary=true'); }
   saveProactiveSettings(value: Partial<Omit<ProactiveSettings, 'enabled'>>): Promise<ProactiveSettings> { return this.request('PUT', '/api/personal/proactive/settings', value); }
   proactiveDiff(id: string): Promise<{ files: ProactiveFile[] }> { return this.request('GET', `/api/personal/proactive/runs/${encodeURIComponent(id)}/diff`); }
-  proactiveAct(id: string, action: ProactiveAction): Promise<ProactiveRun> { return this.request('POST', `/api/personal/proactive/runs/${encodeURIComponent(id)}/${action}`); }
+  proactiveAct(id: string, action: ProactiveAction, answer?: string): Promise<ProactiveRun> { return this.request('POST', `/api/personal/proactive/runs/${encodeURIComponent(id)}/${action}`, action === 'answer' ? { answer } : undefined); }
   larkChannel(): Promise<LarkChannelSettings> { return this.request('GET', '/api/personal/channels/lark'); }
   saveLarkChannel(value: LarkChannelSettings): Promise<LarkChannelSettings> { return this.request('PUT', '/api/personal/channels/lark', value); }
   larkStatus(): Promise<LarkChannelStatus> { return this.request('GET', '/api/personal/channels/lark/status'); }
@@ -1252,6 +1286,16 @@ export class Api {
   savePushSettings(value: PushSettings): Promise<PushSettings> { return this.request('PUT', '/api/push/settings', value); }
   pushStatus(full = false): Promise<PushStatus> { return this.request('GET', `/api/push/status${full ? '' : '?summary=true'}`); }
   testPush(): Promise<PushRecord> { return this.request('POST', '/api/push/test', {}); }
+  feishuSettings(): Promise<FeishuSettings> { return this.request('GET', '/api/feishu/settings'); }
+  saveFeishuSettings(value: FeishuSettings): Promise<FeishuSettings> { return this.request('PUT', '/api/feishu/settings', value); }
+  feishuStatus(full = false): Promise<FeishuStatus> { return this.request('GET', `/api/feishu/status${full ? '' : '?summary=true'}`); }
+  /** Starts creating the dedicated bot; the status that returns carries the authorization URL to open in Feishu. */
+  startFeishuSetup(): Promise<FeishuStatus> { return this.request('POST', '/api/feishu/setup', {}); }
+  /** Starts the owner's device-flow sign-in; the scan lands, the daemon fills the owner with that open_id. */
+  startFeishuLogin(): Promise<FeishuStatus> { return this.request('POST', '/api/feishu/login', {}); }
+  cancelFeishuSetup(): Promise<FeishuStatus> { return this.request('DELETE', '/api/feishu/setup'); }
+  /** Sends the owner one test message; the record that returns says how it went. */
+  testFeishu(): Promise<FeishuRecord> { return this.request('POST', '/api/feishu/test', {}); }
 
   todos(): Promise<Todo[]> {
     return this.request('GET', '/api/todos');
@@ -1527,6 +1571,28 @@ export class Api {
     return res.blob();
   }
 
+  gitStatus(threadId: string, signal?: AbortSignal): Promise<GitStatus> {
+    return this.request('GET', `/api/threads/${threadId}/git/status`, undefined, { signal });
+  }
+
+  gitLog(threadId: string, head?: string | null, skip = 0, signal?: AbortSignal): Promise<GitLog> {
+    const query = new URLSearchParams({ skip: String(skip), ...(head ? { head } : {}) });
+    return this.request('GET', `/api/threads/${threadId}/git/log?${query}`, undefined, { signal });
+  }
+
+  gitCommit(threadId: string, commit: string, signal?: AbortSignal): Promise<GitCommitFiles> {
+    return this.request('GET', `/api/threads/${threadId}/git/commit?${new URLSearchParams({ commit })}`, undefined, { signal });
+  }
+
+  gitDiff(threadId: string, path: string, staged: boolean, commit?: string, signal?: AbortSignal): Promise<GitDiff> {
+    const query = new URLSearchParams({ path, staged: staged ? '1' : '0', ...(commit ? { commit } : {}) });
+    return this.request('GET', `/api/threads/${threadId}/git/diff?${query}`, undefined, { signal });
+  }
+
+  gitOperate(threadId: string, operation: 'fetch' | 'pull'): Promise<GitOperation> {
+    return this.request('POST', `/api/threads/${threadId}/git/${operation}`, {});
+  }
+
   /** One folder of the thread's directory, for the file browser. No path: the directory itself. */
   threadTree(threadId: string, path?: string): Promise<FolderListing> {
     return this.request('GET', `/api/threads/${threadId}/tree${path ? `?path=${encodeURIComponent(path)}` : ''}`);
@@ -1773,6 +1839,11 @@ export class Api {
   /** Updates hub-owned settings; its id, which threads store, does not change. */
   updateAgent(id: string, patch: { label?: string; hidden?: boolean; streamBridge?: boolean }): Promise<{ id: string; label?: string; hidden?: boolean }> {
     return this.request('PATCH', `/api/agents/${encodeURIComponent(id)}`, patch);
+  }
+
+  /** Whether the experimental bridge would run on this install right now, and why not. */
+  agentStreamBridge(id: string): Promise<{ compatible: boolean; reason?: string }> {
+    return this.request('GET', `/api/agents/${encodeURIComponent(id)}/stream-bridge`);
   }
 
   /** Removes only the hub's registration; the agent's config, login and sessions stay. */
@@ -2041,6 +2112,11 @@ export class Api {
   listDirectory(path: string): Promise<DirectoryInfo> {
     const encoded = encodeURIComponent(path);
     return this.request('GET', `/api/directories?path=${encoded}`);
+  }
+
+  createReference(input: { kind: 'thread'; sourceId: string } | { kind: 'directory'; path: string }
+    | { kind: 'message'; text: string; title: string; path: string; sourceId?: string; turnId?: string }): Promise<ContextReference> {
+    return this.request('POST', '/api/context-references', input);
   }
 
   projectDirectories(path?: string): Promise<ProjectDirectoryInfo> {

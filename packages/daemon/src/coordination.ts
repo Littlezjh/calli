@@ -23,7 +23,7 @@ export interface CoordinationSetup { directories?: string[]; agents?: string[]; 
 /** `host` is set for a member whose thread runs on another machine; `id` is that machine's thread id. `worktree`: the branch of the temporary git worktree it works in there. */
 type Member = { id: string; name: string; role?: string; host?: string; worktree?: string; voiceTarget?: string };
 
-/** Other machines this hub reaches, as collaboration needs them: which there are, a way to ask each daemon, and a way to run one command over ssh. */
+/** Other machines this hub reaches, as collaboration needs them: which there are, a way to ask each daemon, and a way to run one command on the node. */
 export interface RemoteHosts {
   list(): Array<{ id: string; label: string; status: string }>;
   call<T = unknown>(id: string, method: string, path: string, body?: unknown): Promise<T>;
@@ -52,7 +52,7 @@ type Delivery = {
  * ("reading the diff next") stay in the member's own thread. A turn that ends on a tool call
  * has no closing text, so everything it said is returned instead.
  */
-export function turnAnswer(events: StoredEvent[], turnId: string | null): string {
+export function turnAnswer(events: StoredEvent[], turnId: string | null, max = 16000): string {
   let all = '', last = '';
   for (const e of events) {
     if (e.turnId !== turnId) continue;
@@ -60,7 +60,7 @@ export function turnAnswer(events: StoredEvent[], turnId: string | null): string
     else if (e.type === 'message.replace') { all = replaceMessageTail(all, e.data); last = replaceMessageTail(last, e.data); }
     else if (e.type === 'tool.start' || e.type === 'reasoning.delta' || e.type === 'approval.request') last = '';
   }
-  return (last.trim() ? last : all).trim().slice(-16000);
+  return (last.trim() ? last : all).trim().slice(-max);
 }
 
 /**

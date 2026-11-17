@@ -1,7 +1,10 @@
+import { GitPanel } from './components/GitPanel';
+import { SessionInUseNotice } from './components/SessionInUseNotice';
 import { SettingsPage, type SettingsGroup } from './components/SettingsPage';
 import { AssistantSettingsPage, assistantTitle } from './components/AssistantSettingsPage';
 import { PageNavigation, SettingsSection, usePageNavigation } from './components/PageNavigation';
 import { PushSettingsDialog } from './components/PushSettingsDialog';
+import { FeishuSettingsDialog } from './components/FeishuSettingsDialog';
 import { GeneralSettingsDialog } from './components/GeneralSettingsDialog';
 import { AutoHandoverNotice, HandoverSettingsDialog } from './components/AutoHandover';
 import { useWorkSources, WorkSummary } from './extensions/work';
@@ -48,6 +51,8 @@ import { AppearancePanel } from './components/AppearancePanel';
 import { ActionSheet, type SheetTarget } from './components/ActionSheet';
 import { ArchivePanel } from './components/ArchivePanel';
 import { Composer, prefillComposerDraft, type DraftNote } from './components/Composer';
+import { HandToAssistant, type MessageSnapshot } from './components/MessageActions';
+import type { ContextReference } from './context-references';
 import { CollaborationMenu } from './components/CollaborationMenu';
 import { DirectoryPicker } from './components/DirectoryPicker';
 import { Dialog } from './components/Dialog';
@@ -110,14 +115,15 @@ import { MergedHistory } from './components/MergedHistory';
 import { currentPlan, PlanButton } from './components/PlanPanel';
 import { HandoverComposer } from './components/HandoverComposer';
 import { WritingBar } from './components/WritingBar';
-import { handoverHistoryKey, latestHandoverThread, nextSegment } from './handover';
+import { handoverHistoryKey, laterSegment, latestHandoverThread } from './handover';
 import { TurnRuler } from './components/TurnRuler';
 import { NewProjectDialog, ProjectPicker, RootsDialog } from './components/Projects';
 import { NoteMarks, type NoteMark } from './components/NoteMarks';
 import { ConnectDialog, DemoBar } from './components/ConnectDialog';
 import { DemoApi, DemoError } from './demo/DemoApi';
 import { type DraftModelPreference, switchDraftModelPreference } from './draft-preferences';
-import { IconCheck, IconBell, AgentMark, IconActivity, IconAgents, IconArchive, IconArrowDown, IconBack, IconClose, IconEdit, IconFolder, IconGauge, IconGlobe, IconImport, IconList, IconMenu, IconSettings, IconMore, IconOverview, IconPalette, IconPlus, IconPuzzle, IconServer, IconSidebar, IconSignIn, IconSignOut, IconSparkle, IconTerminal, IconTrace, IconLanguage, IconWaveform } from './components/icons';
+import { QUICK_SWITCH_HIDDEN_KEY, clampQuickSwitchBottom, savedQuickSwitchBottom, saveQuickSwitchBottom } from './quick-switch';
+import { IconCheck, IconBell, AgentMark, IconActivity, IconAgents, IconArchive, IconArrowLeft, IconArrowDown, IconBack, IconClose, IconEdit, IconFolder, IconGauge, IconGlobe, IconImport, IconList, IconMenu, IconSettings, IconMore, IconOverview, IconPalette, IconPlus, IconPuzzle, IconServer, IconSidebar, IconSignIn, IconSignOut, IconSparkle, IconTerminal, IconTrace, IconLanguage, IconWaveform, IconSideChat } from './components/icons';
 import { StatReadings } from './components/SessionStats';
 import { ThreadTracePanel } from './components/TracePanel';
 import { chooseLocale, locale, LOCALES, localeChoice, t } from './i18n';
@@ -246,8 +252,6 @@ const rememberAgentChoice = (agent: string, choice: Partial<Record<'model' | 'ef
 const PLAN_SKIP_KEY = 'calli:plan-skipped';
 
 const QUICK_SWITCH_SIDE = 10;
-const QUICK_SWITCH_HOLD_MS = 360;
-
 function ThreadQuickSwitch({ threads, selectedId, agents, onSelect }: {
   threads: Thread[];
   selectedId: string;
@@ -257,59 +261,26 @@ function ThreadQuickSwitch({ threads, selectedId, agents, onSelect }: {
   const selectedIndex = threads.findIndex((thread) => thread.id === selectedId);
   const items = useMemo(() => selectedIndex < 0 ? [] : threads.slice(Math.max(0, selectedIndex - QUICK_SWITCH_SIDE), Math.min(threads.length, selectedIndex + QUICK_SWITCH_SIDE + 1)), [threads, selectedIndex]);
   const root = useRef<HTMLDivElement>(null);
-  const rows = useRef(new Map<string, HTMLButtonElement>());
-  const panel = useRef<HTMLDivElement>(null);
-  const timer = useRef<number | null>(null);
-  const lastY = useRef(0);
-  const startX = useRef(0);
-  const startY = useRef(0);
-  const [tapOpen, setTapOpen] = useState(false);
-  const [press, setPress] = useState<{ pointerId: number; open: boolean; targetId: string } | null>(null);
+  const current = useRef<HTMLButtonElement | null>(null);
+  const start = useRef<{ pointerId: number; x: number; y: number; bottom: number; moved: boolean } | null>(null);
+  const [open, setOpen] = useState(false);
+  const [hidden, setHidden] = useStoredFlag(QUICK_SWITCH_HIDDEN_KEY);
+  const [bottom, setBottom] = useState(savedQuickSwitchBottom);
   const agentById = useMemo(() => new Map(agents.map((agent) => [agent.id, agent])), [agents]);
-  const open = tapOpen || (press?.open ?? false);
-  const clearTimer = () => {
-    if (timer.current !== null) window.clearTimeout(timer.current);
-    timer.current = null;
-  };
-  const targetAt = (y: number) => {
-    const panelRect = panel.current?.getBoundingClientRect();
-    // The floating trigger sits below the list. A hold-and-release without sliding should not
-    // jump to the nearest row above the finger.
-    if (!panelRect || y < panelRect.top || y > panelRect.bottom) return selectedId;
-    const visible = items
-      .map((thread) => ({ thread, el: rows.current.get(thread.id) }))
-      .filter((row): row is { thread: Thread; el: HTMLButtonElement } => Boolean(row.el));
-    if (!visible.length) return selectedId;
-    let best = visible[0];
-    let bestDistance = Infinity;
-    for (const row of visible) {
-      const rect = row.el.getBoundingClientRect();
-      if (y >= rect.top && y <= rect.bottom) return row.thread.id;
-      const distance = Math.abs(y - (rect.top + rect.bottom) / 2);
-      if (distance < bestDistance) {
-        best = row;
-        bestDistance = distance;
-      }
-    }
-    return best.thread.id;
-  };
-  const updateTarget = (y: number) => {
-    if (!panel.current) return;
-    setPress((current) => current && current.open ? { ...current, targetId: targetAt(y) } : current);
-  };
-  const reset = (el?: HTMLElement, pointerId?: number) => {
-    clearTimer();
-    if (el && pointerId !== undefined && el.hasPointerCapture(pointerId)) el.releasePointerCapture(pointerId);
-    setPress(null);
-  };
-  useEffect(() => () => clearTimer(), []);
+  // The panel is short: it opens on the current session, with its neighbours above and below.
+  useLayoutEffect(() => { if (open) current.current?.scrollIntoView({ block: 'center' }); }, [open]);
   useEffect(() => {
-    if (!tapOpen) return;
+    if (!open) return;
+    // Dismissing is all a tap outside does: what lies under it is not pressed as well.
     const onPointerDown = (e: PointerEvent) => {
-      if (root.current && !root.current.contains(e.target as Node)) setTapOpen(false);
+      if (!root.current || root.current.contains(e.target as Node)) return;
+      setOpen(false);
+      const swallow = (click: MouseEvent) => { click.stopPropagation(); click.preventDefault(); };
+      document.addEventListener('click', swallow, { capture: true, once: true });
+      window.setTimeout(() => document.removeEventListener('click', swallow, { capture: true }), 500);
     };
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setTapOpen(false);
+      if (e.key === 'Escape') setOpen(false);
     };
     document.addEventListener('pointerdown', onPointerDown, true);
     document.addEventListener('keydown', onKeyDown);
@@ -317,94 +288,74 @@ function ThreadQuickSwitch({ threads, selectedId, agents, onSelect }: {
       document.removeEventListener('pointerdown', onPointerDown, true);
       document.removeEventListener('keydown', onKeyDown);
     };
-  }, [tapOpen]);
-  if (selectedIndex < 0 || items.length <= 1) return null;
-  /** A plain tap on the strip is not ours: hand the click to whatever interactive piece sits under it. */
-  const forwardTap = (x: number, y: number) => {
-    const strip = root.current;
-    if (!strip) return;
-    strip.style.visibility = 'hidden';
-    const hit = document.elementFromPoint(x, y);
-    strip.style.visibility = '';
-    hit?.closest('button, a, input, textarea, label, [role="option"], [role="menuitem"]')?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+  }, [open]);
+  if (hidden || selectedIndex < 0 || items.length <= 1) return null;
+  const release = (el: HTMLElement, pointerId: number) => {
+    if (el.hasPointerCapture(pointerId)) el.releasePointerCapture(pointerId);
+    start.current = null;
   };
   return (
     <div className="quick-switch" ref={root}>
-      {/* An invisible strip along the right edge, mirroring the left edge's list gesture: swipe it
-          left to summon the panel, hold to scrub through the sessions, and a plain tap falls
-          through to the interface underneath. */}
-      <div
-        className="quick-switch-edge"
-        aria-hidden="true"
+      {/* A small visible handle near the right edge, inset from iOS's own edge gestures. Tap it or
+          pull it left to open the panel; drag it up or down to move it out of the way of text. It
+          covers only its own few pixels, so selecting text elsewhere is never intercepted. */}
+      <button
+        type="button"
+        className={`quick-switch-handle${open ? ' open' : ''}`}
+        style={{ bottom: `calc(${bottom}px + var(--safe-bottom))` }}
+        aria-label={t('quickSwitch.sessions')}
+        aria-expanded={open}
         onPointerDown={(e) => {
           if (e.pointerType === 'mouse' && e.button !== 0) return;
-          e.preventDefault();
           e.currentTarget.setPointerCapture(e.pointerId);
-          startX.current = e.clientX;
-          startY.current = e.clientY;
-          lastY.current = e.clientY;
-          setPress({ pointerId: e.pointerId, open: false, targetId: selectedId });
-          clearTimer();
-          timer.current = window.setTimeout(() => {
-            timer.current = null;
-            setPress((current) => current?.pointerId === e.pointerId ? { ...current, open: true } : current);
-            requestAnimationFrame(() => updateTarget(lastY.current));
-          }, QUICK_SWITCH_HOLD_MS);
+          start.current = { pointerId: e.pointerId, x: e.clientX, y: e.clientY, bottom, moved: false };
         }}
         onPointerMove={(e) => {
-          if (press?.pointerId !== e.pointerId) return;
-          lastY.current = e.clientY;
-          const dx = startX.current - e.clientX;
-          const dy = Math.abs(e.clientY - startY.current);
-          // A vertical drag is a scroll, not a summon: give up before the hold timer fires.
-          if (!press.open && !tapOpen && dy > 10 && dx <= 24) {
-            clearTimer();
-            reset(e.currentTarget, e.pointerId);
-            return;
-          }
-          // A pull past the threshold summons the panel for tapping; holding keeps its scrub.
-          if (!press.open && !tapOpen && dx > 24 && dx > dy) {
-            clearTimer();
-            reset(e.currentTarget, e.pointerId);
-            setTapOpen(true);
-            return;
-          }
-          if (press.open) { e.preventDefault(); updateTarget(e.clientY); }
+          const from = start.current;
+          if (from?.pointerId !== e.pointerId) return;
+          const dx = from.x - e.clientX;
+          const dy = e.clientY - from.y;
+          if (!from.moved && dx > 24 && dx > Math.abs(dy)) { release(e.currentTarget, e.pointerId); setOpen(true); return; }
+          if (!from.moved && Math.abs(dy) > 8) from.moved = true;
+          if (from.moved) setBottom(clampQuickSwitchBottom(from.bottom - dy));
         }}
         onPointerUp={(e) => {
-          if (press?.pointerId !== e.pointerId) return;
-          const targetId = press.open ? press.targetId : null;
-          const tap = Math.abs(e.clientX - startX.current) < 6 && Math.abs(e.clientY - startY.current) < 6;
-          reset(e.currentTarget, e.pointerId);
-          if (targetId) {
-            setTapOpen(false);
-            if (targetId !== selectedId) onSelect(targetId);
-            return;
-          }
-          if (tap) forwardTap(e.clientX, e.clientY);
+          const from = start.current;
+          if (from?.pointerId !== e.pointerId) return;
+          release(e.currentTarget, e.pointerId);
+          if (from.moved) saveQuickSwitchBottom(bottom);
+          else setOpen((was) => !was);
         }}
         onPointerCancel={(e) => {
-          if (press?.pointerId === e.pointerId) reset(e.currentTarget, e.pointerId);
+          if (start.current?.pointerId === e.pointerId) release(e.currentTarget, e.pointerId);
         }}
-      />
+        onKeyDown={(e) => {
+          if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+            e.preventDefault();
+            const next = clampQuickSwitchBottom(bottom + (e.key === 'ArrowUp' ? 24 : -24));
+            setBottom(next);
+            saveQuickSwitchBottom(next);
+          }
+        }}
+        onClick={(e) => { if (e.detail === 0) setOpen((was) => !was); }}
+      ><IconArrowLeft size={12} /></button>
       {open && (
-        <div className="quick-switch-panel" ref={panel} role="listbox" aria-label={t('quickSwitch.sessions')}>
+        <div className="quick-switch-panel" role="listbox" aria-label={t('quickSwitch.sessions')}>
           {items.map((thread) => {
             const agent = agentById.get(thread.agent);
-            const target = press?.open ? press.targetId === thread.id : thread.id === selectedId;
-            const current = thread.id === selectedId;
+            const isCurrent = thread.id === selectedId;
             const place = thread.scratch ? t('projects.none') : folderName(projectDir(thread).cwd);
             return (
               <button
                 type="button"
                 key={thread.id}
-                ref={(el) => { if (el) rows.current.set(thread.id, el); else rows.current.delete(thread.id); }}
-                className={`quick-switch-card${current ? ' current' : ''}${target ? ' target' : ''}`}
+                ref={isCurrent ? current : undefined}
+                className={`quick-switch-card${isCurrent ? ' current' : ''}`}
                 role="option"
-                aria-selected={target}
+                aria-selected={isCurrent}
                 onClick={() => {
-                  setTapOpen(false);
-                  if (thread.id !== selectedId) onSelect(thread.id);
+                  setOpen(false);
+                  if (!isCurrent) onSelect(thread.id);
                 }}
               >
                 <span className="quick-switch-title">{thread.title}</span>
@@ -414,11 +365,12 @@ function ThreadQuickSwitch({ threads, selectedId, agents, onSelect }: {
                   <span>{place}</span>
                   {thread.status === 'running' && <span className="dot running" aria-label={t('status.running')} />}
                   {thread.waiting && <span className="dot waiting" aria-label={t('notices.unknown.label')} />}
-                  {thread.unread && !current && <span className="dot unread" aria-label={t('sidebar.unread')} />}
+                  {thread.unread && !isCurrent && <span className="dot unread" aria-label={t('sidebar.unread')} />}
                 </span>
               </button>
             );
           })}
+          <button type="button" className="quick-switch-hide" onClick={() => { setOpen(false); setHidden(true); }}>{t('quickSwitch.hide')}</button>
         </div>
       )}
     </div>
@@ -445,7 +397,7 @@ function fitDraftModelPreference(value: DraftModelPreference, models: ModelOptio
 
 /** The model and thinking effort for one instance's members: a quiet mark until something is chosen. */
 function MemberModel({ agent, models, value, permission, onNeed, onChange, onPermission }: {
-  agent: AgentInfo; models: ModelOption[]; value: MemberDefault; onNeed: (agent: string) => void; onChange: (value: MemberDefault) => void;
+  agent: AgentInfo; models: ModelOption[]; value: MemberDefault; onNeed: (agent: string, refresh?: boolean) => void; onChange: (value: MemberDefault) => void;
   /** The level in force, and how to change it; left out where the agent has no levels. */
   permission?: string; onPermission?: (mode: string) => void;
 }) {
@@ -460,6 +412,7 @@ function MemberModel({ agent, models, value, permission, onNeed, onChange, onPer
       model={value.model}
       efforts={efforts}
       effort={value.effort}
+      onOpen={() => onNeed(agent.id, true)}
       // An effort the newly picked model does not take goes back to the default with it.
       onModel={(model) => onChange({ ...value, model, effort: value.effort && effortsForModel(models, model, efforts).includes(value.effort) ? value.effort : null })}
       onEffort={(effort) => onChange({ ...value, effort })}
@@ -721,14 +674,14 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   /** While set, the roots dialog stands in for the picker: its rows, with each root's own remove flag. */
   const [remotePick, setRemotePick] = useState<{ host: string; api: Api; machine: string; roots: string[]; selected: string; manage: Array<{ path: string; removable: boolean }> | null; choose: (cwd: string) => void } | null>(null);
   // Instances on the other machines, for a collaboration led from this hub: each with that machine's folders.
-  const [remoteAgents, setRemoteAgents] = useState<Array<AgentInfo & { host: string; directories: string[] }>>([]);
+  const [remoteAgents, setRemoteAgents] = useState<Array<AgentInfo & { host: string; directories: string[]; name: string; machine: string }>>([]);
   useEffect(() => {
     if (hostId || !token || api.demo) { setRemoteAgents([]); return; }
     let alive = true;
     void Promise.all(hostsRef.current.filter((h) => h.status === 'online').map(async (h) => {
       const remote = new Api(token, '', h.id);
       const [list, config] = await Promise.all([remote.agents(), remote.workdirs()]).catch((): [AgentInfo[], { workdirs: string[] }] => [[], { workdirs: [] }]);
-      return list.filter((a) => a.available).map((a) => ({ ...a, id: `${a.id}@${h.id}`, label: `${a.label} · ${h.label}`, host: h.id, directories: config.workdirs }));
+      return list.filter((a) => a.available).map((a) => ({ ...a, id: `${a.id}@${h.id}`, name: a.label, machine: h.label, label: `${a.label} · ${h.label}`, host: h.id, directories: config.workdirs }));
     })).then((lists) => { if (alive) setRemoteAgents(lists.flat()); });
     return () => { alive = false; };
   }, [token, hostId, hostsKey, api]);
@@ -973,6 +926,13 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   // Text quoted out of a message by selecting it.
   const composerDraftKey = hostId ? `host:${hostId}:${selectedId ?? (draftTeam ? `new:team:${draftTeam}` : 'new')}` : selectedId ?? (draftTeam ? `new:team:${draftTeam}` : 'new');
   const [noteSignal, setNoteSignal] = useState<{ draftKey: string; note: DraftNote & { nonce: number } } | null>(null);
+  const [messageReference, setMessageReference] = useState<{ draftKey: string; value: ContextReference; nonce: number } | null>(null);
+  const [assistantMessage, setAssistantMessage] = useState<MessageSnapshot | null>(null);
+  const messageAssistantApi = useMemo(() => hostId === null ? api : new Api(token), [api, hostId, token]);
+  const messageSnapshot = async (text: string, turnId: string, threadId?: string): Promise<MessageSnapshot> => {
+    const source = await api.thread(threadId ?? selectedId!);
+    return { text, turnId, sourceId: source.id, title: host ? `${host.label} · ${source.title}` : source.title, path: source.cwd };
+  };
   const consumeNote = useCallback((id: string) => {
     setNoteSignal((current) => current?.note.id === id ? null : current);
   }, []);
@@ -1374,6 +1334,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
     if (!el) return;
     const topbar = el.querySelector<HTMLElement>(':scope > .topbar');
     const composer = el.querySelector<HTMLElement>(':scope > .composer-slot');
+    const box = composer?.querySelector<HTMLElement>(':scope > .composer');
     const read = () => {
       // What the column's lean toward the middle of the screen is worked out from (see styles.css).
       // clientWidth includes the padding the lean adds, so the two do not chase each other.
@@ -1384,12 +1345,15 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
       const top = composer && topbar?.nextElementSibling?.classList.contains('scroller') && !el.closest('.in-titlebar') ? topbar.offsetHeight : 0;
       el.style.setProperty('--chat-top-overlap', `${top}px`);
       el.style.setProperty('--chat-bottom-overlap', `${composer?.offsetHeight ?? 0}px`);
+      // The edge wash under the composer is as tall as the box with its queue, not the notes stacked above it.
+      el.style.setProperty('--chat-composer-h', `${box?.offsetHeight ?? 0}px`);
     };
     read();
     const watch = new ResizeObserver(read);
     watch.observe(el);
     if (topbar) watch.observe(topbar);
     if (composer) watch.observe(composer);
+    if (box) watch.observe(box);
     return () => watch.disconnect();
   });
   const [agentsStart, setAgentsStart] = useState<string | null>(null);
@@ -1680,7 +1644,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   useEffect(() => {
     const el = scrollerRef.current;
     if (el && stickToBottom.current) el.scrollTop = el.scrollHeight;
-  }, [events]);
+  }, [events, selected?.autoHandover?.state, selected?.autoHandover?.step]);
 
   // Screenshots and slow-rendering blocks grow the thread after the scroll above, which used to
   // leave a reopened thread parked at the top. Watching the thread's height keeps it pinned. The
@@ -1846,13 +1810,15 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
 
   // Models of an agent other than the thread's own, for choosing what its members start with.
   const modelsAsked = useRef(new Set<string>());
-  const needModels = (agent: string) => {
-    if (!api || modelsByAgent[agent] || modelsAsked.current.has(agent)) return;
+  const needModels = (agent: string, refresh = false) => {
+    if (!api || modelsAsked.current.has(agent) || (!refresh && modelsByAgent[agent])) return;
     modelsAsked.current.add(agent);
     const version = modelVersions.current[agent] ?? 0;
-    api.models(agent).then((list) => {
+    // An instance of another machine is asked there, under the id it has on that machine.
+    const remote = remoteAgents.find((a) => a.id === agent);
+    (remote && token ? new Api(token, '', remote.host).models(agent.slice(0, -(remote.host.length + 1)), refresh) : api.models(agent, refresh)).then((list) => {
       if ((modelVersions.current[agent] ?? 0) === version) setModelsByAgent(prev => ({ ...prev, [agent]: list }));
-    }).catch(() => { modelsAsked.current.delete(agent); });
+    }).catch(error => { if (refresh) handleError(error); }).finally(() => { modelsAsked.current.delete(agent); });
   };
 
   // Models for that agent, loaded once per agent.
@@ -1932,6 +1898,9 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   const filesThread = threads.find(thread => thread.id === filesThreadId) ?? selected;
   /** The thread's trace, beside the conversation on a desktop, a page of its own on a phone. */
   const [traceOpen, setTraceOpen] = useState(false);
+  const [gitOpen, setGitOpen] = useState(false);
+  useLayoutEffect(() => { setGitOpen(false); }, [selectedId, api]);
+  useEffect(() => { if (files || traceOpen || agentsOpen) setGitOpen(false); }, [files, traceOpen, agentsOpen]);
   const filesSeq = useRef(0);
   useEffect(() => { setFiles(null); setFilesThreadId(null); setTraceOpen(false); }, [selectedId]);
 
@@ -1951,7 +1920,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   };
   /** A side panel takes the same edge as the overview, so the panel steps aside while one is open —
    *  but the person's own switch is left alone: it comes back when the side panel closes. */
-  const sideOpen = Boolean(agentsOpen && coordination) || Boolean(files) || traceOpen;
+  const sideOpen = Boolean(agentsOpen && coordination) || Boolean(files) || traceOpen || gitOpen;
   const overviewShown = overviewDock && overviewOpen && !sideOpen && !activeOverviewDetail && Boolean(selected) && hostUp;
   /** Only the person turns the standing panel off; the switch above remembers it. */
   const closeOverview = useCallback(() => { if (overviewDock) setOverviewOpen(false); }, [overviewDock, setOverviewOpen]);
@@ -2067,6 +2036,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
       void refreshThreads();
     },
     onOpenTerminal: () => (demo ? askToConnect() : openTerminal()),
+    onOpenGit: () => { setFiles(null); setTraceOpen(false); setAgentsOpen(false); setGitOpen(true); },
     onOpenFiles: (thread) => {
       setAgentsOpen(false);
       setTraceOpen(false);
@@ -2740,7 +2710,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   const leading = Boolean(coordination && selected && coordination.rootId === selected.id);
   const teamAgents = agents.filter((a) => a.available && a.capabilities.coordination && (leading ? coordination!.agents.includes(a.id) || !a.hidden : !a.hidden));
   const teamDefaults: Record<string, MemberDefault> = leading ? coordination!.defaults ?? {} : memberDefaults;
-  const startingDefaults = Object.fromEntries(Object.entries(memberDefaults).filter(([id]) => teamAgents.some((a) => a.id === id)));
+  const startingDefaults = Object.fromEntries(Object.entries(memberDefaults).filter(([id]) => teamAgents.some((a) => a.id === id) || remoteAgents.some((a) => a.id === id)));
   const setMemberDefault = (agent: string, value: MemberDefault) => {
     const remembered = { ...memberDefaults, [agent]: value };
     setMemberDefaults(remembered);
@@ -2771,7 +2741,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
             // An instance hidden on purpose stays out; the roster follows the hub's live list, so
             // instances that joined after the collaboration started are offered here too.
             ...agents.filter(a => a.available && a.capabilities.coordination && (coordination ? coordination.agents.includes(a.id) || !a.hidden : !a.hidden)).map(a => ({ id: a.id, label: a.label, kind: 'agent' as const })),
-            ...remoteAgents.map(a => ({ id: a.id, label: a.label, kind: 'agent' as const, host: a.host, directories: [...new Set([...recentRemoteDirs(a.host), ...a.directories])] })),
+            ...remoteAgents.map(a => ({ id: a.id, label: a.label, name: a.name, machine: a.machine, kind: 'agent' as const, host: a.host, directories: [...new Set([...recentRemoteDirs(a.host), ...a.directories])] })),
           ] : [];
   const collaborationIcon = (m: AgentMention) => [...agents, ...remoteAgents].find((a) => a.id === (m.kind === 'agent' ? m.id : coordination?.members.find((v) => v.id === m.id)?.thread?.agent))?.icon;
 
@@ -2819,6 +2789,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   // When the thread's agent has run out of plan, the one-click takeover must use the
   // daemon's quota-aware order, not just the next visible instance in the list.
   const lastItem = timeline.items[timeline.items.length - 1];
+  const sessionInUse = selected?.status === 'error' && selected.failure?.code === 'session_in_use';
   const outOfPlan = Boolean(selected && !running && lastItem?.kind === 'error' && lastItem.planExhausted
     && (!selected.coordination || selected.coordination.rootId === selected.id));
   useEffect(() => {
@@ -2922,6 +2893,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
       </div></SettingsSection> },
       ...(!demo ? [
         { id: 'push', label: t('push.title'), icon: IconBell, render: () => <PushSettingsDialog api={api} onClose={closeSettings} /> },
+        { id: 'feishu', label: t('feishu.title'), icon: IconSideChat, render: () => <FeishuSettingsDialog api={api} agents={agents} onClose={closeSettings} /> },
         { id: 'assistant', label: t('personal.settings'), icon: IconSparkle, render: () => <AssistantSettingsPage api={api} agents={agents} setupNeeded={setupNeeded} onExplore={openExplore} path={settingsPath || 'assistant'} onNavigate={openSettings} onSave={setPersonal} /> },
         { id: 'handover', label: t('auto.title'), icon: IconAgents, render: () => <HandoverSettingsDialog api={api} agents={agents} onClose={closeSettings} /> },
       ] : []),
@@ -3400,14 +3372,13 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
         <div key="thread" className="scroller" ref={scrollerRef} onScroll={onScroll} {...gestureProps}>
           {selected && <TurnRuler key={selected.id} threadId={selected.id} scrollerRef={scrollerRef} previews={turnPreviewMap} turnIds={rulerTurnIds} onJump={turnId => setJump({ threadId: selected.id, turnId })} />}
           {onRouterThread && petStatus?.installed && <PetPortrait api={api} status={petStatus} onAway={setPortraitAway} />}
-          {selected && <AutoHandoverNotice api={api} thread={selected} agents={agents} />}
           {selected && eventsLoading && <div className="loading-note">{t('common.loading')}</div>}
           {showcase && selected && !eventsLoading && !timeline.items.length && showcase.intro(selected.id)}
           {selected ? (
             <MergedHistory
               key={`${handoverHistoryKey(selected, threads)}:${mergedHandover}`}
               api={api} thread={selected} merged={mergedHandover} ready={historyReady} agentLabel={agentLabel}
-              laterOf={viewingEarlier && latestSegment ? thread => nextSegment(thread, latestSegment, threads) : undefined}
+              laterOf={latestSegment ? thread => laterSegment(thread, latestSegment, threads) : undefined}
               onOpenFinds={onRouterThread ? () => openDesk(true) : undefined}
               onBrowseOlder={() => { stickToBottom.current = false; setAtBottom(false); }}
               canFork={thread => ({ enabled: Boolean(thread.agentSessionId && capsOf(thread.agent)?.fork), any: Boolean(capsOf(thread.agent)?.forkAt) })}
@@ -3433,6 +3404,17 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
               }}
               onSegmentPreview={(thread, path) => setPreview({ threadId: thread.id, path })}
               historyApi={api ?? undefined}
+              onQuote={(quote, turnId, threadId) => {
+                const id = `note-${Date.now()}`;
+                setNoteSignal({ draftKey: composerDraftKey, note: { id, quote, comment: '', nonce: Date.now(), ...(threadId && threadId !== selectedId ? { source: { threadId, turnId } } : {}) } });
+              }}
+              onMessageContext={!demo && !voice.state.active && !writing ? async (text, turnId, threadId) => {
+                const draftKey = composerDraftKey;
+                const source = await messageSnapshot(text, turnId, threadId);
+                const value = await api.createReference({ kind: 'message', ...source });
+                setMessageReference({ draftKey, value, nonce: Date.now() });
+              } : undefined}
+              onHandToAssistant={!demo ? async (text, turnId, threadId) => setAssistantMessage(await messageSnapshot(text, turnId, threadId)) : undefined}
               historyThreadId={selected.id}
               items={threadItems}
               revealTurnId={jump?.threadId === selected.id ? jump.turnId : undefined}
@@ -3502,6 +3484,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
               <h2>{draftScratch ? t('app.emptyScratch') : t('app.emptyIn', folderName(draftCwd))}</h2>
             </div>
           )}
+          {selected && <AutoHandoverNotice api={api} thread={selected} agents={agents} />}
         </div>
         )}
 
@@ -3532,6 +3515,10 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           attachBlocked={capsOf(latestSegment.agent)?.images ? null : t('app.noImages', agentLabel(latestSegment.agent))}
           onLatest={() => pick(latestSegment.id)} onRefresh={() => { setSingleSegmentId(null); void refreshThreads(); }} onError={handleError}
           note={noteSignal?.draftKey === composerDraftKey ? noteSignal.note : null} onNotesChange={onNotesChange}
+        /> : sessionInUse && selected ? <SessionInUseNotice key={selected.id}
+          onRetry={async () => { await api.retryThread(selected.id); await refreshThreads(); }}
+          onFork={activeCaps?.fork ? () => threadActions.run('fork', selected) : undefined}
+          onError={handleError}
         /> : <Composer
           draftKey={composerDraftKey}
           voiceControls={voice.state.active ? <VoiceControls session={voice.state} onMute={voice.toggleMute} onStop={() => void voice.stop()} /> : undefined}
@@ -3542,11 +3529,14 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
             try { await voice.appendText(text, images.map(img => ({ data: img.data, mimeType: img.mimeType })), await Promise.all(videos.map(async video => (await api.uploadVideo(selectedId!, video.file)).id))); }
             catch (error) { handleError(error); throw error; }
           } : send}
+          referenceSource={!demo && !voice.state.active ? { api, cwd: activeCwd, threadId: selected?.id } : undefined}
+          reference={messageReference?.draftKey === composerDraftKey ? messageReference : null}
+          onReferenceConsumed={id => setMessageReference(current => current?.value.id === id ? null : current)}
           mentionOptions={collaborationOptions}
           mentionIcon={collaborationIcon}
           collaboration={!draftTeam && !selected?.coordination?.team && (activeCaps?.coordination || selected?.coordination) ? collaborationControl : undefined}
           collaborationActive={Boolean(selected?.coordination || draftCollaboration)}
-          mentionExtra={(m) => { const a = agents.find((v) => v.id === m.id); return a ? memberModel(a) : null; }}
+          mentionExtra={(m) => { const a = agents.find((v) => v.id === m.id) ?? remoteAgents.find((v) => v.id === m.id); return a ? memberModel(a) : null; }}
           onBrowseMentionDir={(m, choose) => {
             const a = remoteAgents.find((v) => v.id === m.id);
             // With no folder chosen yet, the picker opens where that machine was last left, the way
@@ -3644,6 +3634,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           permission={a.capabilities.permissionModes.length ? thread.permissionMode : undefined} onPermission={(permissionMode) => { void api.updateThread(thread.id, { permissionMode }).then(() => refreshThreads()).catch(handleError); }} /> : null;
       }} leadAgent={threads.find((t) => t.id === coordination.rootId)?.agent} phone={compact} onClose={() => setAgentsOpen(false)} onOpen={thread => { openThread(thread); setAgentsOpen(false); }} onAdjust={(name, draft) => { setAgentsOpen(false); setSelectedId(coordination.rootId); setRestore({ text: t('app.adjustTask', name) + draft, nonce: Date.now() }); }} onRefresh={() => { void refreshThreads(); }} onError={handleError} />}
       {files && filesThread && api && <FilesPanel api={api} threadId={filesThread.id} target={files} phone={compact} revision={filesThread.updatedAt} writingStage={filesThread.writing?.stage ?? null} writingHabits={filesThread.writing?.habits ?? null} noted={{ count: noteCount, nonce: filesNotePulse }} onClose={() => setFiles(null)} />}
+      {gitOpen && selected && api && <GitPanel key={`${hostId ?? ''}:${selected.id}`} api={api} threadId={selected.id} phone={compact} running={selected.status === 'running'} onClose={() => setGitOpen(false)} />}
       {traceOpen && selected && (
         <ThreadTracePanel
           api={api}
@@ -3791,6 +3782,12 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
         onRemove={id => setElsewhere(sources => sources.map(source => source.hostId === remoteMenu.machine ? { ...source, threads: source.threads.filter(t => t.id !== id) } : source))}
         onError={handleError} />}
       <NoteMarks marks={noteMarks} scrollerRef={scrollerRef} />
+      {assistantMessage && <HandToAssistant key={`${hostId}:${assistantMessage.sourceId}:${assistantMessage.turnId}`} api={messageAssistantApi} source={assistantMessage}
+        draftKey={`${hostId}:${assistantMessage.sourceId}:${assistantMessage.turnId}`} onClose={() => setAssistantMessage(null)} onSent={threadId => {
+          setAssistantMessage(null);
+          if (hostId !== null) onHost?.(null, { thread: threadId });
+          else { setRouterThreadId(threadId); void api.thread(threadId).then(openThread).catch(handleError); }
+        }} />}
       <SelectionMenu
         onNote={(quote, comment, range, file) => {
           const id = `note-${Date.now()}`;

@@ -1,4 +1,5 @@
 import type { PushService } from './push.js';
+import type { FeishuChat } from './feishu-chat.js';
 import { DEFAULT_RULES } from './autotitle.js';
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { createReadStream, existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
@@ -30,6 +31,7 @@ import { todoStages } from './todo-stage.js';
 
 export interface HttpDeps {
   push?: PushService;
+  feishu?: FeishuChat;
   manager: ThreadManager;
   /** Agent instances beyond the built-in ones. Optional so simple setups and tests need none. */
   registry?: AgentRegistry;
@@ -55,7 +57,7 @@ export interface HttpDeps {
   pets?: PetService;
   /**
    * Requests need no token: the server listens on a socket only this user can open, and a hub
-   * reaches it over SSH. Such a server shows this machine only, never the machines added to it.
+   * reaches it through the local relay client. Such a server shows this machine only, never the machines added to it.
    */
   trusted?: boolean;
   token: string;
@@ -299,6 +301,8 @@ export function createHttpServer(deps: HttpDeps): Server {
     }
 
     if (path === '/api/health') return sendJson(res, 200, { ok: true, version });
+    // A machine that connects out to this hub, with its own join token rather than the hub's.
+    if (path.startsWith('/api/relay/') && hosts && !trusted) return hosts.relay.handle(req, res, path);
 
     const auth = req.headers.authorization ?? '';
     const bearer = auth.startsWith('Bearer ') ? auth.slice(7) : undefined;
@@ -335,13 +339,17 @@ export function createHttpServer(deps: HttpDeps): Server {
     if (path === '/api/personal/proactive' && method === 'GET') {
       const proactive = manager.personal.proactive;
       return sendJson(res, 200, url.searchParams.get('summary') === 'true'
-        ? { settings: proactive.settings(), counts: proactive.counts() }
+        ? { settings: proactive.settings(), counts: proactive.counts(), asking: proactive.asking() }
         : { settings: proactive.settings(), runs: proactive.runs(url.searchParams.get('matterId') ?? undefined) });
     }
     if (path === '/api/personal/proactive/settings' && method === 'PUT') return sendJson(res, 200, await manager.personal.proactive.save(await readJson(req)));
     if (parts[1] === 'personal' && parts[2] === 'proactive' && parts[3] === 'runs' && parts[4] && parts.length === 6) {
       if (parts[5] === 'diff' && method === 'GET') return sendJson(res, 200, await manager.personal.proactive.diff(parts[4]));
       if (['merge', 'discard', 'revert'].includes(parts[5]) && method === 'POST') return sendJson(res, 200, await manager.personal.proactive.act(parts[4], parts[5] as 'merge' | 'discard' | 'revert'));
+      if (parts[5] === 'answer' && method === 'POST') return sendJson(res, 200, await manager.personal.proactive.answer(parts[4], (await readJson(req))?.answer));
+      if (parts[5] === 'close-matter' && method === 'POST') return sendJson(res, 200, manager.personal.proactive.closeMatter(parts[4]));
+      if (parts[5] === 'dismiss' && method === 'POST') return sendJson(res, 200, manager.personal.proactive.dismiss(parts[4]));
+      if (parts[5] === 'allow-repo' && method === 'POST') return sendJson(res, 200, await manager.personal.proactive.allowRepo(parts[4]));
       // Marking an observation as "this one is fine": a record of the person's judgement, never a start.
       if (parts[5] === 'approve' && method === 'POST') return sendJson(res, 200, manager.personal.proactive.approve(parts[4]));
     }
@@ -411,6 +419,17 @@ export function createHttpServer(deps: HttpDeps): Server {
       if (path === '/api/push/test' && method === 'POST') return sendJson(res, 202, deps.push.test());
     }
 
+    if (path.startsWith('/api/feishu/')) {
+      if (!deps.feishu) throw new HttpError(503, 'Feishu is unavailable');
+      if (path === '/api/feishu/settings' && method === 'GET') return sendJson(res, 200, deps.feishu.getSettings());
+      if (path === '/api/feishu/settings' && method === 'PUT') return sendJson(res, 200, deps.feishu.putSettings(await readJson(req)));
+      if (path === '/api/feishu/status' && method === 'GET') return sendJson(res, 200, await deps.feishu.status(url.searchParams.get('summary') === 'true'));
+      if (path === '/api/feishu/setup' && method === 'POST') return sendJson(res, 200, await deps.feishu.startSetup());
+      if (path === '/api/feishu/login' && method === 'POST') return sendJson(res, 200, await deps.feishu.startLogin());
+      if (path === '/api/feishu/setup' && method === 'DELETE') return sendJson(res, 200, await deps.feishu.cancelSetup());
+      if (path === '/api/feishu/test' && method === 'POST') return sendJson(res, 202, await deps.feishu.test());
+    }
+
     if (path === '/api/tools/command' && method === 'POST') {
       if (!manager.borrowing) throw new HttpError(503, 'tool borrowing is unavailable');
       return sendJson(res, 200, await manager.borrowing.command('operator', await readJson(req)));
@@ -422,20 +441,26 @@ export function createHttpServer(deps: HttpDeps): Server {
 
     // Other machines. One level only: a machine reached through its socket does not pass requests on.
     if (parts[1] === 'hosts' && hosts && !trusted) {
-      // GET /api/hosts, POST /api/hosts { target, label? }
+      // GET /api/hosts, POST /api/hosts { label }
       if (path === '/api/hosts') {
         if (method === 'GET') return sendJson(res, 200, hosts.list());
         if (method === 'POST') return sendJson(res, 201, await hosts.add(await readJson(req)));
       }
-      // GET /api/hosts/candidates: aliases in this user's ssh config that could be added
-      if (method === 'GET' && path === '/api/hosts/candidates') return sendJson(res, 200, hosts.candidates());
+      // Operator-only execution for maintenance scripts; node tokens cannot access this route.
+      if (method === 'POST' && parts[2] && parts[3] === 'exec' && !parts[4]) {
+        const body = await readJson(req);
+        if (!body || typeof body.command !== 'string' || !body.command.trim()) throw new HttpError(400, 'command is required');
+        if (body.input !== undefined && typeof body.input !== 'string') throw new HttpError(400, 'input must be a string');
+        const result = await hosts.exec(parts[2], body.command, { input: body.input });
+        return sendJson(res, 200, { stdout: result.stdout.toString('base64'), stderr: result.stderr, code: result.code });
+      }
       // DELETE /api/hosts/:id
       if (method === 'DELETE' && parts[2] && !parts[3]) {
         hosts.remove(parts[2]);
         res.writeHead(204).end();
         return;
       }
-      // POST /api/hosts/:id/reconnect: try now, not when the next retry is due
+      // POST /api/hosts/:id/reconnect: refresh the node connection state
       if (method === 'POST' && parts[2] && parts[3] === 'reconnect' && !parts[4]) {
         return sendJson(res, 200, await hosts.reconnect(parts[2]));
       }
@@ -647,6 +672,17 @@ export function createHttpServer(deps: HttpDeps): Server {
       return sendJson(res, 200, await manager.agentQuota(parts[2], url.searchParams.get('refresh') === '1'));
     }
 
+    // GET /api/agents/:id/stream-bridge: would the experimental bridge work on this install
+    // right now? Advisory status for the settings sheet; turns degrade on their own anyway.
+    if (method === 'GET' && parts[0] === 'api' && parts[1] === 'agents' && parts[2] && parts[3] === 'stream-bridge' && !parts[4]) {
+      if (!registry) throw new HttpError(404, 'this daemon has no agent registry');
+      const adapter = registry.adapters.get(parts[2]);
+      if (!adapter) throw new HttpError(404, `unknown agent: ${parts[2]}`);
+      if (!adapter.capabilities.streamBridge || !adapter.streamBridgeEnvironment) throw new HttpError(400, 'this agent has no experimental stream bridge');
+      const { incompatible } = await adapter.streamBridgeEnvironment(true);
+      return sendJson(res, 200, incompatible === undefined ? { compatible: true } : { compatible: false, reason: incompatible });
+    }
+
     // GET /api/agents/:id/commands
     if (method === 'GET' && parts[0] === 'api' && parts[1] === 'agents' && parts[2] && parts[3] === 'commands') {
       return sendJson(res, 200, await manager.listCommands(parts[2], url.searchParams.get('cwd') ?? undefined));
@@ -784,6 +820,10 @@ export function createHttpServer(deps: HttpDeps): Server {
     if (method === 'GET' && path === '/api/config') return sendJson(res, 200, manager.workdirsConfig());
 
     // Browse candidate project folders without widening file access or allowed working directories.
+    if (method === 'POST' && path === '/api/context-references') {
+      return sendJson(res, 201, manager.references.create((await readJson(req)) ?? {}));
+    }
+
     if (method === 'GET' && path === '/api/project-directories') {
       return sendJson(res, 200, listProjectDirectories(manager.allowedWorkdirs, url.searchParams.get('path') ?? undefined));
     }
@@ -1352,6 +1392,16 @@ export function createHttpServer(deps: HttpDeps): Server {
         return sendJson(res, 200, { url: `/api/threads/${threadId}/download?${query}`, name: file.name, size: file.size, mimeType: file.mimeType });
       }
 
+      // Git is scoped to the authenticated thread's current checkout. Heavy details are separate reads.
+      if (sub === 'git' && !parts[5]) {
+        const action = parts[4];
+        if (method === 'GET' && action === 'status') return sendJson(res, 200, await manager.git.status(threadId));
+        if (method === 'GET' && action === 'log') return sendJson(res, 200, await manager.git.log(threadId, url.searchParams.get('head'), Number(url.searchParams.get('skip') ?? 0)));
+        if (method === 'GET' && action === 'commit') return sendJson(res, 200, await manager.git.commitFiles(threadId, url.searchParams.get('commit') ?? ''));
+        if (method === 'GET' && action === 'diff') return sendJson(res, 200, await manager.git.diff(threadId, url.searchParams.get('path'), url.searchParams.get('staged') === '1', url.searchParams.get('commit')));
+        if (method === 'POST' && (action === 'fetch' || action === 'pull')) return sendJson(res, 200, await manager.git.operate(threadId, action));
+      }
+
       // GET /api/threads/:id/roots: the folders the file browser can stand on, for the root switcher
       if (method === 'GET' && sub === 'roots') {
         return sendJson(res, 200, manager.threadRoots(threadId));
@@ -1490,10 +1540,13 @@ export function createHttpServer(deps: HttpDeps): Server {
   const server = createServer((req, res) => {
     handle(req, res).catch((err) => sendError(res, err));
   });
-  // The one WebSocket: the desktop's VNC stream, here or on another machine through the hub.
-  if (desktop) {
+  // Two kinds of upgrade: machines connecting out to this hub, and the desktop's VNC stream, here
+  // or on another machine through the hub.
+  if (desktop || (hosts && !trusted)) {
     server.on('upgrade', (req: IncomingMessage, socket, head: Buffer) => {
       socket.on('error', () => socket.destroy());
+      if (hosts && !trusted && hosts.relay.upgrade(req, socket, head)) return;
+      if (!desktop) return refuse(socket, 404, 'not found');
       const url = new URL(req.url ?? '/', 'http://localhost');
       const remote = /^\/api\/hosts\/([^/]+)\/proxy\/desktop\/vnc$/.exec(url.pathname);
       if (url.pathname !== '/api/desktop/vnc' && !remote) return refuse(socket, 404, 'not found');

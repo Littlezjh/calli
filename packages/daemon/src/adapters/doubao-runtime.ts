@@ -5,8 +5,7 @@ import { createHash } from 'node:crypto';
 import { homedir, tmpdir } from 'node:os';
 import { basename, delimiter, dirname, isAbsolute, join, posix, resolve } from 'node:path';
 
-const VERSION = '2.31.2';
-export const DOUBAO_STREAM_BRIDGE = { version: VERSION, platform: 'Linux x64', temporaryMegabytes: 106 };
+export const DOUBAO_STREAM_BRIDGE = { platform: 'Linux x64', temporaryMegabytes: 106 };
 const BUNDLES = ['entry-cli-router', 'entry-cli-chat'] as const;
 const MAX_RUNTIME_BYTES = 512 * 1024 * 1024;
 
@@ -36,6 +35,22 @@ export function patchDoubaoStreamBundle(source: string, bundle: typeof BUNDLES[n
   }
   const forwarded = `onEvent:e=>{if(e.type==="tool.updated"){${emit}({type:"calli_bridge_tool",session_id:${session},message_id:e.messageId,phase:e.phase,step:e.step});return}switch(e.type){case"session.created":case"session.bound":`;
   return (source.slice(0, at) + forwarded + source.slice(at + hook.length)).replace(output, 'output_format:"stream-json"');
+}
+
+/** A read-only catalog entry in our copy; it never calls send, opens a session or reports choices. */
+export function patchDoubaoModelBundle(source: string, bundle: typeof BUNDLES[number]): string {
+  const router = bundle === 'entry-cli-router';
+  const branch = `if("list"===o.kind)return ${router ? 'p' : 'b'}(e,t);`;
+  const method = router
+    ? 'resolveSettings(e,t){return G({im:this.im,botId:this.botId},e,t)}'
+    : 'resolveSettings(e,t){return et({im:this.im,botId:this.botId},e,t)}';
+  const load = router ? '(0,U.Fo)' : 'W';
+  if (source.split(branch).length !== 2 || source.split(method).length !== 2
+    || !source.includes('/alice/slot/action_bar_v3/brief_list')) {
+    throw new Error('Doubao 模型目录不兼容：原生加载入口已变化，请升级 Calli');
+  }
+  return source.replace(method, `async calliReadModels(){return ${load}({im:this.im,botId:this.botId})}${method}`)
+    .replace(branch, 'if("list"===o.kind){const catalog=await e.chat.calliReadModels();await e.output.stdout(JSON.stringify({type:"calli_models",models:catalog.models.map(model=>({...model.option}))})+"\\n");return{code:"ok"}}');
 }
 
 async function executable(token: string, env: NodeJS.ProcessEnv, cwd: string): Promise<string> {
@@ -98,14 +113,16 @@ async function digest(path: string): Promise<string> {
 
 /** Read only the selected installation's compatibility metadata. */
 async function inspectDoubaoStreamRuntime(command: string[], env: NodeJS.ProcessEnv, cwd: string) {
-  if (process.platform !== 'linux') throw new Error('Doubao 实验流式桥当前仅验证 Linux');
+  if (process.platform !== 'linux') throw new Error('Doubao 实验流式桥仅支持 Linux');
   const { root, base } = await sourceRuntime(command, env, cwd);
   const manifestPath = join(root, 'manifest.json');
   const info = await lstat(manifestPath);
   if (!info.isFile() || info.isSymbolicLink() || info.size > 1024 * 1024) throw new Error('Doubao 流式桥没有有效的原生运行清单');
   const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
-  if (manifest.version !== VERSION || manifest.target !== 'linux-x64' || process.arch !== 'x64') {
-    throw new Error(`Doubao 流式桥尚未验证此版本或平台（仅支持 ${VERSION} / Linux x64），请关闭实验流式桥或更新 Calli`);
+  // Compatibility is decided by the patch anchors, not the version number: a CLI update that
+  // keeps the same output seams still works, and callers fall back to text output when it does not.
+  if (manifest.target !== 'linux-x64' || process.arch !== 'x64') {
+    throw new Error('Doubao 流式桥仅支持 Linux x64 的原生安装');
   }
   if (manifest.entrypoint !== 'doubao' || !Array.isArray(manifest.files) || !manifest.files.length || manifest.files.length > 512) {
     throw new Error('Doubao 流式桥的运行清单不兼容');
@@ -136,8 +153,8 @@ export async function validateDoubaoStreamRuntime(command: string[], env: NodeJS
   }
 }
 
-/** Version-guarded local snapshot. No writes, hard links, config copies or downloads in the source. */
-export async function prepareDoubaoStreamRuntime(command: string[], env: NodeJS.ProcessEnv, cwd: string): Promise<DoubaoStreamRuntime> {
+/** Anchor-checked local snapshot. No writes, hard links, config copies or downloads in the source. */
+export async function prepareDoubaoStreamRuntime(command: string[], env: NodeJS.ProcessEnv, cwd: string, mode: 'stream' | 'models' = 'stream'): Promise<DoubaoStreamRuntime> {
   const { root, base, manifest } = await inspectDoubaoStreamRuntime(command, env, cwd);
   const directory = await mkdtemp(join(tmpdir(), 'calli-doubao-stream-'));
   const target = join(directory, 'runtime');
@@ -158,7 +175,8 @@ export async function prepareDoubaoStreamRuntime(command: string[], env: NodeJS.
     for (const bundle of BUNDLES) {
       const rel = `resources/js_app/${bundle}/main.js`;
       const path = join(target, rel);
-      await writeFile(path, patchDoubaoStreamBundle(await readFile(path, 'utf8'), bundle));
+      const patch = mode === 'models' ? patchDoubaoModelBundle : patchDoubaoStreamBundle;
+      await writeFile(path, patch(await readFile(path, 'utf8'), bundle));
       const file = manifest.files.find((entry: { path: string }) => entry.path === rel);
       file.size = (await lstat(path)).size;
       file.sha256 = await digest(path);

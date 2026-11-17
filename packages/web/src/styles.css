@@ -16,15 +16,14 @@
   --glass-shadow: var(--glass-rim), var(--glass-lift);
   --glass-pop-shadow: var(--glass-rim), var(--shadow-pop);
   --glass-filter: blur(24px) saturate(180%);
-  /* Behind the top bar and the composer: how much of the page colour washes out what scrolls under
-     them, and how far that is blurred. Low on purpose, so edges stay readable. */
-  --glass-fade: 32%;
-  --glass-fade-blur: 8px;
+  /* The screen's top and bottom edges. Where text scrolls out under the top bar or the composer, the
+     page colour closes over it: thickest at the very edge, gone a short way in. --glass-edge is how much of
+     it covers the text behind the controls, --glass-edge-blur how far that stretch is blurred. */
+  --glass-edge: 92%;
+  --glass-edge-blur: 8px;
   /* The top bar on a wide screen: frosted, but far less see-through than the phone's bands. */
   --glass-bar: 80%;
   --glass-bar-blur: 14px;
-  /* Under the composer: a darker, blurred band so the box stands out from the text behind it. */
-  --glass-scrim: 0.07;
   /* On a wide screen the composer's own soft shadow does the same job, following its round corners. */
   --glass-halo: 0 10px 40px rgba(31, 30, 28, 0.11), 0 2px 8px rgba(31, 30, 28, 0.05);
   --thread-peek-width: min(560px, 44vw);
@@ -187,7 +186,6 @@
     --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 6px 20px rgba(0, 0, 0, 0.25);
     --glass-rim: inset 0 0 0 1px rgba(255, 255, 255, 0.066), inset 0 1px 1px rgba(255, 255, 255, 0.12);
     --glass-lift: 0 2px 10px rgba(0, 0, 0, 0.2);
-    --glass-scrim: 0.28;
     --glass-halo: 0 10px 40px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3);
     color-scheme: dark;
   }
@@ -252,7 +250,6 @@
   --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 6px 20px rgba(0, 0, 0, 0.25);
   --glass-rim: inset 0 0 0 1px rgba(255, 255, 255, 0.066), inset 0 1px 1px rgba(255, 255, 255, 0.12);
   --glass-lift: 0 2px 10px rgba(0, 0, 0, 0.2);
-  --glass-scrim: 0.28;
   --glass-halo: 0 10px 40px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3);
   color-scheme: dark;
 }
@@ -795,23 +792,51 @@ button:disabled {
   }
 
   .quick-switch {
-    /* A fixed pad at the bottom-right, inset from the screen edge: iOS owns the outermost
-       band for its history gestures, and the pad sits clear of it. Tapping falls through. */
+    /* Holds only the panel; the handle positions itself. Nothing here takes touches. */
     position: fixed;
-    right: 16px;
-    bottom: calc(168px + var(--safe-bottom));
-    width: 96px;
-    height: 160px;
+    inset: 0;
     z-index: 62;
     pointer-events: none;
   }
 
-  .quick-switch-edge {
-    position: absolute;
-    inset: 0;
-    border-radius: 20px;
+  /* A small tab on the right edge, inset from iOS's own edge gestures. Quiet until used. */
+  .quick-switch-handle {
+    position: fixed;
+    right: 6px;
+    width: 22px;
+    height: 52px;
+    padding: 0;
+    display: grid;
+    place-items: center;
+    border: 1px solid var(--border);
+    border-radius: 11px;
+    background: color-mix(in srgb, var(--surface) 88%, transparent);
+    color: var(--muted);
+    box-shadow: var(--shadow-pop);
+    opacity: 0.7;
     pointer-events: auto;
-    touch-action: pan-y;
+    touch-action: none;
+    -webkit-backdrop-filter: blur(12px);
+    backdrop-filter: blur(12px);
+  }
+
+  .quick-switch-handle.open {
+    opacity: 1;
+    color: var(--text);
+  }
+
+  .quick-switch-hide {
+    display: block;
+    width: 100%;
+    margin-top: 4px;
+    padding: 8px;
+    border-radius: 10px;
+    border: 0;
+    box-shadow: none;
+    background: transparent;
+    color: var(--muted);
+    font-size: 12px;
+    text-align: center;
   }
 
   .quick-switch-panel {
@@ -822,7 +847,8 @@ button:disabled {
     right: calc(10px + env(safe-area-inset-right));
     bottom: calc(var(--qs-anchor) + var(--safe-bottom));
     width: min(286px, calc(100vw - 54px - env(safe-area-inset-left)));
-    max-height: min(480px, max(0px, calc(
+    /* About five sessions, the current one in the middle; the rest scroll. */
+    max-height: min(264px, max(0px, calc(
       var(--vvh, 100dvh) - 72px - var(--qs-anchor) - env(safe-area-inset-top)
     )));
     padding: 7px;
@@ -867,11 +893,6 @@ button:disabled {
     background: var(--hover);
   }
 
-  .quick-switch-card.target {
-    background: var(--accent-soft);
-    color: var(--accent-fg);
-  }
-
   .quick-switch-title {
     overflow: hidden;
     text-overflow: ellipsis;
@@ -889,10 +910,6 @@ button:disabled {
     color: var(--muted);
     font-size: 11.5px;
     line-height: 1.2;
-  }
-
-  .quick-switch-card.target .quick-switch-meta {
-    color: color-mix(in srgb, var(--accent-fg) 78%, var(--muted));
   }
 
   .quick-switch-meta span:not(.dot):not(.agent-mark) {
@@ -6409,12 +6426,13 @@ div.file-card:hover { background: var(--surface); }
 
 @media (hover: none) {
   .message-actions .quiet-btn {
-    width: 36px;
+    width: 28px;
     height: 36px;
   }
 
   .row.message-actions {
-    margin-left: -10px;
+    gap: 0;
+    margin-left: -6px;
   }
 }
 
@@ -8167,20 +8185,6 @@ div.file-card:hover { background: var(--surface); }
   min-width: 96px;
 }
 
-/* What ssh itself said, for whoever has to fix it. */
-.host-error {
-  display: block;
-  max-width: 100%;
-  padding: 6px 10px;
-  border-radius: var(--radius-sm);
-  background: var(--code-bg);
-  color: var(--muted);
-  font-family: var(--mono);
-  font-size: 12px;
-  line-height: 1.5;
-  text-align: left;
-  overflow-wrap: anywhere;
-}
 
 .host-row {
   align-items: flex-start;
@@ -8204,21 +8208,9 @@ div.file-card:hover { background: var(--surface); }
   line-height: 1.55;
 }
 
-.host-problem .host-error,
-.host-failure .host-error {
-  margin-top: 6px;
-}
-
 .host-failure {
   margin: 8px 0 0;
   line-height: 1.55;
-}
-
-.host-failure .host-error {
-  background: transparent;
-  padding: 0;
-  color: inherit;
-  opacity: 0.8;
 }
 
 .host-add-label {
@@ -8259,52 +8251,38 @@ div.file-card:hover { background: var(--surface); }
   opacity: 0.45;
 }
 
-.host-candidates-hint {
-  margin: 16px 0 8px;
-  color: var(--muted);
+.host-add-name input {
+  font-family: var(--font);
+}
+
+.host-join p {
+  margin: 0 0 10px;
+  line-height: 1.55;
+}
+
+.host-join-lines {
+  margin: 0 0 4px;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: var(--hover);
+  font-family: var(--mono);
   font-size: 12.5px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  user-select: all;
 }
 
-.host-candidates {
+.host-join-actions {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
 }
 
-.host-candidate {
+.host-join-actions .ghost {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  max-width: 100%;
-  min-height: 32px;
-  padding: 0 12px 0 9px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: transparent;
-  color: var(--muted);
-  transition:
-    background 0.12s,
-    color 0.12s;
-}
-
-.host-candidate .host-target {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text);
-}
-
-.host-candidate:hover:not(:disabled) {
-  background: var(--hover);
-}
-
-.host-candidate:disabled {
-  opacity: 0.55;
-  cursor: default;
-}
-
-.host-candidate-note {
-  font-size: 12px;
 }
 
 .host-foot {
@@ -10461,12 +10439,31 @@ div.file-card:hover { background: var(--surface); }
 .talk-thread .talk-mark { width: 26px; height: 26px; }
 /* One line per agent brought into the message: its name, then what is asked of it alone. */
 .coord-rows { display: flex; flex-direction: column; gap: 4px; margin: 4px 10px 2px; }
-.coord-row { display: flex; align-items: flex-start; gap: 6px; padding: 3px 4px 3px 10px; border-radius: var(--radius-sm); background: var(--surface-2); }
-.coord-row > .pop, .coord-row > .coord-row-name { flex: none; min-width: 0; max-width: 45%; }
-.coord-row-name { display: block; max-width: 100%; padding: 0; border: 0; background: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: inherit; font-size: 13px; font-weight: 600; line-height: 30px; color: var(--text); }
-button.coord-row-name { cursor: pointer; }
-.composer-box .coord-row textarea { flex: 1; min-width: 0; min-height: 30px; max-height: 96px; padding: 5px 0; font-size: 14px; line-height: 1.45; }
+.coord-row { display: grid; grid-template-columns: fit-content(28%) fit-content(34%) minmax(96px, 1fr) auto auto; grid-template-areas: "name where task tools close"; align-items: center; column-gap: 6px; padding: 3px 4px 3px 10px; border-radius: var(--radius-sm); background: var(--surface-2); }
+.coord-row-name { grid-area: name; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 600; line-height: 30px; color: var(--text); }
+.coord-row > .pop { grid-area: where; min-width: 0; }
+.coord-row-where { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; min-height: 26px; padding: 0 8px; border: 0; border-radius: var(--radius-sm); background: none; color: var(--faint); font: inherit; font-size: 12px; white-space: nowrap; cursor: pointer; }
+.coord-row-where:hover, .coord-row-where[aria-expanded='true'] { background: var(--hover); color: var(--text); }
+.coord-row-where.set { color: var(--muted); }
+.coord-row-where svg { flex: none; }
+.coord-row-machine, .coord-row-dir { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* The machine gives way first: for a member over there, the folder is the part that decides. */
+.coord-row-machine { flex: 0 100 auto; }
+.coord-row-dir { flex: 0 1 auto; }
+.coord-row-machine + .coord-row-dir::before { content: '/'; margin-right: 5px; color: var(--faint); }
+.coord-row-tools { grid-area: tools; display: inline-flex; align-items: center; }
+.coord-row-close { grid-area: close; }
+.coord-row-tools .member-model { max-width: 170px; }
+.composer-box .coord-row textarea { grid-area: task; min-width: 0; min-height: 30px; max-height: 96px; padding: 5px 0; font-size: 14px; line-height: 1.45; }
 .coord-row .icon-btn { flex: none; width: 30px; height: 30px; color: var(--muted); }
+/* A phone has no room for a name, a place, two settings and a close on the same line as the task:
+   the first four stay on one line, the task gets the whole width under them. */
+@media (max-width: 640px) {
+  .coord-row { grid-template-columns: fit-content(46%) minmax(0, 1fr) auto auto; grid-template-areas: "name where tools close" "task task task task"; row-gap: 0; padding-left: 12px; }
+  .coord-row-name { max-width: 100%; }
+  .coord-row > .pop { justify-self: start; max-width: 100%; }
+  .composer-box .coord-row textarea { padding: 4px 0 8px; }
+}
 
 /* What another agent of the team sent in: a card, folded until asked for. */
 /* A delivery from a teammate: no frame of its own, one quiet line that folds out in place. The
@@ -12326,13 +12323,10 @@ button.trace-step-head:hover { background: var(--hover); }
 .handover-card-empty { padding: 2px 0 6px; color: var(--faint); font-size: 12.5px; text-align: center; }
 .chain-later { min-height: 28px; padding: 6px 0; color: var(--muted); font-size: 12px; text-align: center; }
 .chain-beginning { color: var(--muted); font-size: 12px; text-align: center; padding: 8px 0; }
-.handover-readonly { display: flex; align-items: center; justify-content: space-between; gap: 8px 16px; max-width: var(--content-w); margin: 0 auto; padding: 8px 16px; color: var(--muted); font-size: 12px; }
-.handover-readonly-actions { display: flex; align-items: center; justify-content: flex-end; gap: 14px; flex-shrink: 0; }
+.handover-readonly { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 2px 16px; width: fit-content; max-width: calc(100% - 32px); margin: 0 auto 8px; padding: 6px 16px; color: var(--muted); font-size: 12px; text-align: center; }
+.handover-readonly.glass-control { --glass-bg: color-mix(in srgb, var(--surface) 88%, transparent); --glass-filter: blur(12px) saturate(180%); border-radius: var(--radius-lg); }
+.handover-readonly-actions { display: flex; align-items: center; justify-content: center; gap: 14px; flex-shrink: 0; }
 .handover-mode { border-bottom: 1px solid var(--border); margin-bottom: 4px; }
-@media (max-width: 600px) {
-  .handover-readonly { align-items: flex-start; flex-direction: column; }
-  .handover-readonly-actions { width: 100%; justify-content: space-between; }
-}
 
 /* Handover details expand per instance; the default view remains a compact list. */
 .auto-settings { width: min(720px, calc(100vw - 32px)); }
@@ -12363,7 +12357,9 @@ button.trace-step-head:hover { background: var(--hover); }
 .auto-add { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
 /* One line across the thread: rule — fork icon — what is about to happen — rule. Sticky, so the
    countdown stays visible; the bar carries the page background, not a card. */
-.auto-notice { position: sticky; top: 8px; z-index: 2; display: flex; align-items: center; gap: 10px; max-width: 800px; margin: 12px auto; padding: 4px 12px; background: var(--bg); color: var(--muted); font-size: 12.5px; }
+/* In the flow at the end of the thread, where the move will land; it does not float over what is read. */
+.auto-notice { display: flex; align-items: center; gap: 10px; max-width: 800px; margin: 12px auto; padding: 4px 12px; color: var(--muted); font-size: 12.5px; }
+.auto-notice > .spinner { flex-shrink: 0; width: 14px; height: 14px; border-width: 1.5px; }
 .auto-notice .rule { flex: 1 0 24px; height: 1px; background: var(--border-strong); }
 .auto-notice > span { min-width: 0; }
 .auto-notice > svg { flex-shrink: 0; color: var(--positive); }
@@ -12664,7 +12660,7 @@ button.trace-step-head:hover { background: var(--hover); }
 .pop-panel.general-startup-menu { z-index: 72; min-width: 180px; }
 .general-hint { margin: 0; line-height: 1.6; }
 .personal-settings .dialog-actions { margin-top: 8px; }
-.personal-settings, .push-settings { width: min(520px, calc(100vw - 32px)); }
+.personal-settings, .push-settings, .feishu-settings { width: min(520px, calc(100vw - 32px)); }
 .personal-fork-hint { margin: 10px 0 0; font-size: 12.5px; line-height: 1.6; }
 /* Settings grow with what is turned on: the form scrolls, and Save stays in reach. */
 .dialog.personal-settings { max-height: calc(100dvh - 48px); overflow-y: auto; padding-bottom: 0; }
@@ -12685,6 +12681,29 @@ button.trace-step-head:hover { background: var(--hover); }
 .push-test-result { color: var(--muted); font-size: 12px; }
 .push-records { max-height: 220px; overflow-y: auto; font-size: 12px; margin-top: 12px; color: var(--muted); }
 .push-records > div { display: flex; flex-wrap: wrap; gap: 6px 12px; padding: 8px 0; border-top: 1px solid var(--border); }
+/* Pairing the machine with a bot: a plain explanation, the link out, and its two actions. */
+.feishu-setup { display: flex; flex-direction: column; align-items: flex-start; gap: 14px; padding: 6px 0 10px; }
+.feishu-note { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.7; }
+.feishu-setup-waiting { display: flex; flex-direction: column; align-items: flex-start; gap: 14px; width: 100%; }
+.feishu-setup-actions { display: flex; align-items: center; gap: 10px; }
+.feishu-link { color: var(--accent); text-decoration: underline; text-decoration-color: var(--border-strong); text-underline-offset: 3px; overflow-wrap: anywhere; font-size: 13px; }
+.feishu-setup > .personal-warning, .feishu-setup-waiting .personal-warning { margin: 0; font-size: 13px; }
+.feishu-records .feishu-dir { min-width: 2em; }
+/* The owner's open_id: the scan is the main action, the input and its alternatives sit below it. */
+.feishu-owner { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; flex-shrink: 0; }
+.feishu-owner-main { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.feishu-owner-main input { width: min(220px, 40vw); }
+.feishu-owner-main .primary { flex-shrink: 0; }
+.feishu-owner-main .text-btn { flex-shrink: 0; font-size: 12px; }
+.feishu-owner-alt { display: flex; align-items: center; gap: 10px; }
+.feishu-owner-alt small { display: inline; margin: 0; color: var(--muted); font-size: 12px; }
+.feishu-owner-alt .ghost { flex-shrink: 0; font-size: 12px; min-height: 30px; padding: 0 12px; }
+@media (max-width: 640px) {
+  /* The scan button and the input already fill a phone row; the label takes the line above. */
+  .feishu-owner-line { flex-wrap: wrap; }
+  .feishu-owner-line > span { flex-basis: 100%; }
+}
+.feishu-bottom .ghost { white-space: nowrap; flex-shrink: 0; }
 .agent-notice { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px; font-size: 12px; color: var(--muted); margin: 0; line-height: 1.6; }
 .agent-notice > svg { align-self: center; flex-shrink: 0; }
 .agent-notice a { color: var(--muted); text-underline-offset: 3px; }
@@ -12706,18 +12725,19 @@ button.trace-step-head:hover { background: var(--hover); }
   .todo-proposal-actions { width: 100%; flex-direction: row-reverse; justify-content: flex-start; }
   .todo-note-section { display: block; }
   .todo-note-section strong { margin-right: 8px; }
-  .general-settings, .personal-settings, .push-settings { width: 100%; max-height: calc(100dvh - 24px); overflow-y: auto; border-radius: var(--radius-lg) var(--radius-lg) 0 0; margin-top: auto; margin-bottom: 0; }
-  .dialog-scrim:has(> .general-settings), .dialog-scrim:has(> .personal-settings), .dialog-scrim:has(> .push-settings) { padding: 0; align-items: flex-end; }
+  .general-settings, .personal-settings, .push-settings, .feishu-settings { width: 100%; max-height: calc(100dvh - 24px); overflow-y: auto; border-radius: var(--radius-lg) var(--radius-lg) 0 0; margin-top: auto; margin-bottom: 0; }
+  .dialog-scrim:has(> .general-settings), .dialog-scrim:has(> .personal-settings), .dialog-scrim:has(> .push-settings), .dialog-scrim:has(> .feishu-settings) { padding: 0; align-items: flex-end; }
   .personal-setting-line { gap: 12px; }
 }
 .personal-settings .agent-btn.has-mark > span { display: inline; }
+.feishu-settings .agent-btn.has-mark > span { display: inline; }
 .personal-switch[aria-checked='false'] span { background: var(--muted); }
 .personal-switch[aria-checked='mixed'] { justify-content: center; }
 .personal-switch[aria-checked='mixed'] span { display: flex; align-items: center; justify-content: center; color: var(--muted); }
 .lark-meeting-events .personal-switch:disabled { opacity: .55; cursor: default; }
 @media (max-width: 640px) {
-  .push-settings .personal-setting-line { padding: 10px 0; }
-  .push-settings .push-bottom { margin-top: 12px; }
+  .push-settings .personal-setting-line, .feishu-settings .personal-setting-line { padding: 10px 0; }
+  .push-settings .push-bottom, .feishu-settings .push-bottom { margin-top: 12px; }
 }
 
 .files-menu-path { padding: 8px 12px; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
@@ -13016,10 +13036,10 @@ button.trace-step-head:hover { background: var(--hover); }
 
 /* What she did on her own: settings, cards on the spread, the desk filter. */
 .desk-views { display: flex; flex: none; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; min-width: 0; }
-.desk-filter { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 6px 12px; border: 1px solid var(--border); border-radius: var(--radius-pill); background: none; color: var(--muted); font: inherit; font-size: 12px; white-space: nowrap; cursor: pointer; }
-.desk-filter:hover { color: var(--text); }
+.desk-filter, .desk-attention { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 6px 12px; border: 1px solid var(--border); border-radius: var(--radius-pill); background: none; color: var(--muted); font: inherit; font-size: 12px; white-space: nowrap; cursor: pointer; }
+.desk-filter:hover, .desk-attention:hover { color: var(--text); }
 .desk-filter > span { color: var(--faint); font-variant-numeric: tabular-nums; }
-.desk-filter[aria-pressed='true'] { background: var(--surface); color: var(--text); box-shadow: var(--shadow-card); }
+.desk-filter[aria-pressed='true'], .desk-attention[aria-pressed='true'] { background: var(--surface); color: var(--text); box-shadow: var(--shadow-card); }
 .proactive-body { margin-top: 6px; }
 .proactive-body > small { margin-top: 2px; line-height: 1.6; }
 .proactive-body .lark-group { padding: 6px 0; font-size: 13px; }
@@ -13027,6 +13047,18 @@ button.trace-step-head:hover { background: var(--hover); }
 .proactive-repo > span { direction: rtl; text-align: left; unicode-bidi: plaintext; }
 .proactive-repo { min-width: 0; }
 .lark-add:disabled { opacity: .5; cursor: default; }
+/* Questions stay with their controls, including on narrow screens. */
+.proactive-answer { flex-basis: 100%; min-width: 0; }
+.proactive-answer p, .proactive-card p { white-space: pre-wrap; overflow-wrap: anywhere; }
+.proactive-answer-form { flex-wrap: nowrap; align-items: stretch; }
+.proactive-answer-form input { flex: 1 1 140px; min-width: 0; padding: 8px 12px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--surface); color: var(--text); font: inherit; font-size: 12px !important; height: 40px; box-sizing: border-box; }
+.proactive-answer-form button { flex: none; height: 40px; }
+.proactive-answer-form input:focus { outline: 2px solid var(--accent); outline-offset: 2px; }
+.proactive-answer .desk-card-actions button { min-height: 40px; white-space: normal; overflow-wrap: anywhere; }
+.desk-cover-alert.personal-warning { color: var(--warn); }
+.desk-attention { min-width: 100px; font-variant-numeric: tabular-nums; }
+.desk-attention.empty { visibility: hidden; }
+.proactive-list > li > p { flex-basis: 100%; margin: 0; font-size: 13px; overflow-wrap: anywhere; }
 .proactive-card .desk-card-kind.personal-warning { color: var(--warn); }
 .proactive-card.prepared p, .proactive-card.observed p, .proactive-card.approved p, .proactive-card.reverted p { color: var(--muted); }
 .proactive-mode { align-self: center; }
@@ -13102,7 +13134,7 @@ button.proactive-row-title:hover { color: var(--muted); }
 .proactive-diff-files .diff-stats, .proactive-diff-total .diff-stats { flex: none; }
 @media (max-width: 760px) {
   .desk-views { justify-content: flex-start; }
-  .desk-filter { min-height: 40px; }
+  .desk-filter, .desk-attention { min-height: 40px; }
   .proactive-list { padding: 0 14px; }
   .proactive-list .desk-card-actions button { min-height: 40px; }
 }
@@ -13124,7 +13156,8 @@ body:has(.app.drawer-open) .pet { visibility: hidden; }
 /* A modal dialog has the screen: she would stand on it — .app's transform keeps the dialog's own
    z-index inside .app's stacking context, below her in the page's root context — so she steps
    away instead. A desk spread pile is modal too, but portaled out and below her on purpose. */
-body:has(.app .dialog-scrim) .pet { visibility: hidden; }
+/* Selection controls need the same clear space, including the inline note's submit button. */
+body:has(.app .dialog-scrim, .app .selection-menu) .pet { visibility: hidden; }
 .pet-back { --pet-w: 68px; }
 /* Where she stands, as her own left edge and how high her feet ride above the visual viewport bottom:
    outside .app, so with a phone keyboard up she rides above it too. */
@@ -13617,11 +13650,53 @@ body:has(.app .dialog-scrim) .pet { visibility: hidden; }
 button.pet-summon { cursor: pointer; }
 button.pet-summon:hover { background: var(--surface-2); color: var(--text); }
 .pet-summoning .spinner { width: 12px; height: 12px; border-width: 1.5px; }
+.session-in-use-wrap { padding: 0 16px calc(16px + var(--safe-bottom, 0px)); }
+.session-in-use-notice {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+}
+.session-in-use-notice > svg { flex: none; }
+.session-in-use-copy { flex: 1; min-width: 0; }
+.session-in-use-history { color: var(--muted); font-size: 13px; }
+.session-in-use-copy strong { font-size: 15px; font-weight: 550; }
+.session-in-use-copy p { margin: 6px 0 0; color: var(--muted); font-size: 14px; line-height: 1.5; }
+.session-in-use-actions { display: flex; flex: none; gap: 8px; padding-left: 16px; border-left: 1px solid var(--border); }
+.session-in-use-actions button { flex: none; min-height: 44px; padding: 8px 12px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text); font: inherit; font-size: 14px; font-weight: 550; cursor: pointer; }
+.session-in-use-actions button:hover:not(:disabled) { background: var(--surface-2); }
+.session-in-use-actions button:disabled { color: var(--muted); cursor: default; }
+@media (max-width: 640px) {
+  .session-in-use-notice { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 12px; padding: 16px; }
+  .session-in-use-actions { grid-column: 2; justify-content: flex-end; flex-wrap: wrap; padding-left: 0; border-left: 0; }
+}
+
+.pet-install-actions { display: flex; align-items: center; gap: 8px; }
+.pet-install-close {
+  flex: none;
+  min-height: 32px;
+  padding: 0 10px;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.pet-install-close:hover { background: var(--surface-2); color: var(--text); }
+@media (pointer: coarse), (max-width: 640px) {
+  .pet-install-close { min-width: 44px; min-height: 44px; }
+}
 .pet-summon-failed {
   display: flex;
   align-items: center;
-  gap: 12px;
-  width: min(320px, calc(100vw - 32px));
+  gap: 8px;
+  width: min(340px, calc(100vw - 32px));
   padding: 10px 10px 10px 14px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -14121,53 +14196,63 @@ body:has(.settings-page, .action-sheet) .pet { display: none; }
 .main:has(> .composer-slot) > .scroller {
   margin-top: calc(-1 * var(--chat-top-overlap, 0px));
   margin-bottom: calc(-1 * var(--chat-bottom-overlap, 0px));
-  padding-top: calc(var(--chat-top-overlap, 0px) + 14px);
+  padding-top: calc(var(--chat-top-overlap, 0px) + 20px);
   padding-bottom: calc(var(--chat-bottom-overlap, 0px) + var(--composer-clear));
-  scroll-padding-top: calc(var(--chat-top-overlap, 0px) + 14px);
+  scroll-padding-top: calc(var(--chat-top-overlap, 0px) + 20px);
   scroll-padding-bottom: calc(var(--chat-bottom-overlap, 0px) + var(--composer-clear));
 }
 .main:has(> .composer-slot) > .topbar { position: relative; z-index: 4; }
 .main:has(> .composer-slot) > .topbar::before,
-.main:has(> .composer-slot) > .topbar::after { content: ''; position: absolute; inset: 0 0 -16px; height: auto; z-index: -1; pointer-events: none; }
-/* Blur, then the wash. Both end at the band's bottom edge with nothing left to cut off: a blur that stops
-   where the box stops reads as a line across the text. */
+.main:has(> .composer-slot) > .topbar::after { content: ''; position: absolute; inset: 0 0 -30px; height: auto; z-index: -1; pointer-events: none; }
+/* The two edges are one effect, drawn twice: a wash of the page colour over what scrolls out, and a blur that
+   fades with it. Neither is a block with a boundary; both are thickest at the screen's edge and gone a few
+   tens of pixels in, so the bar and the composer read as floating over the text, not as frosted slabs.
+   The top: the wash stays close to opaque behind the title row, so no line of text runs through the title,
+   then eases out below it. */
 .main:has(> .composer-slot) > .topbar::before {
-  -webkit-backdrop-filter: blur(var(--glass-fade-blur)); backdrop-filter: blur(var(--glass-fade-blur));
-  -webkit-mask-image: linear-gradient(#000 calc(env(safe-area-inset-top) + 20px), rgba(0, 0, 0, 0.5) calc(env(safe-area-inset-top) + 40px), rgba(0, 0, 0, 0.18) calc(env(safe-area-inset-top) + 58px), transparent calc(env(safe-area-inset-top) + 76px));
-  mask-image: linear-gradient(#000 calc(env(safe-area-inset-top) + 20px), rgba(0, 0, 0, 0.5) calc(env(safe-area-inset-top) + 40px), rgba(0, 0, 0, 0.18) calc(env(safe-area-inset-top) + 58px), transparent calc(env(safe-area-inset-top) + 76px));
+  -webkit-backdrop-filter: blur(var(--glass-edge-blur)); backdrop-filter: blur(var(--glass-edge-blur));
+  -webkit-mask-image: linear-gradient(#000 calc(100% - 66px), rgba(0, 0, 0, 0.6) calc(100% - 30px), rgba(0, 0, 0, 0.2) calc(100% - 14px), transparent);
+  mask-image: linear-gradient(#000 calc(100% - 66px), rgba(0, 0, 0, 0.6) calc(100% - 30px), rgba(0, 0, 0, 0.2) calc(100% - 14px), transparent);
 }
-/* Starts as the system status area's own colour and eases down to --glass-fade, so no line shows where the two meet. */
+/* Starts as the system status area's own colour and eases down to --glass-edge, so no line shows where the two meet. */
 .main:has(> .composer-slot) > .topbar::after {
   background: linear-gradient(var(--bg), var(--bg) calc(env(safe-area-inset-top) + 8px),
-    color-mix(in srgb, var(--bg) 72%, transparent) calc(env(safe-area-inset-top) + 18px),
-    color-mix(in srgb, var(--bg) 48%, transparent) calc(env(safe-area-inset-top) + 29px),
-    color-mix(in srgb, var(--bg) var(--glass-fade), transparent) calc(env(safe-area-inset-top) + 40px),
-    color-mix(in srgb, var(--bg) calc(var(--glass-fade) * 0.7), transparent) calc(env(safe-area-inset-top) + 52px),
-    color-mix(in srgb, var(--bg) calc(var(--glass-fade) * 0.3), transparent) calc(env(safe-area-inset-top) + 66px), transparent calc(env(safe-area-inset-top) + 76px));
+    color-mix(in srgb, var(--bg) var(--glass-edge), transparent) calc(env(safe-area-inset-top) + 22px),
+    color-mix(in srgb, var(--bg) var(--glass-edge), transparent) calc(100% - 56px),
+    color-mix(in srgb, var(--bg) 62%, transparent) calc(100% - 30px),
+    color-mix(in srgb, var(--bg) 36%, transparent) calc(100% - 22px),
+    color-mix(in srgb, var(--bg) 16%, transparent) calc(100% - 14px),
+    color-mix(in srgb, var(--bg) 5%, transparent) calc(100% - 7px), transparent);
 }
-/* Under the composer on a phone, two bands. The tint is as tall as the gap kept below the last line,
-   so at rest it falls on empty space and the newest output stays sharp; the blur is only a short fade
-   at the box's top edge, for what scrolls behind it. The slot's other children sit above both.
-   A wide screen draws neither: a band there reads as a grey bar with square corners around a round
-   box, so the box gets a soft shadow of its own instead. */
+/* The bottom, on a phone: the same wash and blur, over the composer's own height plus 40px of fade above
+   its box, down to the screen's edge. Under the box and the home indicator it stays the page colour, so
+   nothing smears there; above it, it fades. The height is the composer's, not the slot's (App.tsx measures
+   it): a notice or the read-only handover note stacked over the box takes no part. The slot's children
+   sit above both layers, and a menu opening upward from the box still covers what is above it. The wide
+   screen draws neither: a band there reads as a grey bar with square corners around a round box, so the
+   box gets a soft shadow of its own instead. */
 .main:has(> .composer-slot) { --composer-clear: 48px; }
 .composer-slot > :not(.action-sheet) { position: relative; z-index: 1; }
-.composer-slot::before, .composer-slot::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; pointer-events: none; }
+.composer-slot::before, .composer-slot::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: calc(var(--chat-composer-h, 0px) + 40px); pointer-events: none; }
 .composer-slot::before {
-  top: -16px;
-  -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
-  -webkit-mask-image: linear-gradient(to top, #000 calc(100% - 16px), transparent); mask-image: linear-gradient(to top, #000 calc(100% - 16px), transparent);
+  -webkit-backdrop-filter: blur(var(--glass-edge-blur)); backdrop-filter: blur(var(--glass-edge-blur));
+  -webkit-mask-image: linear-gradient(transparent, #000 40px); mask-image: linear-gradient(transparent, #000 40px);
 }
 .composer-slot::after {
-  top: calc(-1 * var(--composer-clear));
-  background: linear-gradient(to top, rgba(0, 0, 0, var(--glass-scrim)) 0, rgba(0, 0, 0, calc(var(--glass-scrim) * 0.6)) calc(100% - var(--composer-clear)), transparent 100%);
+  background: linear-gradient(transparent,
+    color-mix(in srgb, var(--bg) 7%, transparent) 8px,
+    color-mix(in srgb, var(--bg) 24%, transparent) 16px,
+    color-mix(in srgb, var(--bg) 50%, transparent) 25px,
+    color-mix(in srgb, var(--bg) 72%, transparent) 33px,
+    color-mix(in srgb, var(--bg) 84%, transparent) 40px,
+    color-mix(in srgb, var(--bg) var(--glass-edge), transparent) 72px);
 }
 @media (min-width: 900px) {
   .composer-slot::before, .composer-slot::after { display: none; }
   .composer-box { box-shadow: var(--glass-rim), var(--glass-halo); }
 }
 /* The docked selection menu hides the box but not the slot, which stays as tall as the box with its
-   notes: its bands would blur a bare stretch of the thread above the menu. The menu is glass itself. */
+   notes: the edge would wash a bare stretch of the thread above the menu. The menu is glass itself. */
 .app:has(.selection-menu.docked) .composer-slot::before, .app:has(.selection-menu.docked) .composer-slot::after { display: none; }
 .in-titlebar .main > .topbar::before, .in-titlebar .main > .topbar::after { display: none; }
 
@@ -14207,20 +14292,23 @@ body:has(.settings-page, .action-sheet) .pet { display: none; }
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .glass-control, .topbar .menu-btn, .topbar-actions, .composer-box, .menu-panel, .pop-panel.anchored-pop, .selection-menu, .settings-actions, .round-btn, .jump-btn, .pet-summon, .command-menu, .coord-mention-menu, .action-sheet-card { background: var(--surface); }
   .main:has(> .composer-slot) > .topbar::before { display: none; }
-  .main:has(> .composer-slot) > .topbar::after { background: var(--bg); }
-  .composer-slot::before, .composer-slot::after { display: none; }
+  .main:has(> .composer-slot) > .topbar::after { background: linear-gradient(var(--bg) calc(100% - 30px), transparent); }
+  .composer-slot::before { display: none; }
+  .composer-slot::after { background: linear-gradient(transparent, var(--bg) 40px); }
 }
 @media (prefers-reduced-transparency: reduce) {
   .glass-control, .topbar .menu-btn, .topbar-actions, .composer-box, .menu-panel, .pop-panel.anchored-pop, .selection-menu, .settings-actions, .round-btn, .jump-btn, .pet-summon, .command-menu, .coord-mention-menu, .action-sheet-card { background: var(--surface); -webkit-backdrop-filter: none; backdrop-filter: none; }
   .main:has(> .composer-slot) > .topbar::before { display: none; }
-  .main:has(> .composer-slot) > .topbar::after { background: var(--bg); -webkit-backdrop-filter: none; backdrop-filter: none; }
-  .composer-slot::before, .composer-slot::after { display: none; }
+  .main:has(> .composer-slot) > .topbar::after { background: linear-gradient(var(--bg) calc(100% - 30px), transparent); -webkit-backdrop-filter: none; backdrop-filter: none; }
+  .composer-slot::before { display: none; }
+  .composer-slot::after { background: linear-gradient(transparent, var(--bg) 40px); }
 }
 /* A wide screen draws the composer solid: an opaque card with its soft halo, and the conversation
    ends above it instead of sliding under a translucent box. With no status area above it, the top bar
    is frosted across its whole row: mostly the page's colour over a strong blur, so what scrolls
    under it shows only as a soft shadow and never runs into the title, fading out below the row. */
 @media (min-width: 900px) {
+  .main:has(> .composer-slot) > .topbar::before, .main:has(> .composer-slot) > .topbar::after { inset: 0 0 -16px; }
   .main:has(> .composer-slot) > .topbar::after { background: linear-gradient(color-mix(in srgb, var(--bg) var(--glass-bar), transparent) calc(100% - 16px), transparent); }
   .main:has(> .composer-slot) > .topbar::before { -webkit-backdrop-filter: blur(var(--glass-bar-blur)); backdrop-filter: blur(var(--glass-bar-blur)); -webkit-mask-image: linear-gradient(#000 calc(100% - 16px), transparent); mask-image: linear-gradient(#000 calc(100% - 16px), transparent); }
   .main:has(> .composer-slot) > .scroller {
@@ -14536,3 +14624,118 @@ body:has(.settings-page, .action-sheet) .pet { display: none; }
 
 .thread-peek-status { color: var(--muted); font-size: 12px; white-space: nowrap; }
 .thread-peek .action-sheet { max-height: calc(100% - 76px); overflow-y: auto; }
+
+/* References share the composer with numbered notes, without taking their numbers. */
+.context-references { display: flex; gap: 6px; overflow-x: auto; max-width: 100%; padding: 4px 0; }
+.context-reference { display: flex; align-items: center; flex: 0 0 auto; max-width: 240px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); }
+.context-reference button { display: flex; align-items: center; gap: 6px; padding: 6px 8px; min-width: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; }
+.context-reference button:hover { background: var(--hover); color: var(--text); }
+.context-reference button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.context-reference svg { flex-shrink: 0; }
+.pop-panel.context-picker-panel { width: min(440px, calc(100vw - 24px)); }
+.reference-picker { padding: 8px; }
+.reference-search { width: 100%; padding: 10px; color: var(--text); background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); font: inherit; font-size: 13px; }
+/* One kind of reference at a time: the three lists never stack into one long phone scroll. */
+.reference-tabs { display: flex; gap: 2px; margin: 8px 0 2px; padding: 3px; border-radius: var(--radius-pill); background: var(--surface-2); }
+.reference-tabs button { flex: 1; min-width: 0; display: inline-flex; align-items: center; justify-content: center; gap: 5px; border: 0; border-radius: var(--radius-pill); background: transparent; color: var(--muted); font: inherit; font-size: 12px; padding: 6px 4px; cursor: pointer; }
+.reference-tabs button[aria-selected='true'] { background: var(--surface); color: var(--text); font-weight: 550; }
+.reference-tab-count { color: var(--faint); font-size: 11px; font-weight: 400; }
+.reference-tabs button[aria-selected='true'] .reference-tab-count { color: var(--muted); }
+/* The list takes only the height it needs, up to the old cap: a tab with two folders must not
+   leave an empty sheet on a phone. Typing changes it, which is the person's own doing. */
+.reference-results { height: auto; min-height: 96px; max-height: min(380px, 45dvh); overflow-y: auto; margin-top: 8px; }
+.reference-option { display: flex; align-items: center; gap: 10px; width: 100%; min-width: 0; padding: 10px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text); font: inherit; font-size: 13px; text-align: start; cursor: pointer; }
+.reference-option:hover { background: var(--hover); }
+.reference-option > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reference-option strong, .reference-option small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 400; }
+.reference-option small { color: var(--muted); font-size: 11px; margin-top: 3px; }
+.reference-option svg { flex-shrink: 0; }
+.reference-directory, .reference-location { display: flex; align-items: center; gap: 6px; }
+.reference-directory .reference-option { flex: 1; }
+.reference-location { padding: 4px 10px; color: var(--muted); font-size: 11px; }
+.reference-location span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reference-location button, .reference-results p button { border: 0; background: var(--surface-2); color: var(--text); border-radius: var(--radius-sm); padding: 6px; cursor: pointer; font: inherit; }
+.reference-state { min-height: 32px; padding: 6px 10px; color: var(--muted); font-size: 12px; }
+.reference-status { min-height: 28px; padding: 8px 4px 0; color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+.reference-path { overflow-wrap: anywhere; }
+.reference-detail { max-height: calc(100dvh - 32px); overflow-y: auto; overflow-wrap: anywhere; }
+
+.composer-box > .context-references { margin: 10px 14px 0; max-width: calc(100% - 28px); padding: 0; }
+
+/* Message actions keep the fork visible and share one menu across input methods. */
+.message-action-control { display: inline-flex; position: relative; }
+.message-action-error { color: var(--danger); font-size: 12px; overflow-wrap: anywhere; }
+.message-action-control > .message-action-error { position: absolute; top: 100%; left: 0; width: min(280px, 60vw); z-index: 1; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px; }
+.message-menu-anchor { position: fixed; width: 0; height: 0; pointer-events: none; }
+.user-message-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 2px; width: 100%; }
+.user-message-actions:has(.message-edit) { align-items: flex-end; }
+.user-message-actions > .pop { opacity: 0; }
+.row.user:hover .user-message-actions > .pop, .row.user:focus-within .user-message-actions > .pop { opacity: 1; }
+.message-selection-dialog, .message-assistant-dialog { width: min(580px, calc(100vw - 24px)); max-height: calc(var(--vvh, 100dvh) - 24px); overflow-y: auto; }
+.message-selection-text { display: block; width: 100%; height: min(48dvh, 380px); margin-top: 16px; padding: 12px; resize: none; color: var(--text); background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); font: inherit; line-height: 1.7; user-select: text; -webkit-user-select: text; }
+.message-source { margin: 16px 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+.message-source > button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.message-source > button svg { flex-shrink: 0; }
+.message-source > div { white-space: pre-wrap; max-height: 28dvh; overflow-y: auto; }
+.message-assistant-dialog textarea { display: block; width: 100%; min-height: 110px; resize: vertical; margin-top: 8px; padding: 10px; font: inherit; line-height: 1.6; background: var(--surface-2); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.message-assistant-dialog > .muted { font-size: 12px; }
+.message-selection-dialog .dialog-actions { flex-wrap: wrap; }
+@media (hover: none) {
+  .user-message-actions > .pop { opacity: .75; }
+  .user-message-actions .quiet-btn { width: 36px; height: 36px; }
+  [data-message-key] { -webkit-touch-callout: none; }
+}
+
+/* Git opens beside the conversation; file patches and history are loaded on demand. */
+.git-panel { width: 410px; max-width: 44vw; flex: none; min-width: 320px; height: 100%; display: flex; flex-direction: column; border-left: 1px solid var(--border); background: var(--surface); }
+.git-panel.phone { position: fixed; inset: 0; width: 100%; max-width: none; min-width: 0; z-index: 60; border-left: 0; padding-top: var(--safe-top); padding-bottom: var(--safe-bottom); }
+.git-head { display: flex; flex: none; align-items: center; gap: 6px; height: 60px; padding: 0 16px; border-bottom: 1px solid var(--border); }
+.git-head strong { flex: 1; font-size: 14px; font-weight: 600; }
+.git-body { flex: 1; min-height: 0; overflow: auto; padding: 22px; overscroll-behavior: contain; }
+.git-body[hidden] { display: none; }
+.git-repo { color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.git-branch { font-family: ui-monospace, monospace; font-size: 20px; font-weight: 500; margin: 7px 0; overflow-wrap: anywhere; }
+.git-tracking { display: flex; gap: 12px; align-items: center; color: var(--muted); font-size: 11px; }
+.git-tracking span:first-child { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.git-tracking span:last-child { flex: none; white-space: nowrap; }
+.git-actions { display: flex; gap: 8px; margin: 20px 0 10px; }
+.git-actions button { border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); color: var(--text); font-family: inherit; cursor: pointer; flex: 1; min-width: 0; height: 36px; padding: 0 8px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; font-size: 12px; white-space: nowrap; }
+.git-actions .primary-btn { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+.git-actions button:hover:not(:disabled) { filter: brightness(.96); }
+.git-actions button:disabled { opacity: .45; cursor: default; }
+.git-hint { font-size: 11px; color: var(--muted); line-height: 1.7; margin: 0; }
+.git-block { margin: 16px 0 0; padding: 10px 12px; font-size: 12px; line-height: 1.7; border-radius: var(--radius-sm); background: var(--writing-todo-bg); color: var(--warn); }
+.git-error { flex: none; padding: 12px 18px; font-size: 12px; line-height: 1.7; background: var(--danger-bg); color: var(--danger); overflow-wrap: anywhere; }
+.git-error .text-btn { margin-left: 8px; color: inherit; }
+.git-tabs { display: flex; gap: 22px; border-bottom: 1px solid var(--border); margin-top: 26px; }
+.git-tabs button { border: 0; border-bottom: 2px solid transparent; padding: 10px 0; background: none; color: var(--muted); font: inherit; font-size: 13px; cursor: pointer; }
+.git-tabs button[aria-selected=true] { color: var(--text); border-bottom-color: var(--text); }
+.git-section { display: flex; justify-content: space-between; gap: 12px; margin: 22px 0 6px; font-size: 11px; color: var(--muted); }
+.git-file { display: flex; align-items: center; gap: 10px; width: 100%; border: 0; border-bottom: 1px solid var(--border); background: none; color: var(--text); padding: 13px 0; text-align: left; cursor: pointer; }
+.git-file:hover, .git-commit:hover { background: var(--hover); }
+.git-file-name { flex: 1; min-width: 0; }
+.git-file-name strong { display: block; font-size: 13px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.git-file-name small { display: block; min-height: 16px; font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.git-status-code { flex: none; width: 15px; font: 11px ui-monospace, monospace; color: var(--muted); }
+.git-commit { display: block; width: 100%; padding: 15px 0; text-align: left; border: 0; border-bottom: 1px solid var(--border); background: none; color: var(--text); cursor: pointer; }
+.git-commit strong { display: block; font-size: 13px; font-weight: 500; overflow-wrap: anywhere; }
+.git-commit small { display: block; margin-top: 5px; color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+.git-empty { padding: 45px 0; text-align: center; font-size: 13px; color: var(--muted); line-height: 1.8; }
+.git-foot { flex: none; height: 54px; padding: 8px 22px; border-top: 1px solid var(--border); font-size: 11px; color: var(--muted); line-height: 18px; }
+.git-foot span { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.git-load-more { display: block; width: 100%; margin-top: 16px; }
+.git-detail h2 { font-size: 17px; line-height: 1.5; font-weight: 600; overflow-wrap: anywhere; margin: 0 0 8px; }
+.git-detail-progress { height: 28px; padding-top: 8px; color: var(--muted); font-size: 11px; }
+.git-diff { margin: 12px -10px 0; padding: 12px 10px; overflow: auto; font: 12px/1.8 ui-monospace, monospace; background: var(--code-bg); border-radius: var(--radius-sm); tab-size: 2; }
+.git-diff > span { display: block; min-width: max-content; white-space: pre; }
+.git-diff .git-added { background: var(--positive-bg); color: var(--positive); }
+.git-diff .git-removed { background: var(--danger-bg); color: var(--danger); }
+.git-diff .git-hunk { color: var(--muted); }
+.git-skeleton i { display: block; height: 18px; background: var(--hover); border-radius: var(--radius-sm); margin-bottom: 16px; }
+.git-skeleton i:first-child { width: 45%; }
+.git-skeleton i:nth-child(2) { height: 30px; width: 80%; }
+.git-skeleton i:nth-child(4) { height: 36px; margin-top: 25px; }
+.git-skeleton i:nth-child(5) { height: 160px; margin-top: 60px; }
+.git-spinning svg { animation: git-spin 1s linear infinite; }
+@keyframes git-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .git-spinning svg { animation: none; } }

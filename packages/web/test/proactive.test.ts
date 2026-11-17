@@ -57,6 +57,14 @@ test('the filter lists each matter once, by the run still open to a decision', (
   assert.equal(matters.find(item => item.matterId === 'gone')!.todo, null);
 });
 
+test('sessions that belong to no matter are listed one row each, by session', () => {
+  const first = run({ kind: 'advance', matterId: '', threadId: 't1', status: 'asking', reason: 'user' });
+  const second = run({ kind: 'advance', matterId: '', threadId: 't2', status: 'asking', reason: 'user' });
+  const rows = proactiveMatters([first, second], []);
+  assert.deepEqual(rows.map(row => row.matterId).sort(), ['thread:t1', 'thread:t2']);
+  assert.ok(rows.every(row => row.todo === null));
+});
+
 test('the filter count comes from the plans, without reading the runs', () => {
   assert.equal(proactiveCount([todo('a', 2), todo('b', 0), todo('c')]), 1);
 });
@@ -92,4 +100,31 @@ test('discarded work leaves no card and no filter row', () => {
 
 test('saving sends the mode and repositories, never the read-only enabled', () => {
   assert.deepEqual(settingsPayload({ mode: 'observe', repos: ['/a'], enabled: true }), { mode: 'observe', repos: ['/a'] });
+});
+
+test('advance cards offer only the actions legal for their current state', () => {
+  assert.deepEqual(runControls(run({ kind: 'advance', status: 'asking', reason: 'user' })), ['answer']);
+  assert.deepEqual(runControls(run({ kind: 'advance', status: 'asking', reason: 'transient' })), ['answer']);
+  assert.deepEqual(runControls(run({ kind: 'advance', status: 'asking', reason: 'external' })), ['answer']);
+  assert.deepEqual(runControls(run({ kind: 'advance', status: 'asking', reason: 'done' })), ['close-matter', 'dismiss']);
+  assert.deepEqual(runControls(run({ kind: 'advance', status: 'waiting' })), ['dismiss']);
+  assert.deepEqual(runControls(run({ kind: 'sandbox', needsRepo: true, status: 'observed' })), ['allow-repo', 'dismiss']);
+  for (const status of ['answered', 'continued', 'closed', 'discarded'] as const) {
+    assert.deepEqual(runControls(run({ kind: 'advance', status })), []);
+  }
+});
+
+test('open questions, waits and repository permissions survive newer records', () => {
+  const question = run({ kind: 'advance', status: 'asking', reason: 'user' });
+  const wait = run({ kind: 'advance', status: 'waiting', reason: 'external' });
+  const permission = run({ needsRepo: true, status: 'observed' });
+  const closed = run({ kind: 'advance', status: 'closed' });
+  const approved = run({ status: 'approved' });
+  const all = [question, wait, permission, closed, approved];
+  assert.deepEqual(new Set(matterRuns(all, 'm1').map(item => item.id)), new Set(all.map(item => item.id)));
+  for (const item of [question, wait, permission]) assert.equal(isDecision(item), true);
+  assert.equal(isDecision(closed), false);
+  const plan = run({ kind: 'prepare', variant: 'plan', status: 'ready' });
+  assert.deepEqual(runControls(plan), []);
+  assert.equal(isDecision(plan), false);
 });

@@ -1,5 +1,5 @@
 import { HttpError } from './errors.js';
-import { effectiveHandoverMode, type HandoverLink } from './handover-mode.js';
+import { effectiveHandoverMode, handoverSourceMoved, type HandoverLink } from './handover-mode.js';
 import { mkdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
@@ -838,6 +838,36 @@ export class Store {
   }
   deleteTeam(id: string): void { this.db.prepare('DELETE FROM teams WHERE id = ?').run(id); }
 
+  /**
+   * Feishu message -> thread. Both the owner's messages and the bot's replies are kept, so replying
+   * to either one carries on the same thread. The table is created on first use.
+   */
+  private feishuTables(): void {
+    this.db.exec('CREATE TABLE IF NOT EXISTS feishu_links (message_id TEXT PRIMARY KEY, chat_id TEXT, thread_id TEXT NOT NULL, at INTEGER NOT NULL)');
+    this.db.exec('CREATE INDEX IF NOT EXISTS feishu_links_thread ON feishu_links (thread_id, at)');
+    this.db.exec('CREATE TABLE IF NOT EXISTS feishu_seen (message_id TEXT PRIMARY KEY, at INTEGER NOT NULL)');
+  }
+  /** True the first time a message id is seen; Feishu redelivers events, and each message is handled once. */
+  feishuSeen(messageId: string): boolean {
+    this.feishuTables();
+    const now = Date.now();
+    this.db.prepare('DELETE FROM feishu_seen WHERE at < ?').run(now - 7 * 86_400_000);
+    return this.db.prepare('INSERT OR IGNORE INTO feishu_seen (message_id, at) VALUES (?, ?)').run(messageId, now).changes > 0;
+  }
+  feishuLink(messageId: string, chatId: string | null, threadId: string): void {
+    this.feishuTables();
+    this.db.prepare('INSERT OR REPLACE INTO feishu_links (message_id, chat_id, thread_id, at) VALUES (?, ?, ?, ?)').run(messageId, chatId, threadId, Date.now());
+  }
+  feishuThreadOf(messageId: string): string | null {
+    this.feishuTables();
+    return (this.db.prepare('SELECT thread_id FROM feishu_links WHERE message_id = ?').get(messageId) as { thread_id: string } | undefined)?.thread_id ?? null;
+  }
+  /** The newest Feishu message of a thread: where an answer to a turn started on the web goes. */
+  feishuLastOf(threadId: string): string | null {
+    this.feishuTables();
+    return (this.db.prepare('SELECT message_id FROM feishu_links WHERE thread_id = ? ORDER BY at DESC, rowid DESC LIMIT 1').get(threadId) as { message_id: string } | undefined)?.message_id ?? null;
+  }
+
   hubSetting<T>(key: string, fallback: T): T {
     const row = this.db.prepare('SELECT value FROM hub_settings WHERE key = ?').get(key) as { value: string } | undefined;
     return row ? JSON.parse(row.value) as T : fallback;
@@ -943,6 +973,11 @@ export class Store {
 
   handoverMode(thread: ThreadRecord) {
     return thread.handover ? effectiveHandoverMode(this.db, thread.handover, thread.createdAt) : null;
+  }
+
+  /** Whether the source of this thread's handover has had a turn since; null without a handover. */
+  handoverSourceMoved(thread: ThreadRecord): boolean | null {
+    return thread.handover ? handoverSourceMoved(this.db, thread.handover, thread.createdAt) : null;
   }
 
   detachHandover(id: string): void {

@@ -1,5 +1,6 @@
 import { personalServer } from './personal.js';
 import { PushService } from './push.js';
+import { FeishuChat } from './feishu-chat.js';
 import { CoordinationManager, coordinationServer } from './coordination.js';
 import { adoptLegacyEnv, loadConfig, loadDotEnv } from './config.js';
 import { ExtensionHost } from './extension-host.js';
@@ -9,6 +10,7 @@ import { loadSupportedExternalCatalog } from './external-extensions.js';
 import { Desktop, parseDesktopSetting } from './desktop.js';
 import { createHttpServer, listenPrivate, socketHeld } from './http.js';
 import { HostRegistry } from './hosts.js';
+import { RelayClient } from './relay-client.js';
 import { AgentRegistry, defaultInstances } from './agents.js';
 import { AttachmentStore } from './attachments.js';
 import { LocalSessions } from './local-sessions.js';
@@ -120,6 +122,8 @@ async function main(): Promise<void> {
   const workerReports = new WorkerReports(manager);
   workerReports.start();
   const push = new PushService(store, manager);
+  const feishu = new FeishuChat(store, manager);
+  void feishu.configure();
   const personalPath = join(config.dataDir, 'personal', 'calli.sock');
   manager.personal.socket = personalPath;
   const personal = personalServer(manager.personal);
@@ -168,9 +172,8 @@ async function main(): Promise<void> {
     });
   }
   const terminals = new TerminalManager({ workdirs: () => dirs.all(), shell: config.termShell ?? undefined });
-  // Other machines, each reached over SSH through its daemon's socket.
-  const hosts = new HostRegistry({ file: join(config.dataDir, 'hosts.json'), ssh: config.sshCommand });
-  hosts.start();
+  // Other machines connect out to this hub through their relay clients.
+  const hosts = new HostRegistry({ file: join(config.dataDir, 'hosts.json') });
   // Collaboration can then run members on the machines the hub reaches.
   coordination.hosts = hosts;
   // Catch-up runs need all thread-scoped sockets and runtime services to be ready.
@@ -181,7 +184,7 @@ async function main(): Promise<void> {
   // Previews are served on a port of their own: the iframe needs an origin separate from the app
   // (see preview.ts). One port past the app's is the default; CALLI_PREVIEW_PORT picks another.
   const previewPort = Number(process.env.CALLI_PREVIEW_PORT) || config.port + 1;
-  const server = createHttpServer({ manager, push, registry, terminals, desktop, hosts, scheduler, extensions, voice, autotitle, localSessions, machineUsage: machineUsage ?? undefined, token: config.token, webDir: config.webDir, version: VERSION, previewPort });
+  const server = createHttpServer({ manager, push, feishu, registry, terminals, desktop, hosts, scheduler, extensions, voice, autotitle, localSessions, machineUsage: machineUsage ?? undefined, token: config.token, webDir: config.webDir, version: VERSION, previewPort });
   // Same requests, other origin: preview frames load from here so their pages cannot reach the
   // app, while their own CSS and scripts load same-origin. Without the port, previews say so.
   const preview = createHttpServer({ manager, registry, terminals, hosts, scheduler, extensions, token: config.token, webDir: null, version: VERSION, previewPort });
@@ -190,7 +193,7 @@ async function main(): Promise<void> {
   });
   preview.listen(previewPort, config.host, () => console.log(`previews on http://${config.host}:${previewPort}`));
   // The same API on a socket only this user can open: how a hub on another machine reaches this one.
-  const local = config.socket ? createHttpServer({ manager, push, registry, terminals, desktop, scheduler, extensions, voice, autotitle, localSessions, machineUsage: machineUsage ?? undefined, trusted: true, token: config.token, webDir: null, version: VERSION }) : null;
+  const local = config.socket ? createHttpServer({ manager, push, feishu, registry, terminals, desktop, scheduler, extensions, voice, autotitle, localSessions, machineUsage: machineUsage ?? undefined, trusted: true, token: config.token, webDir: null, version: VERSION }) : null;
   let ownsSocket = false;
   if (local && config.socket) {
     listenPrivate(local, config.socket)
@@ -199,6 +202,15 @@ async function main(): Promise<void> {
         console.log(ok ? `socket: ${config.socket}` : `socket: ${config.socket} belongs to another daemon, not listening on it`);
       })
       .catch((err) => console.warn(`warning: could not listen on ${config.socket}: ${err instanceof Error ? err.message : err}`));
+  }
+
+  // A hub elsewhere this machine joined: connect out to it and answer its requests from the socket above.
+  let relay: RelayClient | null = null;
+  if (config.hub && !config.socket) console.warn('warning: CALLI_HUB_URL is set but CALLI_SOCKET is off; not joining the hub');
+  else if (config.hub && config.socket) {
+    relay = new RelayClient({ hubUrl: config.hub.url, token: config.hub.token, socket: config.socket, version: VERSION });
+    relay.start();
+    console.log(`hub: connecting out to ${new URL(config.hub.url).origin}`);
   }
 
   server.listen(config.port, config.host, () => {
@@ -231,8 +243,10 @@ async function main(): Promise<void> {
     // that looks does not take a stopped daemon for a running one.
     if (ownsSocket && config.socket) rmSync(config.socket, { force: true });
     hosts.dispose();
+    relay?.stop();
     scheduler.dispose();
     push.dispose();
+    feishu.dispose();
     await voice.dispose();
     extensions.dispose();
     coordination.dispose();
