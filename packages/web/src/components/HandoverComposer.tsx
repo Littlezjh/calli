@@ -21,7 +21,8 @@ export function HandoverComposer({ api, thread, sourceId, label, hostId, attachB
   const [detachError, setDetachError] = useState('');
   return <>
     <div className="handover-readonly glass-control" role="status"><span>{t('handover.chain.viewingEarlier')}</span><div className="handover-readonly-actions"><button className="text-btn" onClick={onLatest}>{t('handover.chain.goLatest')}</button><button className="text-btn" onClick={() => { setDetachError(''); setDetach(true); }}>{t('handover.chain.detach')}</button></div></div>
-    <Composer draftKey={hostId ? `host:${hostId}:${thread.id}` : thread.id} running={thread.status === 'running'}
+    <Composer referenceSource={!api.demo ? { api, cwd: thread.cwd, threadId: thread.id } : undefined}
+      draftKey={hostId ? `host:${hostId}:${thread.id}` : thread.id} running={thread.status === 'running'}
       placeholder={thread.status === 'running' ? t('sideChat.queuePlaceholder') : t('app.placeholder.continue')}
       header={<button className="text-btn" onClick={onLatest}>{label}{thread.waiting ? ` · ${waitingLabel(thread)}` : ''}</button>} left={null} right={null}
       commands={[]} actions={[]} hiddenCommands={[]} onAction={() => {}} attachBlocked={attachBlocked}

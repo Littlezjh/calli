@@ -105,6 +105,7 @@ import { ThreadPeek } from './components/ThreadPeek';
 import { RemoteThreadMenu } from './extensions/RemoteThreadMenu';
 import { ExtensionView } from './extensions/ExtensionView';
 import { machineSummaries, threadMachine, parseThreadLink } from './extensions/project';
+import { threadLinkHash, type ThreadDeepLink } from './thread-deep-links';
 import { createThreadFeed } from './extensions/thread-feed';
 import { cachedAgentMarks, cachedThreads, rememberAgentMarks, rememberThreads } from './thread-cache';
 import { cachedAgents, cachedDraft, cachedModels, cachedPet, rememberAgents, rememberDraft, rememberModels, rememberPetBust, rememberPetStatus } from './host-cache';
@@ -1065,7 +1066,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   // The passage a side chat was opened for, if one is open.
   const [sideAsk, setSideAsk] = useState<{ text: string; nonce: number; source?: Thread } | null>(null);
   // A message waiting for the user to confirm sending into a session the terminal also used.
-  const [pendingSend, setPendingSend] = useState<{ text: string; images: PreparedImage[]; videos?: PreparedVideo[]; mentions?: AgentMention[]; resolve: () => void; reject: (e: unknown) => void } | null>(null);
+  const [pendingSend, setPendingSend] = useState<{ perform: () => Promise<void>; resolve: () => void; reject: (e: unknown) => void } | null>(null);
   const [pageHidden, setPageHidden] = useState(() => document.hidden);
   const baseTitle = useRef(document.title);
 
@@ -2171,7 +2172,8 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
     // interleaves turns, so ask before joining in again.
     // The composer keeps the draft and its pictures until this settles, so backing out loses nothing.
     if (selectedId && selected?.terminalActivity) {
-      return new Promise<void>((resolve, reject) => setPendingSend({ text, images, videos, mentions, resolve, reject }));
+      // Confirmation may appear after navigation; keep the originating thread and scoped API closure.
+      return new Promise<void>((resolve, reject) => setPendingSend({ perform: () => performSend(text, images, false, mentions, videos), resolve, reject }));
     }
     await performSend(text, images, true, mentions, videos);
   };
@@ -2430,6 +2432,37 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
     if (opts.scratch) setDraftScratch(true);
     setDraftSectionId(opts.sectionId ?? null);
   });
+
+  const searchThreads = useCallback((query: string) => api.search(query), [api]);
+  const resolveThreadLink = useCallback(async (link: ThreadDeepLink): Promise<Thread | null> => {
+    if (!token || api.demo) throw new Error(t('search.linkFailed'));
+    if (link.machine !== null) {
+      const machines = hostsLoaded ? hosts : await api.hosts().catch(error => {
+        throw new Error(error instanceof AuthError ? t('app.tokenExpired') : t('search.linkFailed'));
+      });
+      const machine = machines.find(host => host.id === link.machine);
+      if (!machine) throw new Error(t('app.machineNotFound'));
+      if (machine.status !== 'online') throw new Error(t('sidebar.hostDown'));
+    }
+    // The link's null scope is the hub, even when the selected sidebar is another machine's.
+    const target = link.machine === api.host ? api : new Api(token, '', link.machine);
+    try {
+      return await target.thread(link.id);
+    } catch (error) {
+      if (error instanceof ApiError && error.details.code === 'host_offline') throw new Error(t('sidebar.hostDown'));
+      if (error instanceof ApiError && error.status === 404) return null;
+      throw new Error(error instanceof AuthError ? t('app.tokenExpired') : t('search.linkFailed'));
+    }
+  }, [api, token, hostsLoaded, hosts]);
+  const openSearchLink = (value: string) => {
+    const link = parseThreadLink(value, window.location.href);
+    if (!link) return;
+    const sourceHash = value.startsWith('#') ? value : new URL(value).hash;
+    const preview = new URLSearchParams(sourceHash.split('?')[1]).get('preview');
+    const hash = threadLinkHash(link.id, link.machine);
+    // Follow the existing route, retaining preview but dropping tokens and unrelated parameters.
+    window.location.hash = hash + (preview ? `${hash.includes('?') ? '&' : '?'}preview=${encodeURIComponent(preview)}` : '');
+  };
 
   // A turn a search found: its thread is opened and the conversation is brought to that turn. An
   // archived thread comes back out of the archive, as it does when opened from anywhere else.
@@ -3052,8 +3085,10 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           onNew={() => newThread()}
           onNewIn={newThread}
           compact={compact}
-          onSearch={api ? (q) => api.search(q) : undefined}
+          onSearch={searchThreads}
           onOpenHit={(hit) => void openHit(hit)}
+          onResolveThreadLink={resolveThreadLink}
+          onOpenThreadLink={openSearchLink}
           onOpenSettings={() => showcase ? showcase.onInstall() : openSettings()}
           hosts={hosts}
           hostId={hostId}
@@ -3796,7 +3831,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           onConfirm={() => {
             const p = pendingSend;
             setPendingSend(null);
-            performSend(p.text, p.images, false, p.mentions, p.videos).then(p.resolve, p.reject);
+            p.perform().then(p.resolve, p.reject);
           }}
         />
       )}

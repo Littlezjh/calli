@@ -2,6 +2,7 @@ import brandIcon from '../assets/calli.svg';
 import { Fragment, useEffect, useState, type MouseEvent, type ReactNode } from 'react';
 import type { ExternalSession, HostInfo, SearchHit, Section, Thread } from '../api';
 import type { AgentMarkInfo } from '../thread-cache';
+import { isThreadLinkQuery, parseThreadLink, type ThreadDeepLink } from '../thread-deep-links';
 import { clockLabel } from '../timeline';
 import { useInTitlebar, useLongPress, useStoredFlag, useStoredSet } from '../hooks';
 import { attentionCount, threadMark, waitingLabel, type ThreadMark } from '../notices';
@@ -102,6 +103,10 @@ interface Props {
   onSearch?: (query: string) => Promise<SearchHit[]>;
   /** Opens the thread a found turn is in, at that turn. */
   onOpenHit?: (hit: SearchHit) => void;
+  /** Reads one exact identity on the link's machine without opening or restoring it. */
+  onResolveThreadLink?: (link: ThreadDeepLink) => Promise<Thread | null>;
+  /** Follows the original route only after the person clicks its result. */
+  onOpenThreadLink?: (query: string) => void;
   /** This machine's agent sessions that are not threads yet; they mix into the list by time. */
   external?: ExternalSession[];
   /** `off`: this machine does not list them (an older daemon, or the demo). */
@@ -185,6 +190,8 @@ export function Sidebar({
   onOpenElsewhere,
   onSearch,
   onOpenHit,
+  onResolveThreadLink,
+  onOpenThreadLink,
   external = [],
   externalState = 'off',
   onImportExternal,
@@ -197,15 +204,32 @@ export function Sidebar({
   // What was said, looked up a moment after the typing stops. `for` is the search the hits answer.
   const [found, setFound] = useState<{ for: string; hits: SearchHit[] } | null>(null);
   const query = search.trim();
+  const linkQuery = isThreadLinkQuery(query);
+  const link = linkQuery ? parseThreadLink(query, window.location.href) : null;
+  const [linkFound, setLinkFound] = useState<{ for: string; resolver: Props['onResolveThreadLink']; thread: Thread | null; error?: string } | null>(null);
   useEffect(() => {
-    if (!onSearch || query.length < SEARCH_MIN) { setFound(null); return; }
+    if (linkQuery || !onSearch || query.length < SEARCH_MIN) { setFound(null); return; }
     let stale = false;
     const timer = setTimeout(() => {
       onSearch(query).then((hits) => { if (!stale) setFound({ for: query, hits }); }).catch(() => { if (!stale) setFound({ for: query, hits: [] }); });
     }, 220);
     return () => { stale = true; clearTimeout(timer); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query]);
+  }, [query, linkQuery, onSearch]);
+  useEffect(() => {
+    const target = linkQuery ? parseThreadLink(query, window.location.href) : null;
+    if (!target || !onResolveThreadLink) { setLinkFound(null); return; }
+    let stale = false;
+    const timer = setTimeout(() => {
+      onResolveThreadLink(target).then(thread => {
+        if (!stale) setLinkFound({ for: query, resolver: onResolveThreadLink, thread });
+      }).catch(error => {
+        if (!stale) setLinkFound({ for: query, resolver: onResolveThreadLink, thread: null, error: error instanceof Error ? error.message : t('search.linkFailed') });
+      });
+    }, 220);
+    // A new query or resolver scope invalidates both pending and already displayed results.
+    return () => { stale = true; clearTimeout(timer); };
+  }, [query, linkQuery, onResolveThreadLink]);
+  const resolvedLink = linkFound?.for === query && linkFound.resolver === onResolveThreadLink ? linkFound : null;
   const [expandedHandovers, setExpandedHandovers] = useState<Set<string>>(new Set());
   // A team is open on its own while a member works or waits, or is the one on screen; a click overrides that.
   const [teamOpen, setTeamOpen] = useState<Map<string, boolean>>(new Map());
@@ -226,9 +250,11 @@ export function Sidebar({
   // This machine's sessions that are not threads yet mix into the list by their time; every
   // machine's own list (the merged view) shows threads only.
   const withExternal = merged ? threads : withExternalSessions(threads, external);
-  const model = buildSidebar(withExternal, sections, search);
-  const mergedModel = merged ? buildMerged(merged, search, new Date(), selectedId) : null;
-  const activity = byActivity && !mergedModel ? buildActivity(withExternal, search, new Date(), selectedId) : null;
+  // Link identities never enter the title, directory, or conversation keyword filters.
+  const listSearch = linkQuery ? '' : search;
+  const model = buildSidebar(withExternal, sections, listSearch);
+  const mergedModel = merged ? buildMerged(merged, listSearch, new Date(), selectedId) : null;
+  const activity = byActivity && !mergedModel ? buildActivity(withExternal, listSearch, new Date(), selectedId) : null;
   // Out of their project groups, rows say where they are and what was asked last.
   const flat = byActivity || Boolean(mergedModel);
   // The machine on screen being down hides its list, unless every machine is listed.
@@ -671,7 +697,7 @@ export function Sidebar({
       {notice}
       <div className="sidebar-scroll">
         {onHost && !search.trim() && <HostSwitcher hosts={hosts} current={hostId} onPick={onHost} all={Boolean(mergedModel)} onAll={onAll} />}
-        {down && <p className="group-empty top">{t('sidebar.hostDown')}</p>}
+        {down && !linkQuery && <p className="group-empty top">{t('sidebar.hostDown')}</p>}
         {!down && !search.trim() && (
           <div className="side-nav">
             {(() => {
@@ -729,10 +755,28 @@ export function Sidebar({
             )}
           </div>
         )}
-        {!down && groups}
+        {linkQuery ? (
+          <nav className="thread-groups thread-link-search" aria-label={t('sidebar.threads')}>
+            {!link ? <p className="group-empty top" role="alert">{t('search.linkInvalid')}</p>
+              : !onResolveThreadLink ? <p className="group-empty top" role="alert">{t('search.linkFailed')}</p>
+              : !resolvedLink ? <p className="group-empty top" role="status">{t('search.linkLoading')}</p>
+              : resolvedLink.error ? <p className="group-empty top" role="alert">{resolvedLink.error}</p>
+              : !resolvedLink.thread ? <p className="group-empty top">{t('search.linkEmpty')}</p>
+              : (
+                <button type="button" className={`search-hit thread-link-result${link.machine === hostId && resolvedLink.thread.id === selectedId ? ' active' : ''}`} onClick={() => onOpenThreadLink?.(query)}>
+                  <span className="search-hit-top">
+                    <span className="thread-title">{resolvedLink.thread.title}</span>
+                    {resolvedLink.thread.archivedAt && <span className="search-hit-tag">{t('search.linkArchived')}</span>}
+                    <time dateTime={resolvedLink.thread.updatedAt}>{clockLabel(resolvedLink.thread.updatedAt)}</time>
+                  </span>
+                  <span className="search-hit-text">{[link.machine !== null ? hosts.find(host => host.id === link.machine)?.label : null, folderName(projectDir(resolvedLink.thread).cwd)].filter(Boolean).join(' · ')}</span>
+                </button>
+              )}
+          </nav>
+        ) : !down && groups}
         {/* Reading the machine's sessions, or importing one, went wrong: said here, where the rows
             are, with a way to try again. Cleared by the next attempt. */}
-        {!down && !mergedModel && externalError && (
+        {!linkQuery && !down && !mergedModel && externalError && (
           <p className="group-empty external-error" role="alert">
             {externalError.message}
             {externalError.retry && (
@@ -751,7 +795,7 @@ export function Sidebar({
             {t('sidebar.moreExternal')}
           </button>
         )}
-        {!down && onSearch && query.length >= SEARCH_MIN && (
+        {!linkQuery && !down && onSearch && query.length >= SEARCH_MIN && (
           <section className="search-hits" aria-label={t('sidebar.inConversations')}>
             <div className="search-hits-head">{t('sidebar.inConversations')}</div>
             {found?.for !== query ? (

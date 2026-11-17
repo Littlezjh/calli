@@ -54,10 +54,4 @@ export function threadMachine(sources: Array<{ hostId: string | null; threads: T
   return source.hostId;
 }
 
-export function parseThreadLink(hash: string): { id: string; machine: string | null } | null {
-  if (!hash.startsWith('#/thread/')) return null;
-  try {
-    const [id, query] = hash.slice('#/thread/'.length).split('?');
-    return { id: decodeURIComponent(id), machine: new URLSearchParams(query).get('machine') || null };
-  } catch { return null; }
-}
+export { parseThreadLink } from '../thread-deep-links';

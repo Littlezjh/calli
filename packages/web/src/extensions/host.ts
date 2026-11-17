@@ -11,6 +11,7 @@ import type { Api } from '../api';
 import { memoryMessages } from './memory-messages';
 import { locale } from '../i18n';
 import { hasPermission } from './permissions';
+import { threadLinkHash } from '../thread-deep-links';
 
 export interface HostInputs {
   extension: ExtensionState | null;
@@ -127,7 +128,7 @@ export function createWebHost(
         const thread = visible(inputs).find(t => t.id === id);
         if (!thread) throw new Error('Thread permission required');
         const machine = thread.machine ? thread.machine.id : inputs.machines?.[0]?.id ?? null;
-        return `#/thread/${encodeURIComponent(id)}${machine === null ? '' : `?machine=${encodeURIComponent(machine)}`}`;
+        return threadLinkHash(id, machine);
       },
     } } : {}),
     threads: {

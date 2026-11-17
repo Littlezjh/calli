@@ -1,4 +1,4 @@
-import { referencePreview, mergeReferences, splitReferences, withReferences, type ContextReference } from '../context-references';
+import { referencePreview, mergeReferences, resolveThreadLinkReferences, splitReferences, ThreadLinkReferenceError, withReferences, type ContextReference } from '../context-references';
 import { ReferenceChips, ReferencePicker, type ReferenceSource } from './ContextReferences';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject } from 'react';
 import { flushSync } from 'react-dom';
@@ -69,6 +69,17 @@ interface Draft {
   sending?: Sending;
   /** A newly prepared handover should put the cursor in its input. */
   focus?: boolean;
+}
+
+/** Both HTTP and SSE acknowledgments remove only the captured send, not a newer draft. */
+function unsentDraft(latest: Draft, sent: Draft): Draft {
+  return { ...latest, text: latest.text === sent.text ? '' : latest.text,
+    notes: latest.notes.filter(note => !sent.notes.some(value => value.id === note.id)),
+    references: (latest.references ?? []).filter(reference => !(sent.references ?? []).some(value => value.id === reference.id
+      || value.kind === 'thread' && reference.kind === 'thread' && value.sourceId === reference.sourceId)),
+    mentions: latest.mentions?.filter(mention => !sent.mentions?.includes(mention)),
+    images: latest.images.filter(image => !sent.images.some(value => value.id === image.id)),
+    videos: latest.videos?.filter(video => !sent.videos?.some(value => value.id === video.id)), sending: undefined };
 }
 
 /** A box's content as the one text it is sent as: the notes, numbered, then the words. */
@@ -419,7 +430,7 @@ export function Composer({
     openReferences(mentionMatch.query);
   }, [referenceSource, text, draftKey, mentionMatch?.start, mentionMatch?.query, addOpen]);
   const chooseReference = (reference: ContextReference) => {
-    if (references.length >= 12 && !references.some(r => r.id === reference.id)) { onError(t('references.limit', 12)); return; }
+    if (mergeReferences(references, [reference]).length > 12) { onError(t('references.limit', 12)); return; }
     setReferences(current => mergeReferences(current, [reference]));
     if (mentionMatch) setText(current => current.slice(0, mentionMatch.start) + current.slice(mentionMatch.end));
     setMentionDismissed(true);
@@ -473,7 +484,7 @@ export function Composer({
   useEffect(() => onNotesChange?.(notes), [notes, onNotesChange]);
   useEffect(() => {
     if (!reference) return;
-    if (references.length >= 12 && !references.some(value => value.id === reference.value.id)) onError(t('references.limit', 12));
+    if (mergeReferences(references, [reference.value]).length > 12) onError(t('references.limit', 12));
     else setReferences(current => mergeReferences(current, [reference.value]));
     onReferenceConsumed?.(reference.value.id);
     ref.current?.focus();
@@ -507,6 +518,9 @@ export function Composer({
   const draftRef = useRef<Draft>({ text, notes, references, images, videos });
   draftRef.current = { text, notes, references, images, videos, mentions, ...(unsettled ? { sending: inFlight.current! } : {}) };
   const sendingRef = useRef(false);
+  const pendingSend = useRef<{ key: string | undefined; targetKey: string | undefined; draft: Draft; dispatching: boolean; acknowledged: boolean } | null>(null);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const previousDraftKey = useRef(draftKey);
   useLayoutEffect(() => {
     if (draftKey === undefined) return;
@@ -514,8 +528,10 @@ export function Composer({
     previousDraftKey.current = draftKey;
     // Creating a thread changes its draft key before uploads finish. Keep that first message
     // in the new thread so an interrupted upload still has an editable, retryable draft.
-    const firstMessage = sendingRef.current && (previous === 'new' || previous?.endsWith(':new'));
-    const saved = loadDraft(draftKey) ?? (firstMessage ? draftRef.current : undefined);
+    const pending = pendingSend.current;
+    const firstMessage = pending?.dispatching && pending.key === previous && (previous === 'new' || previous?.endsWith(':new'));
+    const saved = loadDraft(draftKey) ?? (firstMessage ? pending.draft : undefined);
+    if (firstMessage) { pending.targetKey = draftKey; if (saved) keepDraft(draftKey, saved); }
     inFlight.current = saved?.sending ?? null;
     setText(saved?.text ?? '');
     setReferences(saved?.references ?? []);
@@ -532,7 +548,10 @@ export function Composer({
       const draft = draftRef.current;
       // A message on its way out is not a draft: sending a new thread's first message opens the
       // thread mid-send, and the text must not stay behind in the next new thread.
-      keepDraft(draftKey, sendingRef.current ? null : draft);
+      const pending = pendingSend.current;
+      // Link lookups have not sent anything yet: switching away must retain their original draft.
+      const leavingNew = pending?.dispatching && pending.key === draftKey && (draftKey === 'new' || draftKey.endsWith(':new'));
+      keepDraft(draftKey, leavingNew ? null : draft);
     };
   }, [draftKey]);
 
@@ -582,15 +601,18 @@ export function Composer({
     if (!unsettled || !mark || !lastSent) return;
     if (lastSent.turnId === mark.after || lastSent.text.trim() !== mark.text.trim()) return;
     inFlight.current = null;
-    draftRef.current.images.forEach((img) => URL.revokeObjectURL(img.previewUrl));
-    draftRef.current.videos?.forEach(video => URL.revokeObjectURL(video.previewUrl));
-    setVideos([]);
-    setImages([]);
-    setText('');
-    setNotes([]);
-    setReferences([]);
-    setMentions([]);
-    if (draftKey !== undefined) keepDraft(draftKey, null);
+    const pending = pendingSend.current;
+    const captured = pending && pending.targetKey === draftKey && pending.draft.sending === mark ? pending : null;
+    const sent = captured?.draft ?? draftRef.current;
+    // SSE can arrive before the HTTP response; newly pasted or dropped files still belong to the box.
+    const remaining = unsentDraft(draftRef.current, sent);
+    if (captured) captured.acknowledged = true;
+    sent.images.forEach((img) => URL.revokeObjectURL(img.previewUrl));
+    sent.videos?.forEach(video => URL.revokeObjectURL(video.previewUrl));
+    draftRef.current = remaining;
+    setVideos(remaining.videos ?? []); setImages(remaining.images); setText(remaining.text);
+    setNotes(remaining.notes); setReferences(remaining.references ?? []); setMentions(remaining.mentions ?? []);
+    if (draftKey !== undefined) keepDraft(draftKey, remaining);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [unsettled, lastSent?.turnId, lastSent?.text, draftKey]);
   // Without a draft to keep them, thumbnails left in the box are released when it goes away.
@@ -840,40 +862,71 @@ export function Composer({
     if (taker && (images.length || videos.length)) return onError(t('composer.takeoverAttachments'));
     setBusy(true);
     sendingRef.current = true;
-    const message = asMessage(text, notes, references);
-    const mark: Sending = { text: message, after: lastSent?.turnId ?? null };
-    const sentFrom = draftKey;
-    // On the device the draft now says it is on its way. Should the page be reloaded before the
-    // send comes back, it is neither lost nor taken for something still to send.
-    if (sentFrom !== undefined) keepDraft(sentFrom, { text, notes, references, images, videos, mentions, sending: mark });
-    const slowTimer = setTimeout(() => setSlow(true), SLOW_SEND_MS);
+    // Capture the words, recipient and key before resolving; another thread may open meanwhile.
+    const pending = { key: draftKey, targetKey: draftKey, draft: { text, notes, references, images, videos, mentions } as Draft, dispatching: false, acknowledged: false };
+    pendingSend.current = pending;
+    const recipient = referenceSource?.api;
+    const send = onSend;
+    const deployment = window.location.href;
+    let mark: Sending | null = null;
+    const viewingDraft = () => mounted.current && keyRef.current === pending.targetKey;
+    if (pending.key !== undefined) keepDraft(pending.key, pending.draft);
+    const slowTimer = setTimeout(() => { if (mounted.current) setSlow(true); }, SLOW_SEND_MS);
     try {
+      const resolved = await resolveThreadLinkReferences({ body: text, references, deployment,
+        source: recipient ? { host: recipient.host, createReference: input => recipient.createReference(input) } : undefined,
+        onResolved: resolved => {
+          pending.draft = { ...pending.draft, references: resolved };
+          const current = viewingDraft() ? draftRef.current : pending.targetKey !== undefined ? loadDraft(pending.targetKey) ?? pending.draft : pending.draft;
+          const saved = { ...current, references: mergeReferences(resolved, current.references ?? []) };
+          // Persist completed snapshots even after a switch, but never put them in the new box.
+          if (pending.targetKey !== undefined) keepDraft(pending.targetKey, saved);
+          if (viewingDraft()) { draftRef.current = saved; setReferences(saved.references); }
+        },
+      });
+      pending.draft = { ...pending.draft, references: resolved };
+      const message = asMessage(text, notes, resolved);
+      mark = { text: message, after: lastSent?.turnId ?? null };
+      pending.draft.sending = mark;
+      const current = viewingDraft() ? draftRef.current : pending.targetKey !== undefined ? loadDraft(pending.targetKey) ?? pending.draft : pending.draft;
+      const saved = { ...current, references: mergeReferences(resolved, current.references ?? []), sending: mark };
+      // Save the exact wire message before dispatch, so retry/reload reuses the same snapshots.
+      if (pending.targetKey !== undefined) keepDraft(pending.targetKey, saved);
+      if (viewingDraft()) { draftRef.current = saved; setReferences(saved.references); inFlight.current = mark; }
+      pending.dispatching = true;
       if (taker) await takeover!.go(taker.id, [message, taker.task?.trim()].filter(Boolean).join('\n\n'));
-      else await onSend(message, images, mentions, videos);
-      setMentions([]);
-      // Forget the sent draft at once, but retain words committed while its request was pending.
-      const remainingText = draftRef.current.text === text ? '' : draftRef.current.text;
-      if (sentFrom !== undefined) keepDraft(sentFrom, null);
-      if (remainingText && keyRef.current !== undefined) keepDraft(keyRef.current, { text: remainingText, notes: [], images: [] });
-      inFlight.current = null;
-      setNotes([]);
-      setReferences([]);
+      else await send(message, images, mentions, videos);
+      const latest = viewingDraft() ? draftRef.current : pending.targetKey !== undefined ? loadDraft(pending.targetKey) ?? pending.draft : pending.draft;
+      // SSE already consumed this send; identical text typed afterward is a new draft, not a retry.
+      const remaining = pending.acknowledged ? { ...latest, sending: undefined } : unsentDraft(latest, pending.draft);
+      if (pending.key !== undefined && pending.key !== pending.targetKey) keepDraft(pending.key, null);
+      if (pending.targetKey !== undefined) keepDraft(pending.targetKey, remaining);
+      if (viewingDraft()) {
+        inFlight.current = null;
+        draftRef.current = remaining;
+        setText(remaining.text); setNotes(remaining.notes); setReferences(remaining.references ?? []);
+        setMentions(remaining.mentions ?? []); setImages(remaining.images); setVideos(remaining.videos ?? []);
+      }
       images.forEach((img) => URL.revokeObjectURL(img.previewUrl));
       videos.forEach(video => URL.revokeObjectURL(video.previewUrl));
-      setVideos([]);
-      setImages([]);
-      setText(current => current === text ? '' : current);
-    } catch {
-      // The caller shows the error; keep the draft and the pictures so nothing is lost. The mark
-      // stays too: a send can fail on this side (the page being reloaded, the answer lost on a bad
-      // line) after the daemon took the message, and then the thread will show it.
-      inFlight.current = mark;
+    } catch (error) {
+      if (error instanceof ThreadLinkReferenceError) onError(error.message);
+      // Only an unacknowledged dispatched send is uncertain. Restore its captured draft even if
+      // new-thread cleanup removed it, but never reintroduce a message already confirmed by SSE.
+      if (mark && !pending.acknowledged) {
+        const current = viewingDraft() ? draftRef.current : pending.targetKey !== undefined ? loadDraft(pending.targetKey) ?? pending.draft : pending.draft;
+        const saved = { ...current, references: mergeReferences(pending.draft.references ?? [], current.references ?? []), sending: mark };
+        if (pending.targetKey !== undefined) keepDraft(pending.targetKey, saved);
+        if (viewingDraft()) { draftRef.current = saved; setReferences(saved.references); inFlight.current = mark; }
+      }
     } finally {
       clearTimeout(slowTimer);
-      setSlow(false);
       sendingRef.current = false;
-      setBusy(false);
-      ref.current?.focus();
+      pendingSend.current = null;
+      if (mounted.current) {
+        setSlow(false); setBusy(false);
+        if (viewingDraft()) ref.current?.focus();
+      }
     }
   };
   const submitRef = useRef(submit);

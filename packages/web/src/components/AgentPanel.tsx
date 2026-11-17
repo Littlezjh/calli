@@ -232,7 +232,8 @@ export function AgentPanel({ api, memberApi, team, agents, leadAgent, memberMode
     {/* A member is written to directly, in a box like the lead's; going through the lead instead is
         the quiet control above it, and carries what was written along. */}
     {member && thread ? <div className="agent-panel-composer">
-      <Composer key={thread.id} draftKey={remote ? `host:${remote}:${thread.id}` : thread.id} running={thread.status === 'running'}
+      <Composer key={thread.id} referenceSource={!threadApi.demo ? { api: threadApi, cwd: thread.cwd, threadId: thread.id } : undefined}
+        draftKey={remote ? `host:${remote}:${thread.id}` : thread.id} running={thread.status === 'running'}
         placeholder={thread.status === 'running' ? t('sideChat.queuePlaceholder') : t('team.directPlaceholder', member.name)}
         banner={take => <div className="agent-panel-via"><button type="button" className="text-btn" onClick={() => onAdjust(member.name, take())}><IconAgents size={13} />{t('team.adjustViaLead')}</button></div>}
         header={null} left={null} right={null} commands={[]} actions={[]} hiddenCommands={[]} onAction={() => {}}
