@@ -105,7 +105,8 @@ export function ThreadPeek({ api, initial, draftKey, returnFocus, onClose, onOpe
         items={timeline.items} roots={[thread.cwd, thread.cwdReal]} loadImage={loadImage} loadFile={loadFile}
         observeOlder={false} hasOlder={cursor !== null} loadingOlder={loadingOlder} onLoadOlder={() => void loadOlder()} />}
     </div>
-    <Composer attachBlocked={null} restore={null} note={null} draftKey={draftKey} running={timeline.running || thread.status === 'running'}
+    <Composer referenceSource={!api.demo ? { api, cwd: thread.cwd, threadId: thread.id } : undefined}
+      attachBlocked={null} restore={null} note={null} draftKey={draftKey} running={timeline.running || thread.status === 'running'}
       placeholder={timeline.running ? t('sideChat.queuePlaceholder') : t('app.placeholder.continue')}
       onSend={async (text, images, _mentions, videos = []) => {
         await api.startTurn(thread.id, text, images.map(({ data, mimeType }) => ({ data, mimeType })),

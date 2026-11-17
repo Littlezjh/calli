@@ -1,4 +1,5 @@
-import { referencePreview, splitReferences, withReferences } from '../context-references';
+import { referencePreview, resolveThreadLinkReferences, splitReferences, withReferences } from '../context-references';
+import { readDrafts, writeDraft } from '../drafts';
 import { ReferenceChips } from './ContextReferences';
 import { MessageActionButton, MessageMore, PointMessageMenu, SelectMessage, useMessageGestures, type MessageAction } from './MessageActions';
 import { channelRows, hydrateHistoryFiles } from '../timeline';
@@ -377,6 +378,9 @@ export function ThreadView({ onOpenFinds, chain = false, observeOlder = true, be
                   text={item.text}
                   imageIds={item.images.map((img) => img.id)}
                   revision={revision}
+                  api={historyApi}
+                  threadId={historyThreadId}
+                  draftKey={historyThreadId ? `message-edit:${historyApi?.host ?? 'main'}:${historyThreadId}:${item.turnId}` : undefined}
                   onSend={(edit) => onEdit(item.turnId, edit)}
                 />
               )}
@@ -696,7 +700,7 @@ function DeferredFileDiff({ detail, path }: { detail: DetailRef; path: string })
  * conversation up to just before this message and asks again from there; the page then reloads
  * the current conversation. Nothing changes until the user sends.
  */
-function EditMessage({ text, imageIds, revision, onSend }: { text: string; imageIds: string[]; revision: number; onSend: (edit: { text: string; images: string[]; revision: number; requestId: string }) => Promise<void> }) {
+function EditMessage({ text, imageIds, revision, onSend, api, threadId, draftKey }: { text: string; imageIds: string[]; revision: number; api?: Api; threadId?: string; draftKey?: string; onSend: (edit: { text: string; images: string[]; revision: number; requestId: string }) => Promise<void> }) {
   const [open, setOpen] = useState(false);
   const parsed = splitReferences(text);
   const [references, setReferences] = useState(parsed.references);
@@ -705,9 +709,21 @@ function EditMessage({ text, imageIds, revision, onSend }: { text: string; image
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const area = useRef<HTMLTextAreaElement | null>(null);
+  const sending = useRef(false);
+  const mounted = useRef(true);
+  const identity = useRef({ api, draftKey });
+  identity.current = { api, draftKey };
+  useLayoutEffect(() => { setOpen(false); setBusy(false); }, [api, draftKey]);
+  let store: Storage | null = null;
+  try { store = window.localStorage; } catch { /* A private browser may not expose storage. */ }
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  useEffect(() => {
+    if (open && store && draftKey !== undefined && !sending.current) writeDraft(store, draftKey, { text: draft, references, notes: [] });
+  }, [open, draft, references, draftKey, store]);
   const start = () => {
-    setDraft(parsed.body);
-    setReferences(parsed.references);
+    const saved = store && draftKey !== undefined ? readDrafts(store)[draftKey] : undefined;
+    setDraft(saved?.text ?? parsed.body);
+    setReferences(saved?.references ?? parsed.references);
     setKept(imageIds);
     setError('');
     setOpen(true);
@@ -720,17 +736,33 @@ function EditMessage({ text, imageIds, revision, onSend }: { text: string; image
     });
   };
   const send = async () => {
-    if (busy || (!draft.trim() && !references.length)) return;
+    if (busy || sending.current || (!draft.trim() && !references.length)) return;
+    sending.current = true;
     setBusy(true);
     setError('');
+    const recipient = api;
+    const key = draftKey;
+    const current = () => mounted.current && identity.current.api === recipient && identity.current.draftKey === key;
     try {
       const noted = splitNotes(draft);
-      await onSend({ text: withNotes(noted.notes, withReferences(references, noted.body)), images: kept, revision, requestId: editRequestId() });
-      setOpen(false);
+      const resolved = await resolveThreadLinkReferences({ body: noted.body, references, deployment: window.location.href, editingThreadId: threadId,
+        source: recipient ? { host: recipient.host, createReference: input => recipient.createReference(input) } : undefined,
+        onResolved: resolved => {
+          // Failed edits and reloads keep their snapshots; a switched message never receives them.
+          if (store && key !== undefined) writeDraft(store, key, { text: draft, references: resolved, notes: [] });
+          if (current()) setReferences(resolved);
+        },
+      });
+      if (store && key !== undefined) writeDraft(store, key, { text: draft, references: resolved, notes: [] });
+      if (current()) setReferences(resolved);
+      await onSend({ text: withNotes(noted.notes, withReferences(resolved, noted.body)), images: kept, revision, requestId: editRequestId() });
+      if (store && key !== undefined) writeDraft(store, key, null);
+      if (current()) setOpen(false);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (current()) setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setBusy(false);
+      sending.current = false;
+      if (current()) setBusy(false);
     }
   };
   if (!open) return (
@@ -744,6 +776,7 @@ function EditMessage({ text, imageIds, revision, onSend }: { text: string; image
       <textarea
         ref={area}
         value={draft}
+        disabled={busy}
         aria-label={t('view.editMessage')}
         onChange={(e) => {
           setDraft(e.target.value);

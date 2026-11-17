@@ -74,7 +74,8 @@ for (const phone of [false, true]) for (const colorScheme of ['light', 'dark']) 
       await hits.getByText('对话里没有找到。').waitFor();
       await box.fill('灯塔水母');
       await hits.locator('.search-hit', { hasText: '已归档' }).first().click();
-      await page.getByText('已从归档恢复').waitFor();
+      // Archive restore is silent in the current UI; verify navigation and persisted state.
+      await page.locator('.topbar-title', { hasText: shelved.title }).waitFor();
       await page.locator('.thread .row.user', { hasText: '灯塔水母的养殖笔记' }).waitFor();
       assert.equal((await (await api(daemon, `/api/threads/${shelved.id}`)).json()).archivedAt, null);
       assert.deepEqual(errors, []);

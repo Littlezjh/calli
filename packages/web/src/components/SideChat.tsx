@@ -194,6 +194,7 @@ export function SideChat({
         </div>
 
         <Composer
+          referenceSource={!api.demo ? { api, cwd, threadId: threadId ?? undefined } : undefined}
           running={running}
           placeholder={running ? t('sideChat.queuePlaceholder') : t('sideChat.placeholder')}
           onSend={send}

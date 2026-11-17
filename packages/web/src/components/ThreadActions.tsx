@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import { ApiError, type AgentInfo, type Api, type HandoverTarget, type Section, type Thread, type Todo } from '../api';
 import { copyText } from '../clipboard';
+import { threadDeepLink } from '../thread-deep-links';
 import { folderName } from '../paths';
 import { cancellableHandover } from '../handover';
 import { ChoiceDialog, Dialog } from './Dialog';
@@ -63,6 +64,7 @@ interface Deps {
 type MenuState = { x: number; y: number; where: 'list' | 'page' } & ({ thread: Thread } | { section: Section });
 
 type DialogState =
+  | { kind: 'copy-link-failed'; link: string }
   | { kind: 'rename'; thread: Thread }
   | { kind: 'delete'; thread: Thread }
   /** The worktree to be deleted holds work that exists nowhere else: asked once more, with the count. */
@@ -194,19 +196,27 @@ export function useThreadActions(deps: Deps) {
     }
   };
 
-  const copy = async (value: string | null | Promise<string>) => {
+  const copy = async (value: string | null | Promise<string>, reportFailure?: (text: string) => void) => {
     try {
       const text = await value;
       if (!text) return;
       // The clipboard holds the result; only a failure needs saying.
-      if (!(await copyText(text))) onError(t('actions.copyFailed'));
+      if (!(await copyText(text))) {
+        if (reportFailure) reportFailure(text);
+        else onError(t('actions.copyFailed'));
+      }
     } catch (e) {
       onError(e);
     }
   };
 
-  /** What a row's menu offers: how the thread sits in the list. As in ChatGPT and the Claude app,
-   *  a row menu holds only row management, never the conversation's own tools. */
+  // The scoped API belongs to the menu's thread, including rows on another machine.
+  const copyLink = (thread: Thread): MenuEntry => ({
+    id: 'copy-link', label: t('actions.copyDeepLink'), icon: IconCopy,
+    onSelect: () => void copy(threadDeepLink(thread.id, api?.host ?? null, window.location.href), link => setDialog({ kind: 'copy-link-failed', link })),
+  });
+
+  /** What a row's menu offers: how the thread sits in the list and its stable address. */
   const listItems = (thread: Thread): MenuEntry[] => {
     const filed = sections.some((s) => s.id === thread.sectionId);
     const linkedTodoIds = new Set(todos.filter((todo) => todo.threads.some((it) => it.id === thread.id)).map((todo) => todo.id));
@@ -231,6 +241,7 @@ export function useThreadActions(deps: Deps) {
         onSelect: () => void patch(thread, { unread: !thread.unread }, thread.unread ? undefined : () => onMarkedUnread(thread)),
       },
       { id: 'rename', label: t('actions.rename'), icon: IconEdit, onSelect: () => run('rename', thread) },
+      copyLink(thread),
       ...(autotitle ? [{ id: 'autotitle', label: t('actions.autotitle'), icon: IconSparkle, onSelect: () => void autoName(thread) }] : []),
       ...(board ? [{ id: 'board', label: t('actions.board'), icon: IconBoard, submenu: (['backlog', 'doing', 'blocked', 'review', 'done'] as const).map(place) }] : []),
       {
@@ -310,6 +321,7 @@ export function useThreadActions(deps: Deps) {
       label: t('common.copy'),
       icon: IconCopy,
       submenu: [
+        copyLink(thread),
         { id: 'copy-md', label: t('actions.copyMarkdown'), onSelect: () => void copy(markdownOf(thread)) },
         {
           id: 'copy-resume',
@@ -379,7 +391,13 @@ export function useThreadActions(deps: Deps) {
   };
 
   let dialogNode: ReactNode = null;
-  if (dialog && api) {
+  if (dialog?.kind === 'copy-link-failed') {
+    // The phone's open list hides page banners: keep the failure and selectable address above it.
+    dialogNode = <Dialog title={t('actions.copyDeepLink')} message={t('actions.copyFailed')}
+      confirmLabel={t('common.close')} hideCancel onConfirm={close} onCancel={close}>
+      <label className="dialog-field"><input readOnly value={dialog.link} aria-label={t('actions.copyDeepLink')} onFocus={event => event.currentTarget.select()} /></label>
+    </Dialog>;
+  } else if (dialog && api) {
     if (dialog.kind === 'rename') {
       const { thread } = dialog;
       dialogNode = (
