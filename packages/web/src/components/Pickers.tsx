@@ -89,6 +89,9 @@ export function PermissionPicker({ modes, value, onChange, canAsk, openSignal, q
 interface ModelProps {
   preferenceStatus?: 'loading' | 'ready' | 'error';
   onRetryPreference?: () => void;
+  /** Loading state for the model catalog itself, before any saved preference is considered. */
+  catalogStatus?: 'loading' | 'ready' | 'error';
+  onRetryCatalog?: () => void;
   onDiagnose?: () => void;
   /** False when the CLI does not expose a model catalog at all, rather than one that failed to load. */
   catalog?: boolean;
@@ -219,6 +222,15 @@ export function ModelPicker(props: ModelProps) {
   const { models, model, efforts, effort, openSignal, quietFor } = props;
   const narrow = useIsNarrow();
   if (props.catalog === false) return null;
+  if (props.catalogStatus && props.catalogStatus !== 'ready') {
+    const failed = props.catalogStatus === 'error';
+    const label = failed ? t('pickers.modelsLoadFailed') : t('common.loading');
+    return <Popover label={t('pickers.modelAndEffort')} align="end" panelClassName="model-control-panel"
+      triggerClassName="tool-btn model-control-trigger" triggerLabel={label} triggerTitle={label}
+      trigger={<><span className="model-trigger-name">{t('statusPanel.model')}</span><IconEffortGauge size={narrow ? 20 : 17} level={null} /></>}>
+      {() => <><div className="pop-title">{label}</div>{failed && <button type="button" className="pop-item compact" onClick={props.onRetryCatalog}>{t('common.retry')}</button>}</>}
+    </Popover>;
+  }
   if (props.preferenceStatus && props.preferenceStatus !== 'ready') {
     const failed = props.preferenceStatus === 'error';
     const label = failed ? t('pickers.preferenceFailed') : t('common.loading');

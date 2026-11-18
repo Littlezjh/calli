@@ -287,6 +287,18 @@ test('a CLI without a native catalog exposes no model or effort picker, includin
   assert.equal(renderToStaticMarkup(createElement(ModelPicker, { ...props, quietFor: 'CLI instance' })), '');
 });
 
+test('a loading or failed model catalog keeps a stable control and reports its state', async () => {
+  const { createElement } = await import('react');
+  const { renderToStaticMarkup } = await import('react-dom/server');
+  const { ModelPicker } = await import('../src/components/Pickers.js');
+  const props = { catalog: true, models: claude, model: null, efforts: [], effort: null, onModel: () => undefined, onEffort: () => undefined };
+  const loading = renderToStaticMarkup(createElement(ModelPicker, { ...props, catalogStatus: 'loading' }));
+  assert.match(loading, /class="tool-btn model-control-trigger"/);
+  assert.match(loading, /正在加载/);
+  const failed = renderToStaticMarkup(createElement(ModelPicker, { ...props, catalogStatus: 'error', onRetryCatalog: () => undefined }));
+  assert.match(failed, /模型列表读取失败/);
+});
+
 test('a legacy combined model-effort id resolves to its model family and effort', () => {
   const models = [
     { id: 'gemini-4-argon', label: 'Gemini 4 Argon', efforts: ['low', 'medium', 'high'], isDefault: true },

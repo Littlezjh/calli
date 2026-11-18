@@ -2417,6 +2417,8 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   const agentLabel = (id: string) => agents.find((a) => a.id === id)?.label ?? id;
   const capsOf = (id: string) => agents.find((a) => a.id === id)?.capabilities;
   const activeCaps = capsOf(activeAgent);
+  const sideAgent = sideAsk?.source?.agent ?? activeAgent;
+  const sideAgentInfo = agents.find((a) => a.id === sideAgent);
   const models = modelsByAgent[activeAgent] ?? [];
   const permissionModes = activeCaps?.permissionModes ?? [];
   const effortLevels = activeCaps?.effortLevels ?? [];
@@ -3730,7 +3732,9 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
       {sideAsk && (
         <SideChat
           api={api}
-          agent={sideAsk.source?.agent ?? activeAgent}
+          agent={sideAgent}
+          agentInfo={sideAgentInfo}
+          models={modelsByAgent[sideAgent] ?? []}
           agentLabel={agentLabel(sideAsk.source?.agent ?? activeAgent)}
           cwd={sideAsk.source?.cwd ?? activeCwd}
           permissionMode={sideAsk.source?.permissionMode ?? permission}
