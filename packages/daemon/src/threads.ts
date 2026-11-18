@@ -18,7 +18,7 @@ import type { VoiceTransport } from './voice-sessions.js';
 import { VoiceConversation } from './voice-conversation.js';
 import { turnOutcome } from './lifecycle.js';
 import { UserInputs } from './user-input.js';
-import type { SystemPrompt, WorkMode } from './adapters/types.js';
+import type { HistoryTurn, SystemPrompt, WorkMode } from './adapters/types.js';
 import { diagnosticFailure } from './adapters/diagnostics.js';
 import { turnAnswer, type CoordinationManager, type CoordinationSetup } from './coordination.js';
 import { Injections, type InjectionGate } from './injections.js';
@@ -759,7 +759,10 @@ export class ThreadManager {
       if (hubIndex < starts.length - 1) {
         // Match only through the requested boundary. Later turns may be running or divergent, and
         // they are not part of the copy being made.
-        cut = { upToSeq: starts[hubIndex + 1].seq - 1, hubIndex, hubKeys: starts.slice(0, hubIndex + 1).map((ev) => turnKey(String(ev.data.text ?? ''))) };
+        const sessionTurns = this.sessionHubTurns(thread, starts[hubIndex].seq);
+        cut = sessionTurns.complete
+          ? { upToSeq: starts[hubIndex + 1].seq - 1, hubIndex: sessionTurns.prefixCount + hubIndex, hubKeys: sessionTurns.keys }
+          : { upToSeq: starts[hubIndex + 1].seq - 1, hubIndex, hubKeys: starts.slice(0, hubIndex + 1).map((ev) => turnKey(String(ev.data.text ?? ''))) };
       }
     }
 
@@ -2183,6 +2186,45 @@ export class ThreadManager {
     }
   }
 
+  /**
+   * Every `turn.started` key the hub sent into `thread`'s underlying agent session, oldest first,
+   * including earlier segments of a `resume` handover chain whose transcript was copied forward.
+   * `prefixCount` is how many keys came from upstream segments, and `complete` is false when an
+   * ancestor thread was deleted so the session's prefix is no longer known.
+   */
+  private sessionHubTurns(thread: ThreadRecord, upToSeq?: number): { keys: string[]; prefixCount: number; complete: boolean } {
+    const ownStarts = this.store.listEventsOfType(thread.id, 'turn.started');
+    const own = (upToSeq === undefined ? ownStarts : ownStarts.filter((ev) => ev.seq <= upToSeq))
+      .map((ev) => turnKey(String(ev.data.text ?? '')));
+    const upstream: string[][] = [];
+    let cur: ThreadRecord = thread;
+    const seen = new Set<string>([thread.id]);
+    while (true) {
+      // `forkThread` copies the source's events into the fork's own log, so `cur` already holds
+      // `forkedFrom`'s turns; step past `forkedFrom` to pick up any `resume` chain behind it.
+      if (cur.forkedFrom) {
+        if (seen.has(cur.forkedFrom)) break;
+        seen.add(cur.forkedFrom);
+        const forkedSource = this.store.getThread(cur.forkedFrom);
+        if (!forkedSource) return { keys: own, prefixCount: 0, complete: cur.handover?.method !== 'resume' };
+        cur = forkedSource;
+        continue;
+      }
+      if (cur.handover?.method !== 'resume') break;
+      const { sourceId, sourceSeq } = cur.handover;
+      if (seen.has(sourceId)) break;
+      seen.add(sourceId);
+      const source = this.store.getThread(sourceId);
+      if (!source) return { keys: [...upstream.reverse().flat(), ...own], prefixCount: 0, complete: false };
+      const starts = this.store.listEventsOfType(sourceId, 'turn.started');
+      const slice = sourceSeq !== undefined ? starts.filter((ev) => ev.seq <= sourceSeq) : starts;
+      upstream.push(slice.map((ev) => turnKey(String(ev.data.text ?? ''))));
+      cur = source;
+    }
+    const prefix = upstream.reverse().flat();
+    return { keys: [...prefix, ...own], prefixCount: prefix.length, complete: true };
+  }
+
   private async doSync(thread: ThreadRecord): Promise<{ added: number; terminalActivity: boolean }> {
     const { id } = thread;
     const adapter = this.adapters.get(thread.agent);
@@ -2190,18 +2232,58 @@ export class ThreadManager {
       throw new HttpError(400, `this thread's session cannot be read back`);
     }
 
-    const agentTurns = await adapter.loadHistory(thread.agentSessionId, thread.cwd);
-    // Reading the history takes a while. A turn the hub started meanwhile is already in the agent's
-    // session, so the hub's turns are read after it, and a turn still running is left for later.
-    if (this.running.has(id)) return { added: 0, terminalActivity: this.view(thread).terminalActivity };
-    // Every turn the hub has, not one page of the log: a turn missing from this list would look
-    // new on the agent's side and be appended again on every sync.
-    const hubTexts = this.store.listEventsOfType(id, 'turn.started').map((ev) => turnKey(String(ev.data.text ?? '')));
-
-    const matched = matchTurns(agentTurns.map((t) => turnKey(t.text)), hubTexts, ThreadManager.SYNC_SKIP_TOLERANCE);
-    if (!matched) return { added: 0, terminalActivity: this.view(thread).terminalActivity }; // histories disagree
-    const fresh = agentTurns.slice(matched.agentNext);
-    if (fresh.length === 0) return { added: 0, terminalActivity: this.view(thread).terminalActivity };
+    const idleView = () => ({ added: 0, terminalActivity: this.view(this.store.getThread(id) ?? thread).terminalActivity });
+    let fresh: HistoryTurn[] = [];
+    const points = (await adapter.forkPoints?.(thread.agentSessionId, thread.cwd)) ?? null;
+    if (points !== null) {
+      if (this.running.has(id) || !this.store.getThread(id)) return idleView();
+      const hub = this.sessionHubTurns(this.getThread(id));
+      if (!hub.complete) return idleView();
+      const pointMatch = matchTurns(points.map((t) => turnKey(t.text)), hub.keys, ThreadManager.SYNC_SKIP_TOLERANCE);
+      if (pointMatch) {
+        if (pointMatch.agentNext >= points.length) return idleView();
+        // The session file has new turns at the tail; load the replay for their answers, tool calls and images.
+        const agentTurns = await adapter.loadHistory(thread.agentSessionId, thread.cwd);
+        const latestPoints = (await adapter.forkPoints?.(thread.agentSessionId, thread.cwd)) ?? points;
+        if (this.running.has(id) || !this.store.getThread(id)) return idleView();
+        const latestHub = this.sessionHubTurns(this.getThread(id));
+        if (!latestHub.complete) return idleView();
+        const latestMatch = matchTurns(latestPoints.map((t) => turnKey(t.text)), latestHub.keys, ThreadManager.SYNC_SKIP_TOLERANCE);
+        if (!latestMatch || latestMatch.agentNext >= latestPoints.length) return idleView();
+        const expected = latestPoints.slice(latestMatch.agentNext);
+        const tailCount = Math.min(agentTurns.length, expected.length);
+        const tail = tailCount > 0 ? agentTurns.slice(agentTurns.length - tailCount) : [];
+        const expectedTail = expected.slice(expected.length - tailCount);
+        if (tail.some((t, i) => turnKey(t.text) !== turnKey(expectedTail[i].text))) return idleView();
+        fresh = [
+          ...expected.slice(0, expected.length - tailCount).map((p): HistoryTurn => ({ text: p.text, images: [], events: [] })),
+          ...tail,
+        ];
+      } else {
+        // An imported post-compaction session only recorded what the replay had; match against the replay itself.
+        if (hub.keys.length === 0) return idleView();
+        const agentTurns = await adapter.loadHistory(thread.agentSessionId, thread.cwd);
+        if (this.running.has(id) || !this.store.getThread(id)) return idleView();
+        const latestHub = this.sessionHubTurns(this.getThread(id));
+        if (!latestHub.complete || latestHub.keys.length === 0) return idleView();
+        const matched = matchTurns(agentTurns.map((t) => turnKey(t.text)), latestHub.keys, ThreadManager.SYNC_SKIP_TOLERANCE);
+        if (!matched) return idleView();
+        fresh = agentTurns.slice(matched.agentNext);
+      }
+    } else {
+      const agentTurns = await adapter.loadHistory(thread.agentSessionId, thread.cwd);
+      // Reading the history takes a while. A turn the hub started meanwhile is already in the agent's
+      // session, so the hub's turns are read after it, and a turn still running is left for later.
+      if (this.running.has(id) || !this.store.getThread(id)) return idleView();
+      // Every turn the hub sent into this session, including earlier `resume` handover segments: a
+      // turn missing from this list would look new on the agent's side and be appended as terminal work.
+      const hub = this.sessionHubTurns(this.getThread(id));
+      if (!hub.complete) return idleView();
+      const matched = matchTurns(agentTurns.map((t) => turnKey(t.text)), hub.keys, ThreadManager.SYNC_SKIP_TOLERANCE);
+      if (!matched) return idleView(); // histories disagree
+      fresh = agentTurns.slice(matched.agentNext);
+    }
+    if (fresh.length === 0) return idleView();
 
     const events: StoredEvent[] = [];
     const images = fresh.map((turn) => {
@@ -2595,12 +2677,20 @@ export class ThreadManager {
 
     let branchSession = previous?.state === 'ready' ? previous.branchSession : null;
     if (!branchSession) {
-      const [agentTurns, hubTexts] = await Promise.all([
-        adapter.loadHistory(thread.agentSessionId, thread.cwd),
-        Promise.resolve(starts.map((ev) => turnKey(String(ev.data.text ?? '')))),
-      ]);
-      const matched = matchTurns(agentTurns.map((t) => turnKey(t.text)), hubTexts, ThreadManager.SYNC_SKIP_TOLERANCE);
-      const agentIndex = matched?.hubToAgent[hubIndex] ?? -1;
+      const sessionTurns = this.sessionHubTurns(thread);
+      const hubKeys = sessionTurns.complete ? sessionTurns.keys : starts.map((ev) => turnKey(String(ev.data.text ?? '')));
+      const targetIndex = sessionTurns.complete ? sessionTurns.prefixCount + hubIndex : hubIndex;
+      const replayed = await adapter.loadHistory(thread.agentSessionId, thread.cwd);
+      let agentTurns: Array<Pick<HistoryTurn, 'text' | 'forkRef' | 'forkBeforeRef'>> = replayed;
+      let matched = matchTurns(agentTurns.map((t) => turnKey(t.text)), hubKeys, ThreadManager.SYNC_SKIP_TOLERANCE);
+      if ((!matched || matched.hubToAgent[targetIndex] < 0) && adapter.forkPoints) {
+        const points = await adapter.forkPoints(thread.agentSessionId, thread.cwd);
+        if (points) {
+          agentTurns = points;
+          matched = matchTurns(agentTurns.map((t) => turnKey(t.text)), hubKeys, ThreadManager.SYNC_SKIP_TOLERANCE);
+        }
+      }
+      const agentIndex = matched?.hubToAgent[targetIndex] ?? -1;
       if (agentIndex < 0) throw new HttpError(409, `this turn is not in ${thread.agent}'s own history, so it cannot be edited`);
       const at = agentTurns[agentIndex];
       try {

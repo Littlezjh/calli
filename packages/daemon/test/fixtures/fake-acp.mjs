@@ -47,6 +47,57 @@ const HIST_MESSAGE_IDS = ['m1a', 'm1b', 'm2'];
 const rl = createInterface({ input: process.stdin });
 const out = (obj) => process.stdout.write(JSON.stringify(obj) + '\n');
 const sessionId = process.env.FAKE_ACP_SESSION ?? 'acp-session-1';
+let transcriptSeq = 0;
+
+function claudeTranscriptPath(id, cwd = process.cwd()) {
+  const root = process.env.CLAUDE_CONFIG_DIR ?? process.env.FAKE_SESSION_ROOT;
+  if (!root || !id) return null;
+  return join(root, 'projects', cwd.replace(/[^a-zA-Z0-9]/g, '-'), `${id}.jsonl`);
+}
+
+function appendClaudeTurn(id, promptText, answerText, midCompact = false, cwd = process.cwd()) {
+  const path = claudeTranscriptPath(id, cwd);
+  if (!path) return;
+  mkdirSync(dirname(path), { recursive: true });
+  const existing = existsSync(path)
+    ? readFileSync(path, 'utf8').trim().split('\n').filter(Boolean).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter((e) => e?.uuid)
+    : [];
+  let parentUuid = existing.at(-1)?.uuid ?? null;
+  const entries = [];
+  const uId = `u-${process.pid}-${++transcriptSeq}`;
+  entries.push({ type: 'user', uuid: uId, parentUuid, sessionId: id, message: { role: 'user', content: promptText } });
+  parentUuid = uId;
+  if (midCompact) {
+    const bId = `b-${process.pid}-${++transcriptSeq}`;
+    const sId = `s-${process.pid}-${++transcriptSeq}`;
+    entries.push({ type: 'system', subtype: 'compact_boundary', uuid: bId, parentUuid: null, logicalParentUuid: uId, sessionId: id });
+    entries.push({ type: 'user', uuid: sId, parentUuid: bId, isCompactSummary: true, sessionId: id, message: { role: 'user', content: 'This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.' } });
+    parentUuid = sId;
+  }
+  const aId = `a-${process.pid}-${++transcriptSeq}`;
+  entries.push({ type: 'assistant', uuid: aId, parentUuid, sessionId: id, message: { id: `msg-${aId}`, role: 'assistant', content: [{ type: 'text', text: answerText }] } });
+  const content = (existing.length ? existing.map((e) => JSON.stringify(e)).join('\n') + '\n' : '')
+    + entries.map((e) => JSON.stringify(e)).join('\n') + '\n';
+  writeFileSync(path, content);
+}
+
+function replayClaudeTranscript(id, cwd, replay) {
+  const path = claudeTranscriptPath(id, cwd);
+  if (!path || !existsSync(path)) return false;
+  const entries = readFileSync(path, 'utf8').trim().split('\n').filter(Boolean)
+    .map((l) => { try { return JSON.parse(l); } catch { return null; } })
+    .filter((e) => e && (e.type === 'user' || e.type === 'assistant' || e.subtype === 'compact_boundary'));
+  if (!entries.some((e) => e.type === 'user')) return false;
+  let lastBoundary = -1;
+  entries.forEach((e, i) => { if (e.subtype === 'compact_boundary') lastBoundary = i; });
+  for (const entry of entries.slice(lastBoundary + 1)) {
+    const raw = entry.message?.content;
+    const text = typeof raw === 'string' ? raw : Array.isArray(raw) ? raw.filter((b) => b?.type === 'text').map((b) => b.text).join('') : '';
+    if (entry.type === 'user') replay({ sessionUpdate: 'user_message_chunk', messageId: entry.uuid, content: { type: 'text', text } });
+    else if (entry.type === 'assistant') replay({ sessionUpdate: 'agent_message_chunk', messageId: entry.message?.id ?? entry.uuid, content: { type: 'text', text } });
+  }
+  return true;
+}
 let pendingPrompt = null; // { id, cancelled }
 let backgroundWork; // the timer of work the agent started on its own
 let nextAgentRequestId = 1000;
@@ -306,6 +357,8 @@ rl.on('line', async (line) => {
         replay({ sessionUpdate: 'user_message_chunk', messageId: 'u2', content: { type: 'text', text: 'second question' } });
         replay({ sessionUpdate: 'user_message_chunk', messageId: 'u2', content: { type: 'image', mimeType: 'image/png', data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==' } });
         replay({ sessionUpdate: 'agent_message_chunk', messageId: 'm2', content: { type: 'text', text: 'second answer' } });
+      } else if (!traex && !dsh && replayClaudeTranscript(msg.params.sessionId, String(msg.params.cwd ?? process.cwd()), replay)) {
+        // Replayed from the persisted Claude transcript on disk, starting after the last compaction.
       } else {
         replay({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'replayed (should be dropped)' } });
       }
@@ -368,9 +421,12 @@ rl.on('line', async (line) => {
       out({ jsonrpc: '2.0', id: msg.id, result: {} }); return;
     }
     case 'session/prompt': {
-      recordSession(dsh ? 'dsh' : traex ? 'traex' : 'claude', msg.params.sessionId);
+      if (!process.env.FAKE_CLAUDE_RECORD_TURNS) recordSession(dsh ? 'dsh' : traex ? 'traex' : 'claude', msg.params.sessionId);
       const blocks = msg.params.prompt;
       const text = blocks.filter((p) => p.type === 'text').map((p) => p.text).join('');
+      if (process.env.FAKE_CLAUDE_RECORD_TURNS && !dsh && !traex && !text.includes('out of plan') && !text.includes('flaky')) {
+        appendClaudeTurn(msg.params.sessionId, text, text.split('\n')[0] === 'rate-limit-tell' ? 'told' : `echo:${text}`, text.includes('mid-compact'));
+      }
       if (refusedModelWarning) {
         update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `**Warning:** ${refusedModelWarning}` }, _meta: { claudeCode: { kind: 'informational', level: 'warning' } } });
         refusedModelWarning = null;
