@@ -471,6 +471,12 @@ export interface AgentAdapter {
    * another account wrote leave this out.
    */
   importSession?(sourcePath: string): Promise<string>;
+  /**
+   * Writes conversation titles to the agent's own session store, the way its own rename does, so
+   * its session list shows them too. Works whether or not the session is running. Sessions it
+   * cannot find are skipped.
+   */
+  renameSessions?(entries: Array<{ agentSessionId: string; cwd: string; title: string }>): Promise<void>;
   /** Removes the agent's own record of a session. Present only when capabilities.deleteSession is true. */
   deleteSession?(agentSessionId: string, cwd: string): Promise<void>;
   /**

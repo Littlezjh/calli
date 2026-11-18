@@ -1,3 +1,6 @@
+import { randomBytes } from 'node:crypto';
+import { appendFile, mkdir, open, rename, rm, writeFile } from 'node:fs/promises';
+import { basename, dirname, join } from 'node:path';
 import type { ForkPoint } from './types.js';
 
 /** What Claude writes into its session as a user message when the user stops it. */
@@ -97,4 +100,47 @@ export function claudeForkPoints(jsonl: string): ForkPoint[] {
     ended = false;
   }
   return turns;
+}
+
+/**
+ * Names a Claude session the way the CLI's `/rename` does: a `custom-title` record appended to the
+ * transcript, and the `<sessionId>/custom-title.json` beside it that the resume list reads when
+ * the record has scrolled out of the file's tail. A CLI that has the session open adopts the
+ * record when it next writes its metadata. Nothing is appended when the tail already ends on
+ * this title.
+ */
+export async function writeClaudeTitle(sessionPath: string, sessionId: string, title: string): Promise<void> {
+  const clean = title.replace(/\s+/g, ' ').trim();
+  if (!clean) return;
+  const record = JSON.stringify({ type: 'custom-title', customTitle: clean, sessionId });
+  const handle = await open(sessionPath, 'r');
+  let tail = '';
+  try {
+    const { size } = await handle.stat();
+    const length = Math.min(size, 64 * 1024);
+    const buffer = Buffer.alloc(length);
+    await handle.read(buffer, 0, length, size - length);
+    tail = buffer.toString('utf8');
+  } finally {
+    await handle.close();
+  }
+  let current: string | undefined;
+  for (const line of tail.split('\n')) {
+    if (!line.includes('"custom-title"')) continue;
+    try {
+      const entry = JSON.parse(line) as { type?: string; customTitle?: unknown };
+      if (entry.type === 'custom-title' && typeof entry.customTitle === 'string') current = entry.customTitle;
+    } catch { /* a torn or partial line */ }
+  }
+  if (current !== clean) await appendFile(sessionPath, `${tail === '' || tail.endsWith('\n') ? '' : '\n'}${record}\n`);
+  const sidecar = join(dirname(sessionPath), basename(sessionPath, '.jsonl'), 'custom-title.json');
+  await mkdir(dirname(sidecar), { recursive: true, mode: 0o700 });
+  const temporary = `${sidecar}.tmp.${randomBytes(8).toString('hex')}`;
+  try {
+    await writeFile(temporary, JSON.stringify({ customTitle: clean }), { flag: 'wx', mode: 0o600 });
+    await rename(temporary, sidecar);
+  } catch (error) {
+    await rm(temporary, { force: true });
+    throw error;
+  }
 }

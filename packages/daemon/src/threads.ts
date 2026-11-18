@@ -428,6 +428,7 @@ export class ThreadManager {
     this.quotaResume.start();
     this.autoRetry.start();
     this.autoAdvance.start();
+    void this.backfillNativeTitles().catch(() => undefined);
     this.personal = new PersonalService(store, this, adapters);
     this.lark = new LarkChannel(store, this.personal);
     this.briefs = new PersonalBriefSchedule(store, () => this.personal.review.status().quietHours, () => todoStages(this, this.listTodos()));
@@ -1254,6 +1255,38 @@ export class ThreadManager {
     }
   }
 
+  /**
+   * Writes a title the person or an extension gave to the agent's own session list: through the
+   * live session where it can take one, else straight into the agent's store.
+   */
+  private syncNativeTitle(id: string, title: string): void {
+    const live = this.sessions.get(id);
+    if (live?.setTitle) { void live.setTitle(title).catch(() => undefined); return; }
+    const thread = this.store.getThread(id);
+    if (!thread?.agentSessionId || this.backgroundThreads.has(id)) return;
+    void this.adapters.get(thread.agent)?.renameSessions?.([{ agentSessionId: thread.agentSessionId, cwd: thread.cwd, title }]).catch(() => undefined);
+  }
+
+  /**
+   * Once per hub: the titles named before they were written back, into each agent's own list.
+   * Titles the hub took from the first message are left alone; the agent has its own for those.
+   */
+  private async backfillNativeTitles(): Promise<void> {
+    if (this.store.hubSetting('native_titles_v1', false)) return;
+    const byAgent = new Map<string, Array<{ agentSessionId: string; cwd: string; title: string }>>();
+    for (const thread of [...this.store.listThreads(), ...this.store.listThreads({ archived: true })]) {
+      const by = this.store.titleBy(thread.id);
+      if (!thread.agentSessionId || (by !== 'user' && by !== 'auto')) continue;
+      const list = byAgent.get(thread.agent) ?? [];
+      list.push({ agentSessionId: thread.agentSessionId, cwd: thread.cwd, title: thread.title });
+      byAgent.set(thread.agent, list);
+    }
+    for (const [agent, entries] of byAgent) {
+      await this.adapters.get(agent)?.renameSessions?.(entries).catch(() => undefined);
+    }
+    this.store.saveHubSetting('native_titles_v1', true);
+  }
+
   /** A title an extension gave the thread. Marked as such, so a later automatic pass may revise it. */
   autoRename(id: string, title: string): ThreadView {
     const clean = title.trim();
@@ -1261,7 +1294,7 @@ export class ThreadManager {
     this.getThread(id);
     this.store.updateThread(id, { title: clean });
     this.store.setTitleBy(id, 'auto');
-    void this.sessions.get(id)?.setTitle?.(clean).catch(() => undefined);
+    this.syncNativeTitle(id, clean);
     this.emitThreadEvent(id, null, 'thread.updated', {});
     return this.threadView(id);
   }
@@ -1946,7 +1979,7 @@ export class ThreadManager {
     // The person named it: nothing renames it for them again.
     if (typeof patch.title === 'string' && patch.title !== thread.title) {
       this.store.setTitleBy(id, 'user');
-      void this.sessions.get(id)?.setTitle?.(patch.title).catch(() => undefined);
+      this.syncNativeTitle(id, patch.title);
     }
     this.emitThreadEvent(id, null, 'thread.updated', {});
     return this.threadView(id);

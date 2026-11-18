@@ -1458,6 +1458,17 @@ export class CodexAppServerAdapter implements AgentAdapter {
     }
   }
 
+  /** Through a short-lived app-server, which names a thread whether or not it is loaded. */
+  async renameSessions(entries: Array<{ agentSessionId: string; cwd: string; title: string }>): Promise<void> {
+    const named = entries.map(e => ({ ...e, title: e.title.trim() })).filter(e => e.title);
+    if (!named.length) return;
+    await this.withServer(async peer => {
+      for (const { agentSessionId, title } of named) {
+        await peer.request('thread/name/set', { threadId: agentSessionId, name: title }).catch(() => undefined);
+      }
+    }, undefined, 60_000);
+  }
+
   /**
    * Runs one job against a short-lived server that never becomes a thread's session: listing,
    * reading history, forking, deleting. Only skill discovery uses the project's directory;
