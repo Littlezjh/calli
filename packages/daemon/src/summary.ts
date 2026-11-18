@@ -97,14 +97,25 @@ export class SummaryService {
     const heading = text(input.heading, `今日 TODO ${date}`), title = text(input.title, heading);
     const settings = await this.personal.resolvedSettings(), adapter = settings.agent ? this.adapters.get(settings.agent) : undefined;
     if (!settings.directory || !adapter) throw new HttpError(409, 'personal agent is not configured');
-    const thread = await this.manager.createThread({ agent: settings.agent!, cwd: settings.directory, title,
-      permissionMode: adapter.capabilities.defaultPermissionMode, ...(settings.model ? { model: settings.model } : {}) });
-    this.store.saveSummaryRun(randomUUID(), thread.id, days);
+    const prevRun = this.store.latestSummaryRun();
+    const prev = prevRun ? this.store.getThread(prevRun.threadId) : null;
+    let threadId: string;
+    let created = false;
+    if (prev && !prev.archivedAt && prev.status !== 'running' && prev.agent === settings.agent && prev.cwd === settings.directory && prev.model === (settings.model ?? null)) {
+      if (prev.title !== title) await this.manager.updateThread(prev.id, { title });
+      threadId = prev.id;
+    } else {
+      const thread = await this.manager.createThread({ agent: settings.agent!, cwd: settings.directory, title,
+        permissionMode: adapter.capabilities.defaultPermissionMode, ...(settings.model ? { model: settings.model } : {}) });
+      threadId = thread.id;
+      created = true;
+    }
+    this.store.saveSummaryRun(randomUUID(), threadId, days);
     try {
-      await this.manager.startTurn(thread.id, { text: summaryPrompt(dayStart(days - 1, now), days, heading) });
-      return this.manager.threadView(thread.id);
+      await this.manager.startTurn(threadId, { text: summaryPrompt(dayStart(days - 1, now), days, heading) });
+      return this.manager.threadView(threadId);
     } catch (error) {
-      if (!this.store.listEventsOfType(thread.id, 'turn.started').length) await this.manager.deleteThread(thread.id);
+      if (created && !this.store.listEventsOfType(threadId, 'turn.started').length) await this.manager.deleteThread(threadId);
       throw error;
     }
   }

@@ -113,6 +113,8 @@ export interface AgentSession {
   goalState?(): Promise<GoalSnapshot | null>;
   /** Hooks for agent-initiated turns (voice). Set once per session; present only where the adapter implements them. */
   setSessionHooks?(hooks: SessionHooks): void;
+  /** Syncs a human-readable conversation title to the native session store when supported. */
+  setTitle?(title: string): Promise<void>;
   /**
    * A one-use native voice channel on this session's own connection. Null when the session's
    * process is gone: the caller refuses instead of respawning it silently.
@@ -295,6 +297,10 @@ export interface StartOptions {
   signal?: AbortSignal;
   /** Internal metadata probes must not take the shortcuts used to create a real conversation. */
   probe?: boolean;
+  /** A one-off background run that must not persist a native session on disk. */
+  ephemeral?: boolean;
+  /** Human-readable conversation title to sync to native sessions when created. */
+  title?: string;
   /** Native capability requested for an isolated Calli tool job, absent on ordinary threads. */
   borrowedTool?: string;
   workMode?: WorkMode;

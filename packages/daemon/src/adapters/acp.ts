@@ -276,6 +276,7 @@ export class AcpSession implements AgentSession {
   controlGoal?: AgentSession['controlGoal'];
   /** Plan usage observed in-band, as the agent answers (Claude Code's rate_limit_event). */
   onQuota?: (quota: PlanQuota) => void;
+  onEphemeralClose?: () => Promise<void>;
   private hooks: TurnHooks | null = null;
   private sessionHooks?: SessionHooks;
   /**
@@ -560,6 +561,14 @@ export class AcpSession implements AgentSession {
 
   async close(): Promise<void> {
     this.finishBackground('cancelled');
+    const cleanup = this.onEphemeralClose;
+    this.onEphemeralClose = undefined;
+    if (cleanup) {
+      await Promise.race([
+        cleanup().catch(() => undefined),
+        new Promise<void>(resolve => { const t = setTimeout(resolve, 1500); t.unref?.(); }),
+      ]);
+    }
     this.peer.close();
   }
 }
@@ -801,6 +810,15 @@ export abstract class AcpAdapter implements AgentAdapter {
       const configOptions: ConfigOption[] = info?.configOptions ?? [];
 
       const session = new AcpSession(sessionId, peer, this.modeIds, offeredModes, effortConfigIdOf(configOptions), emit => this.liveUsage(sessionId, opts.cwd, emit), configOptions);
+      if (opts.ephemeral && !opts.resumeId && this.capabilities.deleteSession) {
+        session.onEphemeralClose = async () => {
+          if (this.deleteSession === AcpAdapter.prototype.deleteSession) {
+            await peer.request('session/delete', { sessionId }).catch(() => undefined);
+          } else {
+            await this.deleteSession?.(sessionId, opts.cwd).catch(() => undefined);
+          }
+        };
+      }
       session.onQuota = quota => this.onQuotaObserved?.(quota);
       this.configureSession(session, peer);
       holder.session = session;

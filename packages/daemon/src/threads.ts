@@ -67,7 +67,7 @@ import { MessageEdits } from './message-edits.js';
 import { addWorktree, countChanges, findCheckout, initRepository, removeWorktree, samePath, worktreeLeftovers, type Checkout, type Worktree } from './worktrees.js';
 import { isProbeSession } from './local-sessions.js';
 
-type SessionContext = Pick<ThreadRecord, 'id' | 'agent' | 'cwd' | 'permissionMode' | 'workMode' | 'model' | 'effort' | 'speed'> & { agentSessionId?: string | null };
+type SessionContext = Pick<ThreadRecord, 'id' | 'agent' | 'cwd' | 'permissionMode' | 'workMode' | 'model' | 'effort' | 'speed'> & { agentSessionId?: string | null; title?: string };
 export interface DraftSessionInput {
   agent: string;
   cwd: string;
@@ -176,6 +176,7 @@ export type ThreadView = Omit<ThreadRecord, 'worktree' | 'handover' | 'writing'>
 
 interface QueuedTurn {
   assistantSay?: string;
+  dispatchRunId?: string;
   displayText?: string;
   channel?: TurnChannel;
   /** Later sends carrying a batch fold into this one instead of queueing behind it. */
@@ -1176,11 +1177,27 @@ export class ThreadManager {
     const adapter = this.adapters.get(agent);
     if (!adapter) throw new HttpError(400, `unknown agent: ${agent}`);
     const modes = adapter.capabilities.permissionModes;
-    const thread = await this.createThread({
-      agent, cwd: '', scratch: true, title: opts.title ?? 'Calli', model: opts.model ?? null,
-      permissionMode: modes.includes('ask') ? 'ask' : modes[0],
-    });
-    await this.updateThread(thread.id, { archived: true });
+    const permissionMode = modes.includes('ask') ? 'ask' : modes[0];
+    const requestedModel = opts.model ? await this.validateModel(agent, opts.model) : null;
+    const poolKey = `${agent}\0${requestedModel ?? ''}\0${permissionMode ?? ''}`;
+    const pool = this.store.hubSetting<Record<string, string>>('askOnceThreads', {});
+    const pooledId = pool[poolKey];
+    const pooled = pooledId ? this.store.getThread(pooledId) : null;
+    let thread: ThreadView;
+    if (pooled && pooled.archivedAt && pooled.agent === agent && pooled.model === requestedModel
+      && !this.running.has(pooled.id) && !this.backgroundThreads.has(pooled.id) && pooled.status !== 'running'
+      && (!this.dirs.scratchRoot || pooled.cwd.startsWith(this.dirs.scratchRoot + sep))) {
+      mkdirSync(pooled.cwd, { recursive: true });
+      this.store.updateThread(pooled.id, { agentSessionId: null, title: opts.title ?? 'Calli' });
+      thread = this.view(this.getThread(pooled.id));
+    } else {
+      thread = await this.createThread({
+        agent, cwd: '', scratch: true, title: opts.title ?? 'Calli', model: requestedModel,
+        permissionMode,
+      });
+      await this.updateThread(thread.id, { archived: true });
+      if (!pooled) this.store.saveHubSetting('askOnceThreads', { ...pool, [poolKey]: thread.id });
+    }
     this.backgroundThreads.add(thread.id);
     if (opts.recordPrompt === false) this.unrecordedQuestions.add(thread.id);
     const cancel = () => { void this.cancelTurn(thread.id).catch(() => undefined); };
@@ -1220,7 +1237,7 @@ export class ThreadManager {
       opts.signal?.throwIfAborted();
       if (timedOut) throw new HttpError(504, 'the agent took too long to answer');
       if (outcome.outcome !== 'ok') throw new HttpError(502, outcome.message ?? `the agent's turn ended: ${outcome.outcome}`);
-      return turnAnswer(this.store.listEvents(thread.id, 0, -1), turnId).trim();
+      return turnAnswer(this.store.listTurnEvents(thread.id, turnId), turnId).trim();
     } finally {
       (stop as (() => void) | null)?.();
       opts.signal?.removeEventListener('abort', cancel);
@@ -1229,6 +1246,7 @@ export class ThreadManager {
       // The answer is read from the store: the agent process and its scratch folder can go now, so
       // one question does not leave a resident process behind.
       await this.dropSession(thread.id, 'background_question_done');
+      if (this.store.getThread(thread.id)) this.store.updateThread(thread.id, { agentSessionId: null });
       if (this.dirs.scratchRoot && thread.cwd.startsWith(this.dirs.scratchRoot + sep)) rmSync(thread.cwd, { recursive: true, force: true });
     }
   }
@@ -1240,6 +1258,7 @@ export class ThreadManager {
     this.getThread(id);
     this.store.updateThread(id, { title: clean });
     this.store.setTitleBy(id, 'auto');
+    void this.sessions.get(id)?.setTitle?.(clean).catch(() => undefined);
     this.emitThreadEvent(id, null, 'thread.updated', {});
     return this.threadView(id);
   }
@@ -1922,7 +1941,10 @@ export class ThreadManager {
       this.rememberModelPreference(thread.agent, { model: chosen.model, effort: chosen.effort, speed: chosen.speed ?? null });
     }
     // The person named it: nothing renames it for them again.
-    if (patch.title !== undefined && patch.title !== thread.title) this.store.setTitleBy(id, 'user');
+    if (typeof patch.title === 'string' && patch.title !== thread.title) {
+      this.store.setTitleBy(id, 'user');
+      void this.sessions.get(id)?.setTitle?.(patch.title).catch(() => undefined);
+    }
     this.emitThreadEvent(id, null, 'thread.updated', {});
     return this.threadView(id);
   }
@@ -2678,7 +2700,7 @@ export class ThreadManager {
 
   private async startTurnReady(
     threadId: string,
-    input: { voiceSummary?: string; workMode?: unknown; text?: unknown; displayText?: string; channel?: TurnChannel; coalesce?: TurnBatch; images?: unknown; videos?: unknown; queue?: unknown; mentions?: unknown; collaboration?: CoordinationSetup; handoverFrom?: string; autoContinuation?: boolean; handover?: unknown; scheduled?: unknown; review?: boolean; proactive?: unknown; fromUser?: boolean },
+    input: { voiceSummary?: string; workMode?: unknown; text?: unknown; displayText?: string; channel?: TurnChannel; coalesce?: TurnBatch; images?: unknown; videos?: unknown; queue?: unknown; mentions?: unknown; collaboration?: CoordinationSetup; handoverFrom?: string; autoContinuation?: boolean; handover?: unknown; scheduled?: unknown; review?: boolean; proactive?: unknown; fromUser?: boolean; dispatchRunId?: string },
     delivery?: { turnId: string; source: Record<string, unknown>; displayText: string; claim: () => void },
     fromQueue = false,
     reservedTurnId?: string,
@@ -2736,7 +2758,7 @@ export class ThreadManager {
       }
       if (queue.length >= MAX_QUEUED) throw new HttpError(409, `at most ${MAX_QUEUED} messages can wait in a thread`);
       this.attachments.check(rawImages); // a bad image is refused now, not when its turn comes
-      const queued: QueuedTurn = { ...(personalControl ? { assistantSay: personalControl.assistantSay } : {}), voiceSummary: input.voiceSummary, workMode: thread.workMode ?? 'execute', id: randomUUID(), text: originalText, displayText: input.displayText, channel: input.channel, ...(input.coalesce ? { coalesce: input.coalesce } : {}), images: rawImages, videos: videoIds, ...(mentions ? { mentions } : {}), ...(input.collaboration ? { collaboration: input.collaboration } : {}), ...(input.fromUser ? { fromUser: true } : {}) };
+      const queued: QueuedTurn = { ...(personalControl ? { assistantSay: personalControl.assistantSay } : {}), ...(input.dispatchRunId ? { dispatchRunId: input.dispatchRunId } : {}), voiceSummary: input.voiceSummary, workMode: thread.workMode ?? 'execute', id: randomUUID(), text: originalText, displayText: input.displayText, channel: input.channel, ...(input.coalesce ? { coalesce: input.coalesce } : {}), images: rawImages, videos: videoIds, ...(mentions ? { mentions } : {}), ...(input.collaboration ? { collaboration: input.collaboration } : {}), ...(input.fromUser ? { fromUser: true } : {}) };
       this.references.grant(threadId, reference.references);
       this.queues.set(threadId, [...queue, queued]);
       this.emitThreadEvent(threadId, null, 'thread.updated', {});
@@ -2821,6 +2843,7 @@ export class ThreadManager {
           ...(fromUser ? { fromUser: true } : {}),
           ...(personalHuman ? { personalOrigin: 'person' } : {}),
           ...(personalControl ? { assistantSay: personalControl.assistantSay } : {}),
+          ...(input.dispatchRunId ? { dispatchRunId: input.dispatchRunId } : {}),
           ...(promptText !== displayText ? { displayText } : {}),
           ...(stored.length ? { images: stored } : {}),
           ...(storedVideos.length ? { videos: storedVideos } : {}),
@@ -3210,7 +3233,7 @@ export class ThreadManager {
     this.dispatchingQueues.add(threadId);
     if (rest.length) this.queues.set(threadId, rest);
     else this.queues.delete(threadId);
-    this.startTurn(threadId, { workMode: next.workMode, text: next.text, displayText: next.displayText, channel: next.channel, voiceSummary: next.voiceSummary, images: next.images, videos: next.videos, mentions: next.mentions, collaboration: next.collaboration, fromUser: next.fromUser }, undefined, true, undefined, undefined, next.assistantSay ? { assistantSay: next.assistantSay } : undefined).catch((err) => {
+    this.startTurn(threadId, { workMode: next.workMode, text: next.text, displayText: next.displayText, channel: next.channel, voiceSummary: next.voiceSummary, images: next.images, videos: next.videos, mentions: next.mentions, collaboration: next.collaboration, fromUser: next.fromUser, ...(next.dispatchRunId ? { dispatchRunId: next.dispatchRunId } : {}) }, undefined, true, undefined, undefined, next.assistantSay ? { assistantSay: next.assistantSay } : undefined).catch((err) => {
       // The thread was archived or deleted in the meantime, or the message is no longer acceptable.
       console.error(`could not send a queued message: ${err instanceof Error ? err.message : err}`);
       if (this.store.getThread(threadId)) this.setQueue(threadId, [
@@ -3606,14 +3629,17 @@ export class ThreadManager {
   }
 
   private sessionOptions(thread: SessionContext, signal?: AbortSignal): StartOptions {
+    const ephemeral = this.backgroundThreads.has(thread.id);
     return {
       signal,
+      ...(ephemeral ? { ephemeral: true } : {}),
+      ...(!ephemeral && thread.title && thread.title !== 'New thread' ? { title: thread.title } : {}),
       borrowedTool: this.borrowing?.toolForThread(thread.id),
-      coordinationEnv: this.backgroundThreads.has(thread.id) ? {} : { ...this.coordination?.environment(thread.id), ...this.borrowing?.environment(thread.id), ...this.personal.environment(thread.id, thread.cwd) },
+      coordinationEnv: ephemeral ? {} : { ...this.coordination?.environment(thread.id), ...this.borrowing?.environment(thread.id), ...this.personal.environment(thread.id, thread.cwd) },
       cwd: thread.cwd,
-      resumeId: thread.agentSessionId ?? undefined,
+      resumeId: ephemeral ? undefined : thread.agentSessionId ?? undefined,
       onSessionId: (id) => {
-        if (!id || !this.store.getThread(thread.id)) return;
+        if (!id || ephemeral || !this.store.getThread(thread.id)) return;
         this.store.updateThread(thread.id, { agentSessionId: id });
         this.emitThreadEvent(thread.id, null, 'thread.updated', {});
       },
@@ -3726,7 +3752,7 @@ export class ThreadManager {
     this.personalScopes.set(thread.id, personalScope);
     this.sessions.set(thread.id, session);
     this.sessionAdapters.set(thread.id, adapter);
-    if (session.agentSessionId && session.agentSessionId !== thread.agentSessionId) {
+    if (!this.backgroundThreads.has(thread.id) && session.agentSessionId && session.agentSessionId !== thread.agentSessionId) {
       this.store.updateThread(thread.id, { agentSessionId: session.agentSessionId });
     }
     return session;

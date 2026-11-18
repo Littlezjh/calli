@@ -22,10 +22,11 @@ const rl = createInterface({ input: process.stdin });
 const out = (obj) => process.stdout.write(JSON.stringify(obj) + '\n');
 
 let threadId = process.env.FAKE_CODEX_THREAD ?? 'codex-thread-1';
+let isEphemeral = false;
 // A rollout file under this account's CODEX_HOME, the way the real CLI keeps one, so the copy-in
 // flow has something on disk to read: session meta first, one line per turn after it.
 const rolloutPath = () => {
-  if (!process.env.CODEX_HOME) return null;
+  if (!process.env.CODEX_HOME || isEphemeral) return null;
   const day = new Date().toISOString().slice(0, 10).split('-');
   return join(process.env.CODEX_HOME, 'sessions', day[0], day[1], day[2], `rollout-fixture-${threadId}.jsonl`);
 };
@@ -605,7 +606,13 @@ rl.on('line', (line) => {
       }, 15);
       return;
     }
+    case 'thread/name/set': {
+      const path = rolloutPath();
+      if (path) appendFileSync(path, JSON.stringify({ timestamp: new Date().toISOString(), type: 'session_name', payload: { id: msg.params?.threadId ?? threadId, name: msg.params?.name ?? '' } }) + '\n');
+      return out({ jsonrpc: '2.0', id: msg.id, result: {} });
+    }
     case 'thread/start':
+      isEphemeral = msg.params?.ephemeral === true;
       dynamicTools = msg.params?.dynamicTools ?? [];
       currentWebSearch = msg.params?.config?.web_search ?? null;
       if (typeof msg.params?.sandbox === 'string') currentSandbox = msg.params.sandbox.replace(/-([a-z])/g, (_, c) => c.toUpperCase()).replace('Fullaccess', 'FullAccess');
@@ -613,7 +620,7 @@ rl.on('line', (line) => {
       if (typeof msg.params?.approvalsReviewer === 'string') currentApprovalsReviewer = msg.params.approvalsReviewer;
       if (typeof msg.params?.model === 'string') currentModel = msg.params.model;
       ensureRollout();
-      return out({ jsonrpc: '2.0', id: msg.id, result: { thread: { id: threadId, cwd: '/tmp/one' }, model: currentModel, reasoningEffort: currentEffort, sandbox: { type: 'readOnly' }, approvalPolicy: currentApproval, approvalsReviewer: currentApprovalsReviewer } });
+      return out({ jsonrpc: '2.0', id: msg.id, result: { thread: { id: threadId, cwd: '/tmp/one', ephemeral: isEphemeral }, model: currentModel, reasoningEffort: currentEffort, sandbox: { type: 'readOnly' }, approvalPolicy: currentApproval, approvalsReviewer: currentApprovalsReviewer } });
     case 'thread/resume':
       if (writerLocked(msg.params.threadId)) return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32600, message: `thread ${msg.params.threadId} already has an active writer` } });
       currentWebSearch = msg.params?.config?.web_search ?? null;

@@ -1059,6 +1059,12 @@ class CodexSession implements AgentSession {
     await this.computer?.close();
   }
 
+  async setTitle(title: string): Promise<void> {
+    const clean = title.trim();
+    if (!clean) return;
+    await this.peer.request('thread/name/set', { threadId: this.agentSessionId, name: clean }).catch(() => undefined);
+  }
+
   /** The peer is gone: a running turn can only end as an error now. */
   onClosed(): void {
     this.voice?.handleClosed();
@@ -1420,6 +1426,7 @@ export class CodexAppServerAdapter implements AgentAdapter {
         const res = await peer.request('thread/start', {
           cwd: opts.cwd,
           ...toolConfig,
+          ...(opts.ephemeral ? { ephemeral: true } : {}),
           ...(mode ? { sandbox: mode.sandbox, approvalPolicy: mode.approvalPolicy, approvalsReviewer: mode.approvalsReviewer } : {}),
           ...(opts.model ? { model: opts.model } : {}),
         });
@@ -1435,6 +1442,7 @@ export class CodexAppServerAdapter implements AgentAdapter {
       // An ordinary prompt can also continue a persisted native goal. Older servers omit it.
       // The show also feeds the goal card through onGoal.
       if (opts.resumeId) await session.controlGoal('show').catch(() => undefined);
+      else if (!opts.ephemeral && opts.title) await session.setTitle(opts.title);
       // Effort has no place on thread/start; model and mode still ride with the next turn so a
       // resumed thread switches over even where thread/resume kept its old settings.
       if (opts.model) await session.setModel(opts.model);

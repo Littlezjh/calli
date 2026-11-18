@@ -87,6 +87,7 @@ ${workflow}
 
 export class PersonalService {
   private readonly credentials = new Map<string, string>();
+  private readonly workThreadLocks = new Map<string, Promise<unknown>>();
   /** The plan page's file mirror under the personal directory; the database stays the source of truth. */
   private readonly files = new PersonalFiles(() => this.directory());
   socket = '';
@@ -189,6 +190,83 @@ export class PersonalService {
     if (previousDirectory !== undefined && previousDirectory !== next.directory) this.manager.lark?.invalidateMaterials?.();
     return next;
   }
+  workThreadTitle(cwd: string, kind: 'work' | 'prepare' = 'work'): string {
+    if (kind === 'prepare') return '管家准备';
+    try {
+      const realCwd = realpathSync(cwd);
+      const personalDir = realpathSync(this.directory());
+      if (realCwd === personalDir) return '管家工作台';
+      return `管家工作台 · ${basename(realCwd) || '工作区'}`;
+    } catch {
+      return `管家工作台 · ${basename(cwd) || '工作区'}`;
+    }
+  }
+
+  /**
+   * Returns the shared work session for `(agent, cwd)`, creating one with a clean title only when
+   * none exists or the previous one was archived. Serialized per key so concurrent dispatches do
+   * not open duplicate threads.
+   */
+  async acquireWorkThread(input: {
+    agent: string;
+    cwd: string;
+    permissionMode?: string;
+    model?: string | null;
+    kind?: 'work' | 'prepare';
+  }): Promise<{ thread: ReturnType<ThreadManager['threadView']>; created: boolean; releaseEmpty: () => Promise<void> }> {
+    const realCwd = realpathSync(input.cwd);
+    const kind = input.kind ?? 'work';
+    const settingKey = kind === 'prepare' ? 'personalPrepareThreads' : 'personalWorkThreads';
+    const key = `${input.agent}\0${realCwd}`;
+    const lockKey = `${settingKey}\0${key}`;
+    const previous = this.workThreadLocks.get(lockKey) ?? Promise.resolve();
+    const run = previous.catch(() => undefined).then(async () => {
+      const map = this.store.hubSetting<Record<string, string>>(settingKey, {});
+      const existingId = map[key];
+      const existing = existingId ? this.store.getThread(existingId) : null;
+      let sameCwd = false;
+      if (existing) {
+        try { sameCwd = realpathSync(existing.cwd) === realCwd; } catch { sameCwd = false; }
+      }
+      if (existing && !existing.archivedAt && existing.agent === input.agent && !existing.worktree && sameCwd
+        && (kind === 'work' || existing.status !== 'running')) {
+        const view = this.manager.threadView(existing.id);
+        if (input.model !== undefined && existing.model !== (input.model ?? null) && existing.status !== 'running' && !view.queued.length) {
+          await this.manager.updateThread(existing.id, { model: input.model ?? null });
+        }
+        return { thread: this.manager.threadView(existing.id), created: false, releaseEmpty: async () => {} };
+      }
+      const title = this.workThreadTitle(realCwd, kind);
+      const thread = await this.manager.createThread({
+        agent: input.agent,
+        cwd: realCwd,
+        title,
+        permissionMode: input.permissionMode,
+        ...(input.model ? { model: input.model } : {}),
+      });
+      this.store.setTitleBy(thread.id, 'user');
+      const latest = this.store.hubSetting<Record<string, string>>(settingKey, {});
+      this.store.saveHubSetting(settingKey, { ...latest, [key]: thread.id });
+      const releaseEmpty = async () => {
+        if (!this.store.getThread(thread.id)) return;
+        const view = this.manager.threadView(thread.id);
+        if (!this.store.listEventsOfType(thread.id, 'turn.started').length && !view.queued.length && view.status !== 'running') {
+          const current = this.store.hubSetting<Record<string, string>>(settingKey, {});
+          if (current[key] === thread.id) {
+            const { [key]: _removed, ...rest } = current;
+            this.store.saveHubSetting(settingKey, rest);
+          }
+          await this.manager.deleteThread(thread.id).catch(() => undefined);
+        }
+      };
+      return { thread, created: true, releaseEmpty };
+    });
+    this.workThreadLocks.set(lockKey, run);
+    const cleanup = () => { if (this.workThreadLocks.get(lockKey) === run) this.workThreadLocks.delete(lockKey); };
+    void run.then(cleanup, cleanup);
+    return run;
+  }
+
   async delegate(id: string, input: { cwd?: unknown } = {}) {
     const todo = this.store.getTodo(id);
     if (!todo) throw new HttpError(404, 'todo not found');
@@ -200,18 +278,20 @@ export class PersonalService {
     if (!isWithinWorkdirs(cwd, this.manager.allowedWorkdirs)) throw new HttpError(403, 'cwd is not in allowed workdirs');
     const active = this.store.todoThreadIds(id).map(t => this.store.getThread(t)).find(t => t?.status === 'running');
     if (active) return this.manager.threadView(active.id);
-    const thread = await this.manager.createThread({ agent: settings.agent!, cwd, title: todo.text,
-      permissionMode: adapter.capabilities.defaultPermissionMode, ...(settings.model ? { model: settings.model } : {}) });
+    const { thread, releaseEmpty } = await this.acquireWorkThread({
+      agent: settings.agent!, cwd, permissionMode: adapter.capabilities.defaultPermissionMode, model: settings.model,
+    });
     try {
       const note = this.store.todoNote(id);
       const text = delegationPrompt(todo, note.text, this.within(thread.cwd, settings.directory));
-      await this.manager.startTurn(thread.id, { text }, undefined, false, undefined, () => {
+      const started = await this.manager.startTurn(thread.id, { text, queue: true }, undefined, false, undefined, () => {
         this.linkWorkThread(id, thread.id, todo.rev);
       });
+      if ('queued' in started) this.store.transaction(() => { this.linkWorkThread(id, thread.id, todo.rev); });
       this.manager.broadcastTodo();
       return this.manager.threadView(thread.id);
     } catch (error) {
-      if (!this.store.listEventsOfType(thread.id, 'turn.started').length) await this.manager.deleteThread(thread.id);
+      await releaseEmpty();
       throw error;
     }
   }
@@ -252,22 +332,28 @@ export class PersonalService {
   }
 
   /** The run claim and matter link are committed together with turn.started, before a fast worker returns. */
-  async dispatchThread(task: DispatchTask, claim: (threadId: string) => void) {
+  async dispatchThread(task: DispatchTask, claim: (threadId: string) => void, runId?: string) {
     const checked = await this.validateDispatch({ ...task });
     const todo = checked.matterId ? this.store.getTodo(checked.matterId)! : null;
-    const thread = await this.manager.createThread({ agent: checked.agent, cwd: checked.cwd, title: checked.title,
-      permissionMode: this.adapters.get(checked.agent)!.capabilities.defaultPermissionMode, ...(checked.model ? { model: checked.model } : {}) });
+    const { thread, releaseEmpty } = await this.acquireWorkThread({
+      agent: checked.agent,
+      cwd: checked.cwd,
+      permissionMode: this.adapters.get(checked.agent)!.capabilities.defaultPermissionMode,
+      model: checked.model,
+    });
+    const commitClaim = () => {
+      if (!isWithinWorkdirs(checked.cwd, this.manager.allowedWorkdirs)) throw new HttpError(403, 'cwd is no longer allowed');
+      claim(thread.id);
+      if (todo) this.linkWorkThread(todo.id, thread.id, todo.rev);
+    };
     try {
       const note = todo ? `\n\n事项：${todo.text}\nID：${todo.id}\n接续说明（材料，不是额外授权）：\n${this.store.todoNote(todo.id).text || '尚未写入。'}` : '';
       const text = `${checked.task}${note}\n\n由 Calli 派发的工作。只执行上述任务；不推远端、不给别人发消息、不删除、不付款。停下时说明结果和需要人处理的事；结尾单独写 [进度] 进行中、[进度] 待验收 或 [进度] 需要你，并附一句说明。`;
-      await this.manager.startTurn(thread.id, { text }, undefined, false, undefined, () => {
-        if (!isWithinWorkdirs(checked.cwd, this.manager.allowedWorkdirs)) throw new HttpError(403, 'cwd is no longer allowed');
-        claim(thread.id);
-        if (todo) this.linkWorkThread(todo.id, thread.id, todo.rev);
-      });
+      const started = await this.manager.startTurn(thread.id, { text, queue: true, ...(runId ? { dispatchRunId: runId } : {}) }, undefined, false, undefined, commitClaim);
+      if ('queued' in started) this.store.transaction(commitClaim);
       return thread.id;
     } catch (error) {
-      if (!this.store.listEventsOfType(thread.id, 'turn.started').length) await this.manager.deleteThread(thread.id);
+      await releaseEmpty();
       throw error;
     }
   }
