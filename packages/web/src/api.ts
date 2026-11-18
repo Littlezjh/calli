@@ -1495,6 +1495,8 @@ export class Api {
     worktree?: boolean;
     /** In no project: the hub gives the thread a scratch folder of its own; `cwd` is ignored. */
     scratch?: boolean;
+    /** A fresh conversation where this thread works: its directory, sharing its worktree. */
+    besideThread?: string;
   }): Promise<Thread> {
     return this.request('POST', '/api/threads', input);
   }

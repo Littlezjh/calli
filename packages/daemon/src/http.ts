@@ -924,6 +924,7 @@ export function createHttpServer(deps: HttpDeps): Server {
             sectionId: body.sectionId,
             worktree: body.worktree === true,
             scratch: body.scratch === true,
+            ...(typeof body.besideThread === 'string' ? { besideThread: body.besideThread } : {}),
           }),
         );
       }

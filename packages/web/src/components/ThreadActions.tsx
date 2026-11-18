@@ -33,6 +33,8 @@ interface Deps {
   onSectionsChange: () => void;
   /** Opens the web terminal, from a menu item tied to the thread's directory. */
   onOpenTerminal: () => void;
+  /** Opens a new-thread draft in the thread's exact directory and worktree. */
+  onNewBeside?: (thread: Thread) => void;
   /** Opens the open thread's files, from its own page menu. */
   onOpenFiles: (thread: Thread) => void;
   onOpenGit?: () => void;
@@ -97,7 +99,7 @@ export function forkBlocked(thread: Thread, turnId?: string): string | null {
  * open thread's own menu serves the conversation being read.
  */
 export function useThreadActions(deps: Deps) {
-  const { api, agents, sections, todos, chain, onTodosChange, onThreadChange, onThreadRemove, onThreadOpen, onMarkedUnread, onSectionsChange, onOpenTerminal, onOpenFiles, onOpenGit, onOpenTrace, onError, onBusy, onArchived, markdownOf, autotitle, board } = deps;
+  const { api, agents, sections, todos, chain, onTodosChange, onThreadChange, onThreadRemove, onThreadOpen, onMarkedUnread, onSectionsChange, onOpenTerminal, onNewBeside, onOpenFiles, onOpenGit, onOpenTrace, onError, onBusy, onArchived, markdownOf, autotitle, board } = deps;
   /** The chain record when this thread belongs to any handover chain, automatic or manual. */
   const chainOf = (thread: Thread) => chain && (thread.handover
     || chain.threads.some(x => x.handover?.sourceId === thread.id)) ? chain : undefined;
@@ -223,6 +225,7 @@ export function useThreadActions(deps: Deps) {
       onSelect: () => void (id === 'done' ? patch(thread, { done: stage !== 'done' }) : stage !== id && patch(thread, { stage: id })),
     });
     return [
+      ...(onNewBeside ? [{ id: 'new-beside', label: t('actions.newBeside'), icon: IconPlus, onSelect: () => onNewBeside(thread) }] : []),
       { id: 'pin', label: thread.pinned ? t('actions.unpin') : t('actions.pin'), icon: IconPin, onSelect: () => run('pin', thread) },
       {
         id: 'unread',
@@ -296,6 +299,7 @@ export function useThreadActions(deps: Deps) {
     { id: 'files', label: t('files.files'), icon: IconFiles, onSelect: () => onOpenFiles(thread) },
     ...(onOpenGit && !api?.demo ? [{ id: 'git', label: t('git.label'), icon: IconWorktree, onSelect: onOpenGit }] : []),
     { id: 'terminal', label: t('actions.terminal'), icon: IconTerminal, onSelect: onOpenTerminal },
+    ...(onNewBeside ? [{ id: 'new-beside', label: t('actions.newBeside'), icon: IconPlus, onSelect: () => onNewBeside(thread) }] : []),
     { id: 'pin', label: thread.pinned ? t('actions.unpin') : t('actions.pin'), icon: IconPin, onSelect: () => run('pin', thread) },
     {
       id: 'unread',

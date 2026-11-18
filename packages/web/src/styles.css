@@ -2391,7 +2391,8 @@ html.list-open body {
 
 /* On a phone the strip holds agent, directory and this; its icon alone tells folder from worktree. */
 @media (max-width: 640px) {
-  .workspace-btn > span {
+  .workspace-btn > span,
+  .beside-chip > span {
     display: none;
   }
 }

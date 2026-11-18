@@ -1476,6 +1476,17 @@ test('new thread in a worktree: offered for a git directory, made under .worktre
   assert.match(((await refused.json()) as { error: string }).error, /not in a git repository/);
   assert.equal(existsSync(join(plain, '.worktrees')), false);
 
+  // A fresh thread beside it works in the same directory and shares the worktree, wherever `cwd` points.
+  const besideRes = await api('/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'pi', cwd: repo, besideThread: thread.id }) });
+  assert.equal(besideRes.status, 201);
+  const beside = (await besideRes.json()) as Record<string, any>;
+  assert.equal(beside.cwd, thread.cwd);
+  assert.deepEqual(beside.worktree, thread.worktree);
+  assert.equal(beside.agentSessionId ?? null, null, 'a new conversation, not a copy');
+  assert.equal((await api('/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'pi', cwd: repo, besideThread: thread.id, worktree: true }) })).status, 400);
+  assert.equal((await api('/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'pi', cwd: repo, besideThread: 'missing' }) })).status, 404);
+  assert.equal((await api(`/api/threads/${beside.id}`, { method: 'DELETE' })).status, 204);
+
   // Deleted with its worktree, like a fork's: the carried-over file exists nowhere else, so it takes force.
   assert.equal((await api(`/api/threads/${thread.id}?worktree=1`, { method: 'DELETE' })).status, 409);
   assert.equal((await api(`/api/threads/${thread.id}?worktree=1&force=1`, { method: 'DELETE' })).status, 204);

@@ -34,7 +34,7 @@ import {
   type WorkdirsConfig,
 } from './api';
 import type { HubAction } from './commands';
-import { buildProjectOptions } from './projects';
+import { buildProjectOptions, projectRoot } from './projects';
 import { rootRows, withWorkdirs } from './workdirs';
 import { isBounce, useAppHistory } from './appHistory';
 import { useAppearance, useInTitlebar, useIsCompact, useListSwipe, useMinWidth, useStoredFlag } from './hooks';
@@ -124,7 +124,7 @@ import { ConnectDialog, DemoBar } from './components/ConnectDialog';
 import { DemoApi, DemoError } from './demo/DemoApi';
 import { EMPTY_MODEL_PREFERENCE, type DraftModelPreference } from '../../daemon/src/model-preferences';
 import { QUICK_SWITCH_HIDDEN_KEY, clampQuickSwitchBottom, savedQuickSwitchBottom, saveQuickSwitchBottom } from './quick-switch';
-import { IconCheck, IconBell, AgentMark, IconActivity, IconAgents, IconArchive, IconArrowLeft, IconArrowDown, IconBack, IconClose, IconEdit, IconFolder, IconGauge, IconGlobe, IconImport, IconList, IconMenu, IconSettings, IconMore, IconOverview, IconPalette, IconPlus, IconPuzzle, IconServer, IconSidebar, IconSignIn, IconSignOut, IconSparkle, IconTerminal, IconTrace, IconLanguage, IconWaveform, IconSideChat } from './components/icons';
+import { IconCheck, IconBell, AgentMark, IconActivity, IconAgents, IconArchive, IconArrowLeft, IconArrowDown, IconBack, IconClose, IconEdit, IconFolder, IconGauge, IconGlobe, IconImport, IconList, IconMenu, IconSettings, IconMore, IconOverview, IconPalette, IconPlus, IconPuzzle, IconServer, IconSidebar, IconSignIn, IconSignOut, IconSparkle, IconTerminal, IconTrace, IconLanguage, IconWaveform, IconSideChat, IconWorktree } from './components/icons';
 import { StatReadings } from './components/SessionStats';
 import { ThreadTracePanel } from './components/TracePanel';
 import { chooseLocale, locale, LOCALES, localeChoice, t } from './i18n';
@@ -744,6 +744,9 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   // A new thread may start in a git worktree of its directory; offered only when the directory is in a repository.
   const [draftWorktree, setDraftWorktree] = useState(false);
   const [worktreeOffer, setWorktreeOffer] = useState<{ cwd: string; branch: string | null; changes: number } | null>(null);
+  // A new thread beside an existing one: its exact directory and worktree, until another directory is picked.
+  const [draftBeside, setDraftBeside] = useState<{ threadId: string; cwd: string; project: string; worktree: string | null } | null>(null);
+  const beside = draftBeside?.cwd === draftCwd && !draftScratch && !draftTeam ? draftBeside : null;
   const [draftSectionId, setDraftSectionId] = useState<string | null>(null);
   const [draftWorkMode, setDraftWorkMode] = useState<WorkMode>('execute');
   const [modeBusy, setModeBusy] = useState(false);
@@ -757,7 +760,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   const draftChoice = fitDraftModelPreference(modelPreferences.preferences[draftAgent] ?? EMPTY_MODEL_PREFERENCE,
     modelsByAgent[draftAgent] ?? [], draftCaps?.effortLevels ?? [], Boolean(draftCaps?.speed));
   const { model: draftModel, effort: draftEffort, speed: draftSpeed } = draftChoice;
-  const consumeDraftWarmup = useDraftWarmup(api, !selectedId && view === 'thread' && !draftTeam && !draftWorktree
+  const consumeDraftWarmup = useDraftWarmup(api, !selectedId && view === 'thread' && !draftTeam && !draftWorktree && !beside?.worktree
     && !draftCollaboration && !draftWriting && draftAgent && draftCaps?.prewarm && modelPreferences.status === 'ready'
     && (draftCwd || draftScratch) ? {
       agent: draftAgent, cwd: draftScratch ? '' : draftCwd, scratch: draftScratch,
@@ -1963,6 +1966,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
       void refreshThreads();
     },
     onOpenTerminal: () => (demo ? askToConnect() : openTerminal()),
+    onNewBeside: (thread) => newThread({ beside: thread }),
     onOpenGit: () => { setFiles(null); setTraceOpen(false); setAgentsOpen(false); setGitOpen(true); },
     onOpenFiles: (thread) => {
       setAgentsOpen(false);
@@ -2012,7 +2016,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
       effort: draftEffort,
       speed: draftSpeed,
       ...(draftSectionId && isNewThread ? { sectionId: draftSectionId } : {}),
-      ...(draftScratch ? { scratch: true } : draftWorktree && offer ? { worktree: true } : {}),
+      ...(draftScratch ? { scratch: true } : beside ? { besideThread: beside.threadId } : draftWorktree && offer ? { worktree: true } : {}),
     });
     const id = t.id;
     if (draftWriting) {
@@ -2312,12 +2316,27 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
       onOpen: () => openExtensionView(extensionHash(v)),
     }));
 
-  const newThread = (opts: { cwd?: string; sectionId?: string | null; scratch?: boolean } = {}) => navigate(() => {
+  const newThread = (opts: { cwd?: string; sectionId?: string | null; scratch?: boolean; beside?: Thread } = {}) => navigate(() => {
     void modelPreferences.refresh();
     if (showcase) { showcase.onInstall(); return; }
     setSelectedId(null);
     setView('thread');
     setDrawer(false);
+    // A plain "new thread" after one beside a worktree goes back to the project, not into the worktree.
+    if (draftBeside && opts.cwd === undefined && !opts.beside && draftCwd === draftBeside.cwd) setDraftCwd(draftBeside.project);
+    setDraftBeside(null);
+    if (opts.beside) {
+      const project = projectDir(opts.beside).cwd;
+      const root = opts.beside.worktree ? project : projectRoot(opts.beside.cwd);
+      setDraftBeside({ threadId: opts.beside.id, cwd: opts.beside.cwd, project: root,
+        worktree: opts.beside.worktree?.branch ?? (root !== opts.beside.cwd ? folderName(opts.beside.cwd) : null) });
+      setDraftCwd(opts.beside.cwd);
+      setDraftScratch(false);
+      setDraftWorktree(false);
+      setDraftTeam(null);
+      setDraftSectionId(opts.beside.sectionId ?? null);
+      return;
+    }
     if (opts.cwd !== undefined) {
       setDraftCwd(opts.cwd);
       setDraftScratch(false);
@@ -2533,6 +2552,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
       : []),
     ...(selected
       ? [
+          { id: 'new-beside', label: t('actions.newBeside'), hint: t('app.cmd.newBeside'), keywords: ['new', 'here', 'same', 'worktree', 'clear', '新线程', '同目录'] },
           { id: 'rename', label: t('actions.rename'), hint: t('app.cmd.rename'), keywords: ['rename', 'name'] },
           { id: 'pin', label: selected.pinned ? t('actions.unpin') : t('actions.pin'), hint: t('app.cmd.pin'), keywords: ['pin'] },
           ...(activeCaps?.fork && !forkBlocked(selected)
@@ -2571,6 +2591,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
     if (id === 'import') return openSettings('import');
     if (id === 'appearance') return openSettings('appearance');
     if (selected && (id === 'rename' || id === 'pin' || id === 'fork' || id === 'archive')) threadActions.run(id, selected);
+    if (selected && id === 'new-beside') return newThread({ beside: selected });
     if (selected && id === 'handover') return threadActions.handover(selected);
     if (selected && id === 'chain') return threadActions.chain(selected);
   };
@@ -2591,7 +2612,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
         projects={projectOptions}
         machineLabel={host?.label ?? (hostId ? t('app.remoteMachine') : t('hosts.local'))}
         remote={Boolean(hostId)}
-        cwd={draftCwd}
+        cwd={beside?.worktree ? beside.project : draftCwd}
         scratch={draftScratch}
         scratchAvailable={scratchAvailable && !draftTeam}
         onPick={(cwd) => {
@@ -2609,7 +2630,14 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
         onPick={(id) => { if (id !== hostId) onHost(id); }}
         onManage={() => openSettings('machines')}
       />}
-      {offer && !draftScratch && !draftTeam && <WorkspacePicker branch={offer.branch} changes={offer.changes} worktree={draftWorktree} onChange={setDraftWorktree} />}
+      {beside?.worktree && (
+        <button className="context-chip beside-chip" title={beside.cwd} aria-label={t('app.besideWorktreeLeave', beside.worktree)} onClick={() => { setDraftCwd(beside.project); setDraftBeside(null); }}>
+          <IconWorktree size={13} />
+          <span>{beside.worktree}</span>
+          <IconClose size={12} />
+        </button>
+      )}
+      {offer && !draftScratch && !draftTeam && !beside?.worktree && <WorkspacePicker branch={offer.branch} changes={offer.changes} worktree={draftWorktree} onChange={setDraftWorktree} />}
       {draftSectionId && sections.some((s) => s.id === draftSectionId) && (
         <button
           className="context-chip"
@@ -3431,7 +3459,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
             />
           ) : (
             <div className="empty">
-              <h2>{draftScratch ? t('app.emptyScratch') : t('app.emptyIn', folderName(draftCwd))}</h2>
+              <h2>{draftScratch ? t('app.emptyScratch') : t('app.emptyIn', folderName(beside?.worktree ? beside.project : draftCwd))}</h2>
             </div>
           )}
           {selected && <AutoHandoverNotice api={api} thread={selected} agents={agents} />}
@@ -3473,7 +3501,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           voiceControls={voice.state.active ? <VoiceControls session={voice.state} onMute={voice.toggleMute} onStop={() => void voice.stop()} /> : undefined}
           running={voice.state.active ? false : running}
           disabled={modeBusy || (!selected && (!draftCwd || modelPreferences.status !== 'ready'))}
-          placeholder={voice.state.active ? t('app.placeholder.continue') : onRouterThread && !running ? t('pet.threadPlaceholder') : demo ? t('app.placeholder.demo') : workMode === 'plan' && !running ? t('composerMenu.planOn') : writing && !running ? t('writing.placeholder') : selected ? (running ? t('sideChat.queuePlaceholder') : t('app.placeholder.continue')) : draftScratch ? t('app.placeholder.scratch') : t('app.placeholder.startIn', folderName(draftCwd))}
+          placeholder={voice.state.active ? t('app.placeholder.continue') : onRouterThread && !running ? t('pet.threadPlaceholder') : demo ? t('app.placeholder.demo') : workMode === 'plan' && !running ? t('composerMenu.planOn') : writing && !running ? t('writing.placeholder') : selected ? (running ? t('sideChat.queuePlaceholder') : t('app.placeholder.continue')) : draftScratch ? t('app.placeholder.scratch') : t('app.placeholder.startIn', folderName(beside?.worktree ? beside.project : draftCwd))}
           onSend={voice.state.active ? async (text, images, _mentions, videos = []) => {
             try { await voice.appendText(text, images.map(img => ({ data: img.data, mimeType: img.mimeType })), await Promise.all(videos.map(async video => (await api.uploadVideo(selectedId!, video.file)).id))); }
             catch (error) { handleError(error); throw error; }

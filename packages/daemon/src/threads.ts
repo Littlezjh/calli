@@ -2280,9 +2280,17 @@ export class ThreadManager {
     scratch?: boolean;
     /** The scheduled task that starts this thread, if any: shown as its badge. */
     schedule?: { id: string; name: string } | null;
+    /** A fresh conversation where this thread works: its exact directory, sharing its worktree. */
+    besideThread?: string;
   }, inheritedWorktree?: ThreadWorktree | null, handover?: ThreadRecord['handover']): Promise<ThreadView> {
     const adapter = this.adapters.get(input.agent);
     if (!adapter) throw new HttpError(400, `unknown agent: ${input.agent}`);
+    if (input.besideThread !== undefined) {
+      if (input.worktree || input.scratch) throw new HttpError(400, 'besideThread starts where that thread works, not in a new worktree or scratch folder');
+      const beside = this.getThread(input.besideThread);
+      input = { ...input, cwd: beside.cwd };
+      inheritedWorktree ??= beside.worktree ?? null;
+    }
     let id: string = randomUUID();
     let cwd = input.scratch === true ? this.scratchDirectory(id) : resolve(input.cwd);
     this.checkThreadDirectory(cwd);
