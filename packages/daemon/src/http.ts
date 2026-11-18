@@ -1202,8 +1202,8 @@ export function createHttpServer(deps: HttpDeps): Server {
           return n;
         };
         if (!parts[4] && url.searchParams.get('head') === '1') return sendJson(res, 200, { snapshotSeq: history.latest(threadId) });
-        if (!parts[4]) return sendJson(res, 200, await history.page(threadId, positive(url.searchParams.get('before'), true), positive(url.searchParams.get('after'), true), url.searchParams.get('chain') === '1', url.searchParams.get('forward') === '1'));
-        if (parts[4] === 'handover') return sendJson(res, 200, history.handoverInfo(threadId, url.searchParams.get('text') === '1'));
+        if (!parts[4]) return sendJson(res, 200, await history.page(threadId, positive(url.searchParams.get('before'), true), positive(url.searchParams.get('after'), true), url.searchParams.get('chain') === '1', url.searchParams.get('forward') === '1', url.searchParams.get('part') === 'before' ? 'before' : undefined));
+        if (parts[4] === 'handover') return sendJson(res, 200, history.handoverInfo(threadId, url.searchParams.get('text') === '1', url.searchParams.get('part') === 'before' ? 'before' : undefined));
         if (parts[4] === 'voice') return sendJson(res, 200, history.voiceText(threadId, url.searchParams.get('session') ?? '', positive(url.searchParams.get('cursor'), true)));
         const turn = url.searchParams.get('turn');
         if (!turn) throw new HttpError(400, 'turn is required');
@@ -1294,10 +1294,11 @@ export function createHttpServer(deps: HttpDeps): Server {
 
       if (sub === 'auto-handover') {
         manager.getThread(threadId);
-        if (method === 'GET') return sendJson(res, 200, { ...manager.autoHandover.view(threadId), resume: manager.quotaResume.view(threadId), targets: await manager.autoHandover.targets(threadId) });
+        if (method === 'GET') return sendJson(res, 200, { ...manager.autoHandover.view(threadId), resume: manager.quotaResume.view(threadId), targets: await manager.autoHandover.targets(threadId), returns: await manager.autoHandover.returnTargets(threadId) });
         if (method === 'PATCH') {
           const body = await readJson(req);
           if (body.resume !== undefined) return sendJson(res, 200, await manager.setResume(threadId, body.resume));
+          if (body.choice !== undefined) return sendJson(res, 200, manager.autoHandover.setChoice(threadId, body.choice));
           return sendJson(res, 200, manager.autoHandover.setOverride(threadId, body.enabled));
         }
         if (method === 'DELETE') { manager.autoHandover.cancel(threadId); return sendJson(res, 200, manager.autoHandover.view(threadId)); }
@@ -1340,7 +1341,7 @@ export function createHttpServer(deps: HttpDeps): Server {
       }
       if (method === 'POST' && sub === 'takeover') {
         const body = await readJson(req);
-        return sendJson(res, 201, await manager.takeOver(threadId, body.agent, body.model, body.note, body.summary));
+        return sendJson(res, 201, await manager.takeOver(threadId, body.agent, body.model, body.note, body.summary, body.returnTo));
       }
       if (method === 'DELETE' && sub === 'handover-link') {
         return sendJson(res, 200, manager.detachHandover(threadId));

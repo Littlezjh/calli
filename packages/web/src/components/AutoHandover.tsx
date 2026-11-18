@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { AgentInfo, Api, AutoCompactSettings, AdvanceSettings, AutoHandoverView, HandoverSettings, HandoverTarget, ModelOption, Thread } from '../api';
+import type { AgentInfo, Api, AutoCompactSettings, AdvanceSettings, AutoHandoverView, HandoverSettings, HandoverTarget, ModelOption, ReturnTarget, Thread } from '../api';
 import { t } from '../i18n';
 import { SettingsSection, usePageDraft } from './PageNavigation';
 import { Popover } from './Popover';
@@ -22,6 +22,22 @@ export function AutoHandoverChoice({ api, thread }: { api: Api; thread: Thread }
   </div>;
 }
 
+/**
+ * Older conversation or new one: what a handover goes to when an earlier segment of the chain could
+ * take the work back. Under a countdown it is a pair of quiet words; in a dialog, a row of its own.
+ */
+export function ReturnChoice({ returns, value, onChange, disabled, form }: { returns: ReturnTarget[]; value: 'return' | 'new'; onChange: (value: 'return' | 'new') => void; disabled?: boolean; form?: boolean }) {
+  const old = returns[0];
+  if (!old) return null;
+  const options = <>
+    <button type="button" role="radio" aria-checked={value === 'return'} disabled={disabled} title={t('handover.choice.oldHint')} className={form ? `chip${value === 'return' ? ' on' : ''}` : undefined} onClick={() => onChange('return')}>{t('handover.choice.old', old.title)}</button>
+    <button type="button" role="radio" aria-checked={value === 'new'} disabled={disabled} title={t('handover.choice.newHint')} className={form ? `chip${value === 'new' ? ' on' : ''}` : undefined} onClick={() => onChange('new')}>{t('handover.choice.new')}</button>
+  </>;
+  return form
+    ? <div className="handover-successor"><span id="handover-choice-label">{t('handover.choice.label')}</span><div className="chip-row" role="radiogroup" aria-labelledby="handover-choice-label">{options}</div></div>
+    : <div className="handover-choice" role="radiogroup" aria-label={t('handover.choice.label')}>{options}</div>;
+}
+
 export function AutoHandoverNotice({ api, thread, agents }: { api: Api; thread: Thread; agents: AgentInfo[] }) {
   const state = thread.autoHandover;
   const [now, setNow] = useState(Date.now());
@@ -33,7 +49,8 @@ export function AutoHandoverNotice({ api, thread, agents }: { api: Api; thread: 
     return () => clearInterval(timer);
   }, [state?.state, state?.deadline]);
   if (!state?.state || state.state === 'checking') return null;
-  const target = state.target;
+  // Going back to an older conversation, that conversation's agent is who takes over.
+  const target = state.returnTo && state.choice === 'return' && state.state !== 'stopped' ? { agent: state.returnTo.agent } : state.target;
   const label = target ? [agents.find(a => a.id === target.agent)?.label ?? target.agent, target.model].filter(Boolean).join(' · ') : '';
   const danger = state.state === 'failed' || state.state === 'stopped';
   const busy = state.state === 'preparing' || state.state === 'countdown';
@@ -41,15 +58,18 @@ export function AutoHandoverNotice({ api, thread, agents }: { api: Api; thread: 
   const calloff = busy && (state.state === 'countdown' || !state.step || state.step === 'summary');
   const text = state.state === 'countdown' ? t('auto.countdown', label, Math.max(0, Math.ceil((Date.parse(state.deadline!) - now) / 1000)))
     : state.state === 'preparing' ? t(state.step ? `auto.step.${state.step}` : 'auto.preparing') : state.state === 'stopped' ? (label ? t('auto.targetGone', label) : t('auto.stopped')) : t('auto.failed');
-  return <div className={`auto-notice${danger ? ' is-danger' : ''}`} role={danger ? 'alert' : 'status'}>
-    <span className="rule" />
-    {busy ? <span className="spinner" aria-hidden="true" /> : <IconFork size={14} />}
-    <span>{text}
-      {state.state === 'preparing' && label && <small>{label}</small>}
-      {state.error && <small>{state.error}</small>}{error && <small role="alert">{error}</small>}</span>
-    {calloff && <button onClick={() => { void api.cancelAutoHandover(thread.id).catch(e => setError(String(e))); }}>{t('auto.cancel')}</button>}
-    <span className="rule" />
-  </div>;
+  return <>
+    <div className={`auto-notice${danger ? ' is-danger' : ''}`} role={danger ? 'alert' : 'status'}>
+      <span className="rule" />
+      {busy ? <span className="spinner" aria-hidden="true" /> : <IconFork size={14} />}
+      <span>{text}
+        {state.state === 'preparing' && label && <small>{label}</small>}
+        {state.error && <small>{state.error}</small>}{error && <small role="alert">{error}</small>}</span>
+      {calloff && <button onClick={() => { void api.cancelAutoHandover(thread.id).catch(e => setError(String(e))); }}>{t('auto.cancel')}</button>}
+      <span className="rule" />
+    </div>
+    {state.returnTo && calloff && <ReturnChoice returns={[state.returnTo]} value={state.choice ?? 'return'} onChange={choice => { void api.setHandoverChoice(thread.id, choice).catch(e => setError(String(e))); }} />}
+  </>;
 }
 
 const targetLabel = (agents: AgentInfo[], target: HandoverTarget) => [agents.find(a => a.id === target.agent)?.label ?? target.agent, target.model].filter(Boolean).join(' · ');

@@ -334,7 +334,8 @@ export class CoordinationManager {
     const name = this.name(t, source);
     const before = this.store.getThread(source)!;
     const after = this.store.getThread(target)!;
-    t.retiredMembers = [...(t.retiredMembers ?? []), { id: source, name }];
+    // A thread the work comes back to may have been this seat's earlier holder: it is retired no more.
+    t.retiredMembers = [...(t.retiredMembers ?? []).filter(m => m.id !== target), { id: source, name }];
     if (member) member.id = target;
     else {
       this.teams.delete(source); this.store.deleteCoordination(source);

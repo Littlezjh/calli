@@ -525,7 +525,7 @@ export function useThreadActions(deps: Deps) {
       const { thread } = dialog;
       dialogNode = (
         <TakeoverDialog api={api} thread={thread} agents={agents} onClose={close}
-          onTakeOver={async (target, summary) => onThreadOpen(await api.takeOver(thread.id, target, undefined, summary))} />
+          onTakeOver={async (target, summary, returnTo) => onThreadOpen(await api.takeOver(thread.id, target, undefined, summary, returnTo))} />
       );
     } else if (dialog.kind === 'chain') {
       const record = chainOf(dialog.thread);
@@ -594,10 +594,10 @@ export function useThreadActions(deps: Deps) {
      * place, with its queue and collaboration lead. For when the thread's own agent cannot go on, so
      * it is not asked. `note` is what the person adds for the successor.
      */
-    takeOver: async (thread: Thread, target: string | HandoverTarget, note?: string) => {
+    takeOver: async (thread: Thread, target: string | HandoverTarget, note?: string, returnTo?: string) => {
       if (!api) return;
       try {
-        onThreadOpen(await api.takeOver(thread.id, target, note));
+        onThreadOpen(await api.takeOver(thread.id, target, note, undefined, returnTo));
       } catch (e) {
         onError(e);
         throw e;

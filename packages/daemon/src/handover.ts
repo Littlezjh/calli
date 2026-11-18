@@ -114,24 +114,34 @@ export interface ChainSegment {
   updatedAt: string;
   archived: boolean;
   preview?: string | null;
+  /** For a thread the chain came back to: which of its two parts this entry is. */
+  part?: 'before' | 'after';
 }
 
 /**
  * The handover chain a thread belongs to, oldest first, ending at the thread itself. A detached
  * edge ends the walk — beyond it the conversations are separate tasks — and so does an ancestor
  * the hub no longer has: a segment the successor cannot read is not listed.
+ *
+ * A thread the chain came back to (`handback`) appears twice: its part after the return, which
+ * leads back to the thread that handed over, and its earlier part, which leads on through its own
+ * handover link. Each thread is visited at most twice, so a loop A → B → A ends the walk.
  */
-export function chainSegments<M extends { id: string; title: string; updatedAt: string; archivedAt?: string | null; preview?: string | null; handover?: { sourceId: string; detached?: boolean } | null }>(
+export function chainSegments<M extends { id: string; title: string; updatedAt: string; archivedAt?: string | null; preview?: string | null; handover?: { sourceId: string; detached?: boolean } | null; handback?: { sourceId: string } | null }>(
   thread: M,
   byId: (id: string) => M | undefined,
 ): ChainSegment[] {
   const segments: ChainSegment[] = [];
-  const seen = new Set<string>();
-  for (let at: M | undefined = thread; at && !seen.has(at.id);) {
-    seen.add(at.id);
-    segments.unshift({ id: at.id, title: at.title, updatedAt: at.updatedAt, archived: Boolean(at.archivedAt), preview: at.preview ?? null });
+  const visits = new Map<string, number>();
+  for (let at: M | undefined = thread; at !== undefined;) {
+    const count: number = visits.get(at.id) ?? 0;
+    const returned: boolean = Boolean(at.handback) && count === 0;
+    if (count >= (at.handback ? 2 : 1)) break;
+    visits.set(at.id, count + 1);
+    segments.unshift({ id: at.id, title: at.title, updatedAt: at.updatedAt, archived: Boolean(at.archivedAt), preview: at.preview ?? null, ...(at.handback ? { part: returned ? 'after' as const : 'before' as const } : {}) });
     const link: M['handover'] = at.handover;
-    at = link && !link.detached ? byId(link.sourceId) : undefined;
+    const next: string | undefined = returned ? at.handback!.sourceId : link && !link.detached ? link.sourceId : undefined;
+    at = next ? byId(next) : undefined;
   }
   return segments;
 }
@@ -148,16 +158,16 @@ export function chainOutlineText(segments: ChainSegment[], currentId: string): s
   // The current segment is always listed, however long the chain: it is the one the reader is in.
   const head = segments.slice(0, OUTLINE_SEGMENTS - 1);
   const shown = segments.some((s) => s.id === currentId && !head.some((h) => h.id === currentId))
-    ? [...head, segments.find((s) => s.id === currentId)!]
+    ? [...head, [...segments].reverse().find((s) => s.id === currentId)!]
     : segments.slice(0, OUTLINE_SEGMENTS);
   const lines = shown.map((s) => {
     const title = trunc(s.title.replace(/(?:（接手）)+$/, ''), 36);
     // The current segment carries no preview or date of its own: those change with every turn,
     // which would make the block look new and ride along every time. What the reader is in, it knows.
-    if (s.id === currentId) return `- ${s.id} · ${title}（当前）`;
+    if (s.id === currentId && s.part !== 'before') return `- ${s.id} · ${title}（当前）`;
     const date = s.updatedAt.slice(5, 10).replace('-', '/');
     const preview = s.preview ? ` · ${trunc(s.preview.replace(/\s+/g, ' '), 24)}` : '';
-    return `- ${s.id} · ${title} · ${date}${preview}${s.archived ? '（已归档）' : ''}`;
+    return `- ${s.id} · ${title} · ${date}${preview}${s.part === 'before' ? '（接回前）' : ''}${s.archived ? '（已归档）' : ''}`;
   });
   return [
     `## 接力链（共 ${segments.length} 段，最早在前）`,

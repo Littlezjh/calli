@@ -128,10 +128,11 @@ test('handover-thread creates an unsent conversation in the same worktree, inclu
     assert.equal(next.sectionId,source.sectionId);
     assert.equal(next.agentSessionId,null);
     assert.equal(next.forkedFrom,null,'handover does not copy the native session');
-    assert.deepEqual(next.handover,{sourceId:source.id,title:source.title,agent:source.agent,mode:'branch',automatic:false,sourceMoved:false,sourceSeq:eventsBefore.at(-1)?.seq ?? 0});
-    const { automatic, sourceMoved, ...storedLink } = next.handover;
+    assert.deepEqual(next.handover,{sourceId:source.id,title:source.title,agent:source.agent,mode:'branch',automatic:false,sourceMoved:false,followups:0,sourceSeq:eventsBefore.at(-1)?.seq ?? 0});
+    const { automatic, sourceMoved, followups, ...storedLink } = next.handover;
     assert.equal(automatic, false);
     assert.equal(sourceMoved, false);
+    assert.equal(followups, 0);
     assert.deepEqual(store.getThread(next.id)?.handover, storedLink);
     assert.equal(next.status,'idle');
     assert.equal(next.title,'原任务（接手）');
@@ -250,7 +251,7 @@ test('merged-history HTTP reads omit handover text until explicitly expanded, an
 });
 
 
-test('manual handovers always branch without stopping work, automatic handovers continue, and resumed sources separate', async () => {
+test('manual handovers always branch without stopping work, automatic handovers continue, and a source that goes on stays in its chain', async () => {
   const root = mkdtempSync(join(tmpdir(), 'calli-handover-mode-'));
   const store = new Store(root);
   const registry = new AgentRegistry(['source', 'next'].map(id => ({ id, adapter: 'claude', command: [process.execPath, fixture] })), null);
@@ -285,12 +286,14 @@ test('manual handovers always branch without stopping work, automatic handovers 
     const independent = await (await post(continued.id, 'branch')).json() as any;
     assert.equal(independent.handover.mode, 'branch', 'idle sessions may also branch');
     const stored = JSON.stringify(store.getThread(continued.id)!.handover);
-    // Even identical wall-clock timestamps cannot hide a new turn after the source boundary.
+    // The source going on by itself does not split the chain: its turns are follow-ups, counted but kept out of the reading.
     store.appendEvent(source.id, 'restarted', 'turn.started', { text: 'another task' });
-    assert.equal(manager.threadView(continued.id).handover?.mode, 'branch');
-    assert.equal(manager.threadView(continued.id).handover?.automatic, true, 'history preserves how the handover began');
-    assert.equal(manager.listThreads().find(t => t.id === continued.id)!.handover?.mode, 'branch');
-    assert.equal(manager.threadView(next.id).handover?.mode, 'continue', 'only the resumed edge changes');
+    assert.equal(manager.threadView(continued.id).handover?.mode, 'continue');
+    assert.equal(manager.threadView(continued.id).handover?.followups, 1);
+    assert.equal(manager.threadView(continued.id).handover?.sourceMoved, true);
+    assert.equal(manager.threadView(continued.id).handover?.automatic, true);
+    assert.equal(manager.listThreads().find(t => t.id === continued.id)!.handover?.mode, 'continue');
+    assert.equal(manager.threadView(next.id).handover?.followups, 0);
     assert.equal(JSON.stringify(store.getThread(continued.id)!.handover), stored, 'derivation never rewrites the relation');
     const detachedResponse = await fetch(`${base}/api/threads/${next.id}/handover-link`, { method: 'DELETE', headers: { Authorization: 'Bearer mode-token' } });
     assert.equal(detachedResponse.status, 200);

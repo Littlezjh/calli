@@ -1,4 +1,4 @@
-import type { HandoverLink } from './handover-mode.js';
+import type { HandbackLink, HandoverLink } from './handover-mode.js';
 import type { DatabaseSync } from 'node:sqlite';
 import type { StoredEvent } from './events.js';
 import { compactDeltas, replaceMessageTail, toolText } from './events.js';
@@ -383,8 +383,10 @@ export class HistoryStore {
    * conversation read from its beginning (the next segment of a handover chain) is paged the way it
    * happened. A forward page that is not the last gives the `after` of the next one as `nextCursor`.
    */
-  async page(thread: string, before?: number, after = 0, chain = false, forward = false): Promise<HistoryPage> {
-    const hiddenStart = chain ? this.handoverStart(thread) : 0;
+  async page(thread: string, before?: number, after = 0, chain = false, forward = false, part?: 'before' | 'after'): Promise<HistoryPage> {
+    const bounds = this.chainBounds(thread, chain, part);
+    const hiddenStart = bounds.hiddenStart;
+    after = Math.max(after, bounds.lower);
     const snapshotSeq = this.latest(thread);
     let end = Math.min(before ?? snapshotSeq + 1, snapshotSeq + 1);
     // Each committed utterance is a page boundary, so opening a long call does not eagerly load its entire transcript.
@@ -465,17 +467,39 @@ export class HistoryStore {
       WHERE e.thread_id=? AND t.handover IS NOT NULL AND e.type='turn.started' ORDER BY e.seq LIMIT 1`).get(thread)?.seq ?? 0);
   }
 
+  /** The handback of a thread the chain came back to, if any. */
+  private handback(thread: string): HandbackLink | null {
+    const raw = this.db.prepare('SELECT handback FROM threads WHERE id=?').get(thread)?.handback;
+    return raw ? JSON.parse(String(raw)) as HandbackLink : null;
+  }
+  /**
+   * What reading `thread` as a part of a chain leaves out. A thread the chain came back to has two
+   * parts: the one after the return (`lower` is the seq it starts after, its first turn the folded
+   * card of what it was handed back) and the earlier one (`part: 'before'`, read like any segment).
+   */
+  private chainBounds(thread: string, chain: boolean, part?: 'before' | 'after'): { lower: number; hiddenStart: number } {
+    if (!chain) return { lower: 0, hiddenStart: 0 };
+    const back = part === 'before' ? null : this.handback(thread);
+    if (!back) return { lower: 0, hiddenStart: this.handoverStart(thread) };
+    const first = this.db.prepare("SELECT seq FROM events WHERE thread_id=? AND type='turn.started' AND seq>? ORDER BY seq LIMIT 1").get(thread, back.afterSeq);
+    return { lower: back.afterSeq, hiddenStart: Number(first?.seq ?? 0) };
+  }
+
   /** The merged view never receives the first handover prompt until its separator is opened. */
   handoverEvent(event: HistoryEvent): HistoryEvent {
-    return event.type === 'turn.started' && event.seq === this.handoverStart(event.threadId)
+    return event.type === 'turn.started' && event.seq === this.chainBounds(event.threadId, true).hiddenStart
       ? { ...event, data: { text: '', handoverCollapsed: true } } : event;
   }
 
-  handoverInfo(thread: string, full = false) {
-    const link = this.db.prepare('SELECT handover FROM threads WHERE id=?').get(thread)?.handover;
-    if (!link) throw new HttpError(404, 'no handover source');
-    const source = JSON.parse(String(link)) as { sourceId: string; agent: string; title: string; method?: 'resume' | 'summary' };
-    const first = Number(this.db.prepare("SELECT seq FROM events WHERE thread_id=? AND type='turn.started' ORDER BY seq LIMIT 1").get(thread)?.seq ?? 0);
+  handoverInfo(thread: string, full = false, part?: 'before' | 'after') {
+    const back = part === 'before' ? null : this.handback(thread);
+    const link = back ? null : this.db.prepare('SELECT handover FROM threads WHERE id=?').get(thread)?.handover;
+    if (!link && !back) throw new HttpError(404, 'no handover source');
+    const source = back
+      ? (() => { const row = this.db.prepare('SELECT id, title, agent FROM threads WHERE id=?').get(back.sourceId); return { sourceId: back.sourceId, title: String(row?.title ?? ''), agent: String(row?.agent ?? '') }; })()
+      : JSON.parse(String(link)) as { sourceId: string; agent: string; title: string; method?: 'resume' | 'summary' };
+    const first = back ? this.chainBounds(thread, true).hiddenStart
+      : Number(this.db.prepare("SELECT seq FROM events WHERE thread_id=? AND type='turn.started' ORDER BY seq LIMIT 1").get(thread)?.seq ?? 0);
     // Folded, only the start of the text is read: enough for a preview and its size, not the whole brief.
     const row = this.db.prepare(`SELECT turn_id, ${full ? "COALESCE(json_extract(data, '$.displayText'), json_extract(data, '$.text'))" : "substr(COALESCE(json_extract(data, '$.displayText'), json_extract(data, '$.text')), 1, 1200)"} AS text,
       length(COALESCE(json_extract(data, '$.displayText'), json_extract(data, '$.text'))) AS size
@@ -484,7 +508,7 @@ export class HistoryStore {
       AND turn_id=(SELECT turn_id FROM events WHERE thread_id=? AND type='turn.started' ORDER BY seq DESC LIMIT 1) ORDER BY seq DESC LIMIT 1`)
       .get(source.sourceId, source.sourceId);
     const text = typeof row?.text === 'string' ? row.text : '';
-    return { source, method: source.method ?? null, turnId: row?.turn_id ?? null, reason: typeof error?.code === 'string' ? error.code : null,
+    return { source, method: back ? 'return' as const : (source as { method?: 'resume' | 'summary' }).method ?? null, turnId: row?.turn_id ?? null, reason: typeof error?.code === 'string' ? error.code : null,
       size: Number(row?.size ?? 0), preview: handoverPreview(text),
       ...(full ? { text } : {}) };
   }
@@ -561,7 +585,9 @@ export class HistoryStore {
   /** Reconnect replaces affected turns from a bounded snapshot, never replays tool payloads. */
   async since(thread: string, after: number, chain = false): Promise<{ events: HistoryEvent[]; turns: string[]; snapshotSeq: number }> {
     const snapshotSeq = this.latest(thread);
-    const hiddenStart = chain ? this.handoverStart(thread) : 0;
+    const bounds = this.chainBounds(thread, chain);
+    const hiddenStart = bounds.hiddenStart;
+    after = Math.max(after, bounds.lower);
     const turns = (this.db.prepare('SELECT DISTINCT turn_id FROM events WHERE thread_id=? AND seq>? AND seq<=? AND turn_id IS NOT NULL').all(thread, after, snapshotSeq) as { turn_id: string }[]).map(r => r.turn_id);
     const events: HistoryEvent[] = [];
     for (const turn of turns) {
@@ -581,7 +607,7 @@ export class HistoryStore {
     // work panels page back to the start on every refresh. The returned version is current,
     // so the next continuation continues from what the server now knows.
     await this.ensure(thread, start, end);
-    const rows = compactHistory(this.rows(thread, start, end, chain ? this.handoverStart(thread) : 0));
+    const rows = compactHistory(this.rows(thread, start, end, this.chainBounds(thread, chain).hiddenStart));
     const partition = partitionHistory(rows);
     const entries = partition.blocks.get(block);
     if (!entries) throw new HttpError(404, 'work block not found');

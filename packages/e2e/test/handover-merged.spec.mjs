@@ -8,6 +8,7 @@ import { startDaemon, openUi, api, launchBrowser } from '../harness.mjs';
 const shots = '/tmp/calli-handover-merged-shots';
 const chainDialog = async page => {
   await page.getByLabel('这个线程的更多操作').click();
+  await page.getByRole('menuitem', { name: '分叉与交接' }).click();
   await page.getByRole('menuitem', { name: '交接记录', exact: true }).click();
   await page.getByRole('dialog', { name: '交接记录', exact: true }).waitFor();
 };
@@ -120,12 +121,12 @@ test('three handover segments load on upward navigation, keep their action targe
         await chainDialog(page); await page.getByRole('menuitem', { name: '显示整条链', exact: true }).click();
         await page.getByText('C 问题 10', { exact: true }).waitFor();
         assert.equal(await page.locator('.bubble', { hasText: 'DEFERRED_HANDOVER' }).count(), 0);
-        // Sidebar member navigation opens that segment's merged view, with C as input recipient.
+        // Sidebar member navigation opens that segment's merged view; a message goes to the segment being read.
         if (phone) await page.getByRole('button', { name: '打开线程列表', exact: true }).click();
         await page.locator('.handover-toggle').click();
         await page.locator('.handover-member').filter({ hasText: '原始' }).click();
         await page.getByText('A 问题 4', { exact: true }).waitFor();
-        await page.getByText('前段只读；消息发送给最新一段', { exact: true }).waitFor();
+        await page.locator('.send-target').waitFor();
         await page.waitForTimeout(300);
         await page.screenshot({ path: `${shots}/${phone ? 'phone' : 'desktop'}-${theme}-earlier.png` });
         // Reading on from the earlier segment needs no click: the next ones load, from their beginning, as the end comes into view.
@@ -141,7 +142,9 @@ test('three handover segments load on upward navigation, keep their action targe
           await page.screenshot({ path: `${shots}/${phone ? 'phone' : 'desktop'}-${theme}-earlier-forward.png` });
         }
         const sendText = `从早段发送 ${phone}-${theme}`;
-        const targetRequest = page.waitForRequest(req => req.method() === 'POST' && req.url().endsWith(`/threads/${c.id}/turns`));
+        // On the desktop the reading has gone on to the latest segment; on the phone it is still in the first one.
+        const target = phone ? a : c;
+        const targetRequest = page.waitForRequest(req => req.method() === 'POST' && req.url().endsWith(`/threads/${target.id}/turns`));
         await page.locator('.composer textarea').fill(sendText);
         await page.locator('.composer .send-btn:not(.stop)').click();
         assert.equal((await targetRequest).postDataJSON().text, sendText);

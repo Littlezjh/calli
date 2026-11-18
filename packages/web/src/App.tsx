@@ -25,6 +25,7 @@ import {
   type GeneralSettings,
   type GoalView,
   type HandoverTarget,
+  type ReturnTarget,
   type ModelOption,
   type Section,
   type SlashCommand,
@@ -108,15 +109,16 @@ import { machineSummaries, threadMachine, parseThreadLink } from './extensions/p
 import { createThreadFeed } from './extensions/thread-feed';
 import { cachedAgentMarks, cachedThreads, rememberAgentMarks, rememberThreads } from './thread-cache';
 import { cachedAgents, cachedDraft, cachedModels, cachedPet, rememberAgents, rememberDraft, rememberModels, rememberPetBust, rememberPetStatus } from './host-cache';
-import { clampSidebarWidth, defaultSidebarWidth, projectDir, savedSidebarWidth, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH, type HostSource } from './sidebar';
+import { clampSidebarWidth, defaultSidebarWidth, handoverGroups, projectDir, savedSidebarWidth, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH, type HostSource } from './sidebar';
 import { enabledViews, extensionHash, looksLikeExtensionRoute, resolveExtensionRoute } from './extensions/routes';
 import { AgentPicker, type DiscoveredAccount, type DiscoveredAgent, effortsForModel, imagesBlocked, imagesNote, modelName, resolveModel, speedsForModel, ModelPicker, PermissionPicker, UsageMeter, WorkspacePicker } from './components/Pickers';
 import { Sidebar, SIDEBAR_SHORTCUT } from './components/Sidebar';
 import { MergedHistory } from './components/MergedHistory';
 import { currentPlan, PlanButton } from './components/PlanPanel';
-import { HandoverComposer } from './components/HandoverComposer';
+import { HandoverComposer, SendTargetMark } from './components/HandoverComposer';
 import { WritingBar } from './components/WritingBar';
 import { handoverHistoryKey, laterSegment, latestHandoverThread } from './handover';
+import type { ChainFocus } from './components/MergedHistory';
 import { TurnRuler } from './components/TurnRuler';
 import { NewProjectDialog, ProjectPicker, RootsDialog } from './components/Projects';
 import { NoteMarks, type NoteMark } from './components/NoteMarks';
@@ -1010,7 +1012,21 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   const viewingEarlier = Boolean(selected && latestSegment && latestSegment.id !== selected.id);
   // Any thread that continues another one by a live link reads as one conversation, its ancestors
   // folded in above — a relay made by hand reads the same way as an automatic one.
-  const mergedHandover = !api.demo && singleSegmentId !== selectedId && Boolean((selected?.handover && !selected.handover.detached) || viewingEarlier);
+  const mergedHandover = !api.demo && singleSegmentId !== selectedId && Boolean((selected?.handover && !selected.handover.detached) || selected?.handback || viewingEarlier);
+  // Reading a chain, a message goes to the segment the reading is at; the one the page is on otherwise.
+  const [chainFocus, setChainFocus] = useState<ChainFocus | null>(null);
+  useEffect(() => { setChainFocus(null); }, [selectedId, mergedHandover]);
+  const focusedThread = mergedHandover && chainFocus && chainFocus.threadId !== selectedId ? threads.find(item => item.id === chainFocus.threadId) ?? null : null;
+  const inputThread = focusedThread ?? selected;
+  // The segment a message is aimed at is not the chain's latest: say so, quietly, beside the input.
+  const aimedAtEarlier = Boolean(mergedHandover && latestSegment && inputThread && inputThread.id !== latestSegment.id);
+  const goLatest = () => {
+    if (!latestSegment) return;
+    if (latestSegment.id !== selectedId) { pick(latestSegment.id); return; }
+    stickToBottom.current = true;
+    const scroller = scrollerRef.current;
+    if (scroller) scroller.scrollTo({ top: scroller.scrollHeight });
+  };
   const selectDraftAgent = (id: string, list = agents) => {
     const caps = list.find(item => item.id === id)?.capabilities;
     setDraftAgent(id);
@@ -1240,7 +1256,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
 
   // A takeover under way, from the button on a turn that failed because the plan ran out.
   const [takingOver, setTakingOver] = useState(false);
-  const [takeoverTarget, setTakeoverTarget] = useState<{ threadId: string; target: HandoverTarget } | null>(null);
+  const [takeoverTarget, setTakeoverTarget] = useState<{ threadId: string; target: HandoverTarget | null; back: ReturnTarget | null } | null>(null);
   // Arming or cancelling a "wait for the quota and continue" watch on that same turn.
   const [resumeBusy, setResumeBusy] = useState(false);
   const [autoRetryBusy, setAutoRetryBusy] = useState(false);
@@ -2752,7 +2768,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
       if (!alive) return;
       void api.autoHandover(selected.id).then(value => {
         if (!alive) return;
-        if (value.targets[0]) setTakeoverTarget({ threadId: selected.id, target: value.targets[0] });
+        if (value.targets[0] || value.returns?.[0]) setTakeoverTarget({ threadId: selected.id, target: value.targets[0] ?? null, back: value.returns?.[0] ?? null });
         else timer = setTimeout(probe, TAKEOVER_RETRY_MS);
       }).catch(() => { if (alive) timer = setTimeout(probe, TAKEOVER_RETRY_MS); });
     };
@@ -2760,6 +2776,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
     return () => { alive = false; if (timer) clearTimeout(timer); };
   }, [api, api.demo, outOfPlan, selected?.id]);
   const takeoverChoice = selected && takeoverTarget?.threadId === selected.id ? takeoverTarget.target : null;
+  const takeoverBack = selected && takeoverTarget?.threadId === selected.id ? takeoverTarget.back : null;
   const takeoverLabel = takeoverChoice ? [agents.find(a => a.id === takeoverChoice.agent)?.label ?? takeoverChoice.agent, takeoverChoice.model].filter(Boolean).join(' · ') : undefined;
 
   const teamWaiting = Boolean(coordination?.members.some((m) => m.thread?.waiting));
@@ -2868,11 +2885,18 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   ];
   // The same body in both shapes: the standing panel beside the conversation, and the popover a
   // narrow window still gets. Only the standing one keeps itself open behind its own rows.
+  // The conversations of the handover chain this one is in, the latest first; only a chain of two or more has a group.
+  const overviewChain = selected && latestSegment && !demo ? (() => {
+    const members = handoverGroups(threads).find(group => group.members.some(item => item.id === selected.id))?.members ?? [];
+    if (members.length < 2) return undefined;
+    return { rows: [latestSegment, ...members.filter(item => item.id !== latestSegment.id)], latestId: latestSegment.id, viewingId: inputThread?.id ?? selected.id, onOpen: (id: string) => pick(id) };
+  })() : undefined;
   const overviewBody = (close: () => void, persistent: boolean, detail?: OverviewSection) => selected && api && (
     <ThreadOverview key={`${hostId ?? ''}:${selected.id}:${detail ?? 'preview'}`}
       detail={detail} onLoadingChange={setOverviewLoading}
       onViewAll={(section, returnToPreview = true) => setOverviewDetail({ api, threadId: selected.id, section, returnToPreview })}
       api={api} threadId={selected.id} updatedAt={selected.updatedAt} active={selected.status === 'running'}
+      chain={overviewChain}
       team={overviewTeam} agents={agents} plan={topPlan} roots={threadRoots}
       loadFile={loadFile} persistent={persistent}
       onOpenMember={(member) => { setAgentsStart(member ?? null); setAgentsOpen(true); setFiles(null); }}
@@ -3330,7 +3354,14 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
             <MergedHistory
               key={`${handoverHistoryKey(selected, threads)}:${mergedHandover}`}
               api={api} thread={selected} merged={mergedHandover} ready={historyReady} agentLabel={agentLabel}
-              laterOf={latestSegment ? thread => laterSegment(thread, latestSegment, threads) : undefined}
+              laterOf={latestSegment ? entry => laterSegment(entry.thread, latestSegment, threads, entry.part) : undefined}
+              latest={latestSegment ?? undefined}
+              agentIcon={id => agents.find(a => a.id === id)?.icon}
+              onOpenSegment={(thread, alone) => {
+                if (alone) { setSingleSegmentId(thread.id); setSelectedId(thread.id); setView('thread'); setDrawer(false); }
+                else if (thread.id !== selected.id) pick(thread.id);
+              }}
+              onGoLatest={goLatest} onFocus={setChainFocus}
               onOpenFinds={onRouterThread ? () => openDesk(true) : undefined}
               onBrowseOlder={() => { stickToBottom.current = false; setAtBottom(false); }}
               canFork={thread => ({ enabled: Boolean(thread.agentSessionId && capsOf(thread.agent)?.fork), any: Boolean(capsOf(thread.agent)?.forkAt) })}
@@ -3418,6 +3449,10 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
                   setTakingOver(true);
                   void threadActions.takeOver(selected, takeoverChoice).catch(() => undefined).finally(() => setTakingOver(false));
                 } : undefined,
+                goBack: takeoverBack ? { title: takeoverBack.title, go: () => {
+                  setTakingOver(true);
+                  void threadActions.takeOver(selected, { agent: takeoverBack.agent }, undefined, takeoverBack.threadId).catch(() => undefined).finally(() => setTakingOver(false));
+                } } : undefined,
                 choose: () => threadActions.handover(selected),
               } : null}
               resume={!api.demo && selected.autoHandover?.resume !== undefined ? {
@@ -3487,10 +3522,10 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           }} />}
         {showcase ? showcase.composer(selectedId) : <>
         {selected?.coordination?.team && selected.coordination.rootId === selected.id && ['awaiting_confirm', 'needs_attention'].includes(selected.coordination.team.status) && <div className="team-task-notice">{selected.coordination.team.status === 'needs_attention' && <span>{selected.coordination.team.error}</span>}{selected.coordination.team.status === 'awaiting_confirm' && <button className="ghost" onClick={() => void api.configureCoordination(selected.id, { action: 'confirm' }).then(value => { setCoordination(value); void refreshThreads(); }).catch(handleError)}>{t('teams.confirm')}</button>}</div>}
-        {voice.state.error ? <div className="voice-reconnect-row"><button className="voice-reconnect" onClick={() => void voice.start()}>{t('voice.reconnect')}</button><VoiceControls session={voice.state} onMute={voice.toggleMute} onStop={voice.dismissError} /></div> : viewingEarlier && latestSegment ? <HandoverComposer
-          key={latestSegment.id} api={api} thread={latestSegment} sourceId={selected!.id} label={agentLabel(latestSegment.agent)} hostId={hostId}
-          attachBlocked={capsOf(latestSegment.agent)?.images ? null : t('app.noImages', agentLabel(latestSegment.agent))}
-          onLatest={() => pick(latestSegment.id)} onRefresh={() => { setSingleSegmentId(null); void refreshThreads(); }} onError={handleError}
+        {voice.state.error ? <div className="voice-reconnect-row"><button className="voice-reconnect" onClick={() => void voice.start()}>{t('voice.reconnect')}</button><VoiceControls session={voice.state} onMute={voice.toggleMute} onStop={voice.dismissError} /></div> : focusedThread ? <HandoverComposer
+          key={focusedThread.id} api={api} thread={focusedThread} mark={<SendTargetMark label={agentLabel(focusedThread.agent)} title={focusedThread.title} icon={agents.find(a => a.id === focusedThread.agent)?.icon} onBack={goLatest} />} hostId={hostId}
+          attachBlocked={capsOf(focusedThread.agent)?.images ? null : t('app.noImages', agentLabel(focusedThread.agent))}
+          onRefresh={() => { void refreshThreads(); }} onError={handleError}
           note={noteSignal?.draftKey === composerDraftKey ? noteSignal.note : null} onNotesChange={onNotesChange}
         /> : sessionInUse && selected ? <SessionInUseNotice key={selected.id}
           onRetry={async () => { await api.retryThread(selected.id); await refreshThreads(); }}
@@ -3501,7 +3536,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           voiceControls={voice.state.active ? <VoiceControls session={voice.state} onMute={voice.toggleMute} onStop={() => void voice.stop()} /> : undefined}
           running={voice.state.active ? false : running}
           disabled={modeBusy || (!selected && (!draftCwd || modelPreferences.status !== 'ready'))}
-          placeholder={voice.state.active ? t('app.placeholder.continue') : onRouterThread && !running ? t('pet.threadPlaceholder') : demo ? t('app.placeholder.demo') : workMode === 'plan' && !running ? t('composerMenu.planOn') : writing && !running ? t('writing.placeholder') : selected ? (running ? t('sideChat.queuePlaceholder') : t('app.placeholder.continue')) : draftScratch ? t('app.placeholder.scratch') : t('app.placeholder.startIn', folderName(beside?.worktree ? beside.project : draftCwd))}
+          placeholder={voice.state.active ? t('app.placeholder.continue') : onRouterThread && !running ? t('pet.threadPlaceholder') : demo ? t('app.placeholder.demo') : workMode === 'plan' && !running ? t('composerMenu.planOn') : writing && !running ? t('writing.placeholder') : selected ? (running ? t('sideChat.queuePlaceholder') : aimedAtEarlier ? t('handover.chain.continueSegment', selected.title) : t('app.placeholder.continue')) : draftScratch ? t('app.placeholder.scratch') : t('app.placeholder.startIn', folderName(beside?.worktree ? beside.project : draftCwd))}
           onSend={voice.state.active ? async (text, images, _mentions, videos = []) => {
             try { await voice.appendText(text, images.map(img => ({ data: img.data, mimeType: img.mimeType })), await Promise.all(videos.map(async video => (await api.uploadVideo(selectedId!, video.file)).id))); }
             catch (error) { handleError(error); throw error; }
@@ -3532,6 +3567,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
             onOpenHabits={path => void openFileLink(path).catch(handleError)} />}
           planMode={!draftTeam && activeCaps?.workModes?.includes('plan') ? { active: workMode === 'plan', disabled: running || modeBusy, onChange: active => void changeWorkMode(active ? 'plan' : 'execute') } : undefined}
           left={draftTeam ? undefined : left}
+          marker={aimedAtEarlier && selected && inputThread?.id === selected.id ? <SendTargetMark label={agentLabel(selected.agent)} title={selected.title} icon={agents.find(a => a.id === selected.agent)?.icon} onBack={goLatest} /> : undefined}
           right={draftTeam ? undefined : right}
           composerActions={(canVoice || canVoiceDraft) && !voice.state.active && (
             <button
@@ -3570,7 +3606,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
         />}
         </>}
         {/* Guided demos replace the composer, but use the same approval and question sheets. */}
-        {!viewingEarlier && waitingOn && selected && (!showcase || waitingOn.target.kind !== 'hub-plan') && (
+        {!focusedThread && waitingOn && selected && (!showcase || waitingOn.target.kind !== 'hub-plan') && (
           <ActionSheet
             key={waitingOn.target.item.key}
             target={waitingOn.target}
@@ -3775,7 +3811,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           const id = `note-${Date.now()}`;
           if (range) noteRanges.current.set(id, range);
           // Messages go to the chain's latest conversation; a passage from another one says where it is.
-          const source = noteSource(range, viewingEarlier ? latestSegment?.id : selectedId);
+          const source = noteSource(range, inputThread?.id ?? selectedId);
           setNoteSignal({ draftKey: composerDraftKey, note: { id, quote, comment, nonce: Date.now(), ...(file ? { file } : {}), ...(source ? { source } : {}) } });
           if (file) setFilesNotePulse((v) => v + 1);
         }}

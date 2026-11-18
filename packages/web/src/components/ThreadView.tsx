@@ -101,7 +101,7 @@ interface Props {
    * When the last turn failed because the agent's plan ran out: hand the thread to another agent.
    * `label` names the quota-aware one-click target when one is available; `choose` opens the handover to pick another.
    */
-  takeover?: { label?: string; go?: () => void; choose: () => void; busy?: boolean } | null;
+  takeover?: { label?: string; go?: () => void; /** An earlier conversation of the chain that can take the work back, offered beside a new one. */ goBack?: { title: string; go: () => void }; choose: () => void; busy?: boolean } | null;
   /**
    * When the last turn failed because the agent's plan ran out: wait for the quota to reset and
    * continue with the same agent. `armed` mirrors the daemon's watch; `onArm`/`onCancel` toggle it.
@@ -454,9 +454,13 @@ export function ThreadView({ onOpenFinds, chain = false, observeOlder = true, be
           return (
           <ErrorNotice key={item.key} item={item}>
             {item.planExhausted && item === items[items.length - 1] && (takeover || resume) && <div className="exhausted-actions">
-              {takeover?.go && takeover.label && <button className="exhausted-hand" onClick={takeover.go} disabled={takeover.busy}>
-                {takeover.busy ? t('view.handingOver') : t('view.handTo', takeover.label)}
+              {takeover?.goBack && <button className="exhausted-hand" onClick={takeover.goBack.go} disabled={takeover.busy}>
+                {takeover.busy ? t('view.handingOver') : t('handover.choice.old', takeover.goBack.title)}
                 <IconArrowRight size={14} />
+              </button>}
+              {takeover?.go && takeover.label && <button className={takeover.goBack ? 'exhausted-quiet' : 'exhausted-hand'} onClick={takeover.go} disabled={takeover.busy}>
+                {takeover.busy ? t('view.handingOver') : takeover.goBack ? t('handover.choice.new') : t('view.handTo', takeover.label)}
+                {!takeover.goBack && <IconArrowRight size={14} />}
               </button>}
               {takeover && <button className="exhausted-quiet" onClick={takeover.choose} disabled={takeover.busy}>{t('view.chooseOtherShort')}</button>}
               {resume && !resume.armed && <button className="exhausted-quiet" onClick={resume.onArm} disabled={resume.busy}>{t('view.resumeArm')}</button>}

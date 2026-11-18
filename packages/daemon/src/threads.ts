@@ -138,7 +138,7 @@ type ModelQueueState = ModelQueueView & { turnId: string };
 export type ThreadView = Omit<ThreadRecord, 'worktree' | 'handover' | 'writing'> & {
   /** Writing mode, with where the person's writing habits are kept. */
   writing: (WritingState & { habits: string }) | null;
-  handover?: (NonNullable<ThreadRecord['handover']> & { automatic: boolean; /** The source started a turn after the handover. */ sourceMoved: boolean }) | null;
+  handover?: (NonNullable<ThreadRecord['handover']> & { automatic: boolean; /** The source started a turn after the handover. */ sourceMoved: boolean; /** Turns the source took on its own after the handover, left out of the merged reading. */ followups: number }) | null;
   autoHandover?: AutoHandoverView;
   /** The daemon retrying this thread's transient failure by itself; null when nothing is pending. */
   autoRetry?: RetryView | null;
@@ -1433,7 +1433,7 @@ export class ThreadManager {
     } : null;
     const failed = thread.status === 'error' ? this.store.lastTurnFailure(thread.id) : null;
     const failure = failed ? { code: failed.code, message: failed.message.slice(0, 500), at: failed.at } : null;
-    return { ...thread, failure, writing: thread.writing ? { ...thread.writing, habits: habitsPath() } : null, handover: thread.handover ? { ...thread.handover, mode: this.store.handoverMode(thread)!, automatic: thread.handover.mode === 'continue', sourceMoved: this.store.handoverSourceMoved(thread)! } : null, autoHandover: { ...this.autoHandover.view(thread.id), resume: this.quotaResume.view(thread.id) }, autoRetry: this.autoRetry.view(thread.id), advance: this.autoAdvance.view(thread.id), worktree, resumeCommand, cwdReal, waiting, waitingReason, queued, modelQueue, terminalActivity, scratch, projectGone, runningSince, coordination: this.coordination?.metadata(thread.id) };
+    return { ...thread, failure, writing: thread.writing ? { ...thread.writing, habits: habitsPath() } : null, handover: thread.handover ? { ...thread.handover, mode: this.store.handoverMode(thread)!, automatic: thread.handover.mode === 'continue', sourceMoved: this.store.handoverSourceMoved(thread)!, followups: this.store.handoverFollowups(thread)! } : null, autoHandover: { ...this.autoHandover.view(thread.id), resume: this.quotaResume.view(thread.id) }, autoRetry: this.autoRetry.view(thread.id), advance: this.autoAdvance.view(thread.id), worktree, resumeCommand, cwdReal, waiting, waitingReason, queued, modelQueue, terminalActivity, scratch, projectGone, runningSince, coordination: this.coordination?.metadata(thread.id) };
   }
 
   /**
@@ -2886,7 +2886,7 @@ export class ThreadManager {
    * The handover chain of a thread, oldest first, ending at the thread itself. The archive is
    * included: a chain often reaches back through quiet segments, and the successor can read those too.
    */
-  private handoverChain(thread: { id: string }): ChainSegment[] {
+  handoverChain(thread: { id: string }): ChainSegment[] {
     const all = [...this.store.listThreads(), ...this.store.listThreads({ archived: true })];
     const byId = new Map(all.map((t) => [t.id, t]));
     const self = byId.get(thread.id);
@@ -3044,8 +3044,12 @@ export class ThreadManager {
    * in a summary turn first, an agent target compresses the record; either way the brief goes over,
    * not a copy of the conversation. Without it the configured method decides.
    */
-  async takeOver(id: string, agent: unknown, model: unknown, note: unknown, summary?: unknown): Promise<ThreadView> {
+  async takeOver(id: string, agent: unknown, model: unknown, note: unknown, summary?: unknown, returnTo?: unknown): Promise<ThreadView> {
     const thread = this.getThread(id);
+    if (returnTo !== undefined) {
+      if (typeof returnTo !== 'string') throw new HttpError(400, 'invalid return target');
+      agent = this.getThread(returnTo).agent;
+    }
     if (typeof agent !== 'string' || !this.adapters.has(agent) || agent === thread.agent && !model) throw new HttpError(400, 'invalid handover target');
     if (model !== undefined && typeof model !== 'string') throw new HttpError(400, 'invalid model');
     if (note !== undefined && (typeof note !== 'string' || note.length > 20_000)) throw new HttpError(400, 'invalid note');
@@ -3053,6 +3057,7 @@ export class ThreadManager {
     if (writer !== undefined && writer !== 'source' && (!writer || typeof writer !== 'object' || typeof writer.agent !== 'string' || !this.adapters.has(writer.agent)
       || writer.model !== undefined && (typeof writer.model !== 'string' || !writer.model || writer.model.length > 200))) throw new HttpError(400, 'invalid summary writer');
     if (this.running.has(id) || this.threadView(id).waiting) throw new HttpError(409, 'the thread is busy');
+    if (returnTo && !(await this.autoHandover.returnTargets(id)).some(r => r.threadId === returnTo)) throw new HttpError(409, 'that conversation cannot take the work back now');
     this.autoHandover.cancel(id);
     this.quotaResume.drop(id);
     this.autoRetry.drop(id);
@@ -3061,6 +3066,13 @@ export class ThreadManager {
     const last = this.store.listTurns(id).at(-1)?.turnId ?? null;
     const failed = last && this.store.listTurnEvents(id, last).some(e => e.type === 'turn.error') ? last : null;
     const target = { agent, ...(model ? { model } : {}) };
+    if (returnTo) {
+      const brief = writer === 'source' ? await this.autoHandoverSummary(id, agent, false) : await this.handoverSummary(id, null, { compress: writer ? [{ agent: writer.agent, ...(writer.model ? { model: writer.model } : {}) }] : true }).then(r => {
+        if (!('summary' in r)) throw new HttpError(409, 'handover summary unavailable');
+        return r.summary;
+      });
+      return this.executeReturnHandover(id, returnTo, this.returnBrief(brief), failed, note?.trim());
+    }
     if (writer === 'source') return this.executeAutoHandover(id, target, await this.autoHandoverSummary(id, agent, false), failed, note?.trim());
     if (!writer && this.autoHandover.settings().method === 'resume' && await this.canResumeHandover(id, agent, failed)) {
       const sessionId = await this.importHandoverSession(id, agent);
@@ -3151,6 +3163,66 @@ export class ThreadManager {
     if (queue.length) this.setQueue(successor.id, [...(this.queues.get(successor.id) ?? []), ...queue]);
     this.startNextQueued(successor.id);
     return this.threadView(successor.id);
+  }
+
+  /**
+   * Hands the work back to an older conversation of the chain instead of opening a new one. The
+   * conversation goes on in its own native session: it gets what happened since it left as one
+   * turn (the brief), the failed turn and the waiting messages. Nothing is copied. The hub records
+   * the return on it (`handback`), so it is the chain's head again and the reading goes
+   * older part → the segments in between → its part after the return.
+   */
+  async executeReturnHandover(id: string, targetId: string, summary: string, failedTurn: string | null, note?: string): Promise<ThreadView> {
+    const head = this.getThread(id);
+    const old = this.getThread(targetId);
+    if (!old.agentSessionId) throw new HttpError(409, 'the older conversation has no session to go on in');
+    this.quotaResume.drop(id);
+    this.autoRetry.drop(id);
+    this.autoAdvance.drop(id);
+    const adapter = this.adapters.get(old.agent)!;
+    // Keep the level the head ran at, where the older conversation's agent has it.
+    if (head.permissionMode !== old.permissionMode && adapter.capabilities.permissionModes.includes(head.permissionMode as PermissionMode)) await this.updateThread(old.id, { permissionMode: head.permissionMode });
+    if (adapter.capabilities.workModes?.includes(head.workMode ?? 'execute') && (old.workMode ?? 'execute') !== (head.workMode ?? 'execute')) await this.updateThread(old.id, { workMode: head.workMode ?? 'execute' });
+    this.store.setHandback(old.id, { sourceId: head.id, afterSeq: this.store.history.latest(old.id), sourceSeq: this.store.history.latest(head.id), at: new Date().toISOString() });
+    this.personal.inherit(head.id, old.id);
+    this.autoHandover.inherit(id, old.id);
+    this.attachments.copyThread(id, old.id);
+    const failed = failedTurn ? this.store.listTurnEvents(id, failedTurn).find(e => e.type === 'turn.started') : undefined;
+    const images = ((failed?.data.images ?? []) as Array<{ id: string }>).map(img => {
+      const file = this.attachments.find(id, img.id);
+      if (!file) throw new HttpError(409, 'handover attachment unavailable');
+      return { mimeType: file.mimeType, data: readFileSync(file.path).toString('base64') };
+    });
+    const videos = ((failed?.data.videos ?? []) as Array<{ id: string }>).map(v => v.id);
+    const retry = failed ? String(failed.data.displayText ?? failed.data.text ?? '') : '';
+    const turnId = randomUUID();
+    const text = summary + (retry ? '\n\n## 继续未完成的这一轮\n\n' + retry : '') + (note ? '\n\n## 用户补充\n\n' + note : '');
+    const promptText = failed?.data.hiddenPrompt
+      ? summary + '\n\n## 继续未完成的这一轮\n\n' + String(failed.data.text) + (note ? '\n\n## 用户补充\n\n' + note : '')
+      : text;
+    try {
+      await this.startTurn(old.id, { text: promptText, ...(failed?.data.hiddenPrompt ? { displayText: text } : {}), channel: failed?.data.channel as TurnChannel | undefined, images, videos, handoverFrom: id }, {
+        turnId, source: { handover: id }, displayText: text,
+        claim: () => this.coordination?.replaceHandoverMember(id, old.id, turnId),
+      });
+    } catch (error) {
+      this.store.setHandback(old.id, null);
+      throw error;
+    }
+    const queue = this.queues.get(id) ?? [];
+    this.setQueue(id, []);
+    if (queue.length) this.setQueue(old.id, [...(this.queues.get(old.id) ?? []), ...queue]);
+    this.startNextQueued(old.id);
+    this.emitThreadEvent(id, null, 'thread.updated', {});
+    return this.threadView(old.id);
+  }
+
+  /**
+   * The brief an older conversation is handed back with: the head's summary (it carries the chain's
+   * outline, so the older conversation knows every segment since it left) under a short lead-in.
+   */
+  returnBrief(summary: string): string {
+    return `# 交回\n\n任务交回给你：你离开之后由别的会话接着做了一段，下面是自你离开后的进展。你自己的会话上下文仍在，先对照现状再继续。\n\n${summary}`;
   }
 
   async executeAutoHandover(id: string, target: HandoverTarget, summary: string, failedTurn: string | null, note?: string): Promise<ThreadView> {

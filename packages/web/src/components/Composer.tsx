@@ -168,6 +168,8 @@ interface Props {
   takeover?: { from: string; current: string; go: (agent: string, note: string) => Promise<void> };
   /** Controls at the left of the bottom bar, after the add menu. */
   left: ReactNode;
+  /** A quiet mark beside the add menu that stays when the bar is folded: where this message goes, when that is not the usual place. */
+  marker?: ReactNode;
   /** Controls at the right of the bottom bar, before the send button. */
   right: ReactNode;
   /** Host-owned extension actions stay reachable when the phone composer is collapsed. */
@@ -247,6 +249,7 @@ export function Composer({
   banner,
   takeover,
   left,
+  marker,
   right,
   composerActions,
   voiceControls,
@@ -1305,6 +1308,7 @@ export function Composer({
               {close => <ReferencePicker source={referenceSource} initialQuery={referenceQuery} agents={mentionOptions.filter(m => !mentions.some(v => v.id === m.id && v.kind === m.kind))}
                 onAgent={agent => { close(); chooseMention(agent); }} onPick={reference => { close(); chooseReference(reference); }} />}
             </Popover>}
+            {marker}
             {!collapsed && left}
             {/* Only active modes take space; their compact marks can turn them off. */}
             {planMode?.active && (
