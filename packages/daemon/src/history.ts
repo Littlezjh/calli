@@ -457,14 +457,23 @@ export class HistoryStore {
     if (!row) throw new HttpError(404, 'handover summary not found');
     return { ...this.handoverText(thread, turn, offset, snapshot), prompt: String(row.prompt ?? '') };
   }
-  private handoverStart(thread: string): number {
-    const record = this.db.prepare('SELECT handover, created_at FROM threads WHERE id=?').get(thread);
-    // Read as part of a chain, the first turn of a handed-over segment is its folded card, whether the
-    // relay was automatic or by hand. Read on its own (not a chain), nothing is hidden.
-    if (!record?.handover || (JSON.parse(String(record.handover)) as HandoverLink).detached) return 0;
+  private handoverStartSeq(thread: string, link: { sourceId: string; method?: 'resume' | 'summary' }): number {
+    const first = this.db.prepare(`SELECT seq, json_extract(data, '$.coordination.handover') AS handover
+      FROM events WHERE thread_id=? AND type='turn.started' ORDER BY seq LIMIT 1`).get(thread) as { seq?: number; handover?: unknown } | undefined;
+    if (!first?.seq) return 0;
+    // A copied conversation (`resume`) already carries its history; only a turn the handover itself
+    // sent (`coordination.handover === sourceId`) belongs to the fold, not an ordinary ask typed later.
+    if (link.method === 'resume' && first.handover !== link.sourceId) return 0;
+    return Number(first.seq);
+  }
 
-    return Number(this.db.prepare(`SELECT e.seq FROM events e JOIN threads t ON t.id=e.thread_id
-      WHERE e.thread_id=? AND t.handover IS NOT NULL AND e.type='turn.started' ORDER BY e.seq LIMIT 1`).get(thread)?.seq ?? 0);
+  private handoverStart(thread: string): number {
+    const record = this.db.prepare('SELECT handover FROM threads WHERE id=?').get(thread);
+    // Read as part of a chain, the handover turn of a segment is its folded card, whether the
+    // relay was automatic or by hand. Read on its own (not a chain), nothing is hidden.
+    if (!record?.handover) return 0;
+    const link = JSON.parse(String(record.handover)) as HandoverLink;
+    return link.detached ? 0 : this.handoverStartSeq(thread, link);
   }
 
   /** The handback of a thread the chain came back to, if any. */
@@ -499,7 +508,7 @@ export class HistoryStore {
       ? (() => { const row = this.db.prepare('SELECT id, title, agent FROM threads WHERE id=?').get(back.sourceId); return { sourceId: back.sourceId, title: String(row?.title ?? ''), agent: String(row?.agent ?? '') }; })()
       : JSON.parse(String(link)) as { sourceId: string; agent: string; title: string; method?: 'resume' | 'summary' };
     const first = back ? this.chainBounds(thread, true).hiddenStart
-      : Number(this.db.prepare("SELECT seq FROM events WHERE thread_id=? AND type='turn.started' ORDER BY seq LIMIT 1").get(thread)?.seq ?? 0);
+      : this.handoverStartSeq(thread, source);
     // Folded, only the start of the text is read: enough for a preview and its size, not the whole brief.
     const row = this.db.prepare(`SELECT turn_id, ${full ? "COALESCE(json_extract(data, '$.displayText'), json_extract(data, '$.text'))" : "substr(COALESCE(json_extract(data, '$.displayText'), json_extract(data, '$.text')), 1, 1200)"} AS text,
       length(COALESCE(json_extract(data, '$.displayText'), json_extract(data, '$.text'))) AS size

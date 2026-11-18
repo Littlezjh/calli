@@ -255,7 +255,7 @@ function EarlierSegment({ segment, api, agentLabel, line, fork, onFork, onQuote,
   return <div data-history-thread={thread.id} data-history-part={segment.part} className="history-segment">
     <ThreadView onQuote={onQuote} onMessageContext={onMessageContext} onHandToAssistant={onHandToAssistant} onAutoHandover={onAutoHandover} historyApi={api} historyThreadId={thread.id} items={timeline.items} roots={roots} loadImage={loadImage} loadFile={loadFile}
       onOpenFile={onOpenFile} onPreview={onPreview} onFork={fork.enabled ? onFork : undefined} forkAnyTurn={fork.any} {...older}
-      beforeItems={<>{prefix}{!page.hasOlder && line}{!page.hasOlder && folded && <HandoverBoundary api={api} thread={thread} part={segment.part} agentLabel={agentLabel} turnId={page.events.find(event => event.type === 'turn.started')?.turnId ?? undefined} />}
+      beforeItems={<>{prefix}{!page.hasOlder && line}{!page.hasOlder && folded && <HandoverBoundary api={api} thread={thread} part={segment.part} agentLabel={agentLabel} turnId={timeline.items.find(item => item.kind === 'user' && item.handoverCollapsed)?.turnId ?? (segment.part === 'before' ? page.events.find(event => event.type === 'turn.started')?.turnId : undefined) ?? undefined} />}
         {!timeline.items.length && <div className="row chain-beginning">{t('handover.chain.empty')}</div>}</>} />
     {segment.followups > 0 && <div className="row chain-followups">
       {t('handover.chain.followups', thread.title, segment.followups)} · <button type="button" className="text-btn" onClick={() => onOpenSegment?.(thread, true)}>{t('handover.chain.followupsOpen')}</button>
@@ -277,6 +277,8 @@ function HandoverBoundary({ api, thread, part, agentLabel, turnId }: { api: Api;
       .catch(() => { if (alive) setFailed(true); }).finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
   }, [api, thread.id, turnId, open, attempt, part]);
+  // A copied conversation (`resume`) with no resent turn has nothing to fold under the divider.
+  const hasFold = returned || !(thread.handover?.method === 'resume' && !turnId);
   // By hand it is a conversation of its own that was started from the source; the reason an automatic relay happened does not apply.
   const manual = !returned && !thread.handover!.automatic;
   const reason = manual ? '' : info?.reason === 'plan_exhausted' ? t('handover.chain.exhausted') : info?.reason === 'interrupted' ? t('handover.chain.interrupted') : info?.reason ? t('handover.chain.error') : '';
@@ -287,9 +289,9 @@ function HandoverBoundary({ api, thread, part, agentLabel, turnId }: { api: Api;
     <div className="fork-mark">
       <span className="fork-mark-label"><IconHandover size={15} />{returned ? t('handover.trail.returned', agentLabel(sourceAgent)) : manual ? t('handover.trail.manual', agentLabel(thread.handover!.agent), agentLabel(thread.agent)) : t('handover.trail.from', agentLabel(thread.handover!.agent))}{reason ? ` · ${reason}` : ''}</span>
     </div>
-    {failed && <div className="history-status" role="alert">{t('handover.chain.detailFailed')} <button className="text-btn" onClick={() => setAttempt(n => n + 1)}>{t('common.retry')}</button></div>}
-    {!failed && !info && <div className="handover-card-head placeholder" aria-hidden="true" />}
-    {!failed && info && !info.size && <div className="handover-card-empty">{t('handover.chain.noSummary')}</div>}
+    {hasFold && failed && <div className="history-status" role="alert">{t('handover.chain.detailFailed')} <button className="text-btn" onClick={() => setAttempt(n => n + 1)}>{t('common.retry')}</button></div>}
+    {hasFold && !failed && !info && <div className="handover-card-head placeholder" aria-hidden="true" />}
+    {hasFold && !failed && info && !info.size && info.method !== 'resume' && <div className="handover-card-empty">{t('handover.chain.noSummary')}</div>}
     {!failed && info && info.size > 0 && <div className={`handover-card${open ? ' open' : ''}`}>
       <button type="button" className="handover-card-head" aria-expanded={open} onClick={() => setOpen(value => !value)}>
         <span className="handover-card-kind">{kind}</span>

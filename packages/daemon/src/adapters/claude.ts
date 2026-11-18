@@ -45,6 +45,8 @@ const CLAUDE_MODE_IDS: Record<PermissionMode, readonly string[]> = {
 
 /** What Claude writes into its session as a user message when the user stops it. */
 const CLAUDE_INTERRUPT_NOTE = /^\[Request interrupted by user( for tool use)?\]$/;
+/** What Claude replays as the opening user message after a context compaction. */
+const CLAUDE_COMPACT_NOTE = /^This session is being continued from a previous conversation that ran out of context\b/;
 
 /** Effort levels Claude accepts through the `effort` config option. */
 const CLAUDE_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
@@ -224,11 +226,11 @@ export class ClaudeAcpAdapter extends AcpAdapter {
   }
 
   /**
-   * Claude records a stop as a user message of its own. Read as one, it would join the message
-   * sent next into a turn the hub never had, and every turn after it would no longer line up.
+   * Claude records a stop and a compaction continuation summary as user messages of its own. Read
+   * as user turns, they would invent or merge turns the hub never sent and throw sync off.
    */
   protected override isAgentNote(text: string): boolean {
-    return CLAUDE_INTERRUPT_NOTE.test(text);
+    return CLAUDE_INTERRUPT_NOTE.test(text) || CLAUDE_COMPACT_NOTE.test(text);
   }
 
   protected readonly modeIds = CLAUDE_MODE_IDS;
@@ -376,7 +378,9 @@ export class ClaudeAcpAdapter extends AcpAdapter {
   async forkPoints(agentSessionId: string, cwd: string): Promise<ForkPoint[] | null> {
     const { sessionPath } = await this.sessionLocation(agentSessionId, cwd);
     if (!sessionPath) return null;
-    return claudeForkPoints(await readFile(sessionPath, 'utf8'));
+    const raw = await readFile(sessionPath, 'utf8');
+    const points = claudeForkPoints(raw);
+    return points.length === 0 && raw.trim() !== '' ? null : points;
   }
 
   /**
