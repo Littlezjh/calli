@@ -116,8 +116,8 @@ export function HandoverDialog({ api, thread, agents, onOpen, onClose }: Props) 
             <span>{t('handover.takeTeam', teamSize)}</span>
           </label>
         )}
-        <p className="handover-cwd" title={thread.cwd}>{thread.cwd}</p>
-        {toOld ? <p className="handover-note">{t('handover.choice.oldHint')}</p> : summary ? <pre className="handover-summary" tabIndex={0}>{summary}</pre> : !error && <p className="handover-note" role="status">{t('handover.preparing')}</p>}
+        {!toOld && <p className="handover-cwd" title={thread.cwd}>{thread.cwd}</p>}
+        {toOld ? null : summary ? <pre className="handover-summary" tabIndex={0}>{summary}</pre> : !error && <p className="handover-note" role="status">{t('handover.preparing')}</p>}
         {error && <p className="panel-error" role="alert">{error}</p>}
         <div className="dialog-actions">
           {error && !summary && <button className="ghost" onClick={() => setRevision((v) => v + 1)}>{t('common.retry')}</button>}
