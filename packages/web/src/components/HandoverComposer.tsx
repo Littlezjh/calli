@@ -30,7 +30,7 @@ export function HandoverComposer({ api, thread, hostId, mark, attachBlocked, onR
   const [confirm, setConfirm] = useState<{ resolve: () => void; reject: (error: Error) => void } | null>(null);
   return <>
     <Composer draftKey={hostId ? `host:${hostId}:${thread.id}` : thread.id} running={thread.status === 'running'}
-      placeholder={thread.status === 'running' ? t('sideChat.queuePlaceholder') : t('handover.chain.continueSegment', thread.title)}
+      placeholder={thread.status === 'running' ? t('sideChat.queuePlaceholder') : t('handover.chain.continueShort')}
       header={null} left={null} marker={mark} right={null}
       commands={[]} actions={[]} hiddenCommands={[]} onAction={() => {}} attachBlocked={attachBlocked}
       note={note} onNotesChange={onNotesChange} restore={restore} onError={onError}

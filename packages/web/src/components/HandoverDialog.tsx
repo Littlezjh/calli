@@ -100,7 +100,7 @@ export function HandoverDialog({ api, thread, agents, onOpen, onClose }: Props) 
     <div className="dialog-scrim" onClick={() => { if (!creatingRef.current) onClose(); }}>
       <div className="dialog handover" role="dialog" aria-modal="true" aria-labelledby="handover-title" onClick={(e) => e.stopPropagation()}>
         <h2 id="handover-title" className="dialog-title">{t('handover.title')}</h2>
-        <p className="dialog-message">{t('handover.message')}</p>
+        <p className="dialog-message">{t(toOld ? 'handover.messageOld' : 'handover.message')}</p>
         <AutoHandoverChoice api={api} thread={thread} />
         {returns.length > 0 && <ReturnChoice form returns={returns} value={choice} onChange={setChoice} disabled={creating} />}
         {!toOld && <div className="handover-successor">

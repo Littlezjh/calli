@@ -34,7 +34,7 @@ export function ReturnChoice({ returns, value, onChange, disabled, form }: { ret
     <button type="button" role="radio" aria-checked={value === 'new'} disabled={disabled} title={t('handover.choice.newHint')} className={form ? `chip${value === 'new' ? ' on' : ''}` : undefined} onClick={() => onChange('new')}>{t('handover.choice.new')}</button>
   </>;
   return form
-    ? <div className="handover-successor"><span id="handover-choice-label">{t('handover.choice.label')}</span><div className="chip-row" role="radiogroup" aria-labelledby="handover-choice-label">{options}</div></div>
+    ? <div className="handover-successor stacked"><span id="handover-choice-label">{t('handover.choice.label')}</span><div className="chip-row" role="radiogroup" aria-labelledby="handover-choice-label">{options}</div></div>
     : <div className="handover-choice" role="radiogroup" aria-label={t('handover.choice.label')}>{options}</div>;
 }
 

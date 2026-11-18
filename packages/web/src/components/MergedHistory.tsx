@@ -1,8 +1,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode } from 'react';
 import { ApiError, type Api, type Thread } from '../api';
 import { historyPage, prependHistory, type HistoryPage } from '../history';
-import { buildTimeline } from '../timeline';
-import { formatDateTime, t } from '../i18n';
+import { buildTimeline, clockLabel } from '../timeline';
+import { t } from '../i18n';
 import { entryKey, type ChainEntry } from '../handover';
 import { AgentMark, IconArrowDown, IconChevron, IconHandover } from './icons';
 import { Prose, ThreadView } from './ThreadView';
@@ -229,7 +229,7 @@ function lineBody({ thread, part, agentLabel, icon, onOpen }: { thread: Thread; 
     <span className="chain-line-text">
       {icon ? <AgentMark path={icon} size={13} /> : null}
       <button type="button" className="chain-line-title" title={thread.title} onClick={() => onOpen?.(thread)}>{title}</button>
-      <span className="chain-line-meta">· {agentLabel(thread.agent)}<span className="chain-line-time"> · {formatDateTime(at)}</span></span>
+      <span className="chain-line-meta">· {agentLabel(thread.agent)}<span className="chain-line-time"> · {clockLabel(at)}</span></span>
     </span>
   </>;
 }
