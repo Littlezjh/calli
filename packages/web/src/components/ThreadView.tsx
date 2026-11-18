@@ -448,7 +448,10 @@ export function ThreadView({ onOpenFinds, chain = false, observeOlder = true, be
               )}
             </div>
           );
-        case 'error': return (
+        case 'error': {
+          // The current writer conflict owns the composer; older conflicts remain quiet history.
+          if (item.sessionInUse) return item === items[items.length - 1] ? null : <div key={item.key} className="row session-in-use-history">{item.message}</div>;
+          return (
           <ErrorNotice key={item.key} item={item}>
             {item.planExhausted && item === items[items.length - 1] && (takeover || resume) && <div className="exhausted-actions">
               {takeover?.go && takeover.label && <button className="exhausted-hand" onClick={takeover.go} disabled={takeover.busy}>
@@ -469,6 +472,7 @@ export function ThreadView({ onOpenFinds, chain = false, observeOlder = true, be
             </div>}
           </ErrorNotice>
         );
+        }
         case 'fork':
           return (
             <div key={item.key} className="row fork-mark" role="separator" aria-label={item.branch ? t('view.forkedInWorktree', item.branch) : t('view.forkedHere')}>

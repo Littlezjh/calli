@@ -299,7 +299,7 @@ export type Item =
   /** The row under a finished answer. `text` is what "copy" copies; `at` is when the turn ended, where the hub saw it end. */
   | { kind: 'actions'; key: string; turnId: string; text: string; at?: string }
   /** `planExhausted`: the agent's account ran out of usage, so another agent can be asked to take over. */
-  | { kind: 'error'; key: string; turnId: string | null; message: string; summary?: string; planExhausted?: boolean; /** Raw provider text, rendered only when details are opened. */ detail?: string }
+  | { kind: 'error'; key: string; turnId: string | null; message: string; summary?: string; sessionInUse?: boolean; planExhausted?: boolean; /** Raw provider text, rendered only when details are opened. */ detail?: string }
   /** Where a fork begins: above it is the conversation it was copied from, below it its own. `branch` when it got a worktree. */
   | { kind: 'fork'; key: string; turnId: null; branch?: string };
 
@@ -308,6 +308,7 @@ export type Item =
  * way out; anything else is shown as the agent reported it.
  */
 export function errorText(data: Record<string, any>): string {
+  if (data.code === 'session_in_use') return t('composer.sessionInUseTitle');
   if (data.code === 'interrupted') return t('timeline.error.interrupted');
   if (data.code === 'plan_exhausted') return t('timeline.error.planExhausted', String(data.message ?? '').replace(/^Internal error:\s*/, ''));
   if (data.code === 'permission_refused') {
@@ -931,7 +932,7 @@ export function buildTimeline(events: StoredEvent[], speech: readonly VoiceTrans
 
       case 'turn.error':
         closeTurn(ev.ts);
-        items.push({ kind: 'error', key, turnId: turn, message: errorText(ev.data), summary: errorSummary(ev.data), detail: String(ev.data.message ?? ''), ...(ev.data.code === 'plan_exhausted' ? { planExhausted: true } : {}) });
+        items.push({ kind: 'error', key, turnId: turn, message: errorText(ev.data), summary: errorSummary(ev.data), detail: String(ev.data.message ?? ''), ...(ev.data.code === 'session_in_use' ? { sessionInUse: true } : {}), ...(ev.data.code === 'plan_exhausted' ? { planExhausted: true } : {}) });
         running = false;
         break;
 

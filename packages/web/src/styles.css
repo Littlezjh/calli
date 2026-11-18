@@ -14215,11 +14215,53 @@ body:has(.dialog-scrim, .preview-scrim, .app .selection-menu) .pet { visibility:
 button.pet-summon { cursor: pointer; }
 button.pet-summon:hover { background: var(--surface-2); color: var(--text); }
 .pet-summoning .spinner { width: 12px; height: 12px; border-width: 1.5px; }
+.session-in-use-wrap { padding: 0 16px calc(16px + var(--safe-bottom, 0px)); }
+.session-in-use-notice {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+}
+.session-in-use-notice > svg { flex: none; }
+.session-in-use-copy { flex: 1; min-width: 0; }
+.session-in-use-history { color: var(--muted); font-size: 13px; }
+.session-in-use-copy strong { font-size: 15px; font-weight: 550; }
+.session-in-use-copy p { margin: 6px 0 0; color: var(--muted); font-size: 14px; line-height: 1.5; }
+.session-in-use-actions { display: flex; flex: none; gap: 8px; padding-left: 16px; border-left: 1px solid var(--border); }
+.session-in-use-actions button { flex: none; min-height: 44px; padding: 8px 12px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text); font: inherit; font-size: 14px; font-weight: 550; cursor: pointer; }
+.session-in-use-actions button:hover:not(:disabled) { background: var(--surface-2); }
+.session-in-use-actions button:disabled { color: var(--muted); cursor: default; }
+@media (max-width: 640px) {
+  .session-in-use-notice { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 12px; padding: 16px; }
+  .session-in-use-actions { grid-column: 2; justify-content: flex-end; flex-wrap: wrap; padding-left: 0; border-left: 0; }
+}
+
+.pet-install-actions { display: flex; align-items: center; gap: 8px; }
+.pet-install-close {
+  flex: none;
+  min-height: 32px;
+  padding: 0 10px;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.pet-install-close:hover { background: var(--surface-2); color: var(--text); }
+@media (pointer: coarse), (max-width: 640px) {
+  .pet-install-close { min-width: 44px; min-height: 44px; }
+}
 .pet-summon-failed {
   display: flex;
   align-items: center;
-  gap: 12px;
-  width: min(320px, calc(100vw - 32px));
+  gap: 8px;
+  width: min(340px, calc(100vw - 32px));
   padding: 10px 10px 10px 14px;
   border: 1px solid var(--border);
   border-radius: var(--radius);

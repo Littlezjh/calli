@@ -2990,6 +2990,14 @@ export class ThreadManager {
     if (this.running.has(id) || this.threadView(id).waiting) throw new HttpError(409, 'the thread is busy');
     const failed = thread.status === 'error' ? this.store.lastTurnFailure(id) : null;
     if (!failed) throw new HttpError(409, 'the thread did not stop on an error');
+    if (failed.code === 'session_in_use') {
+      try { await this.ensureSession(thread); }
+      catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (this.adapters.get(thread.agent)?.sessionInUse?.(message)) return this.threadView(id);
+        throw error;
+      }
+    }
     this.quotaResume.drop(id);
     this.autoRetry.drop(id);
     this.autoAdvance.drop(id);
@@ -3186,6 +3194,7 @@ export class ThreadManager {
   /** Sends the next waiting message, if there is one. Called whenever a turn has finished. */
   private startNextQueued(threadId: string): void {
     if (this.autoHandover.queuePaused(threadId) || this.running.has(threadId) || this.startingTurns.has(threadId) || this.dispatchingQueues.has(threadId)) return;
+    if (this.store.getThread(threadId)?.status === 'error' && this.store.lastTurnFailure(threadId)?.code === 'session_in_use') return;
     const queue = this.queues.get(threadId);
     const next = queue?.find(q => !q.error);
     if (!queue || !next) return;
@@ -3315,11 +3324,13 @@ export class ThreadManager {
       if (result.stopReason === 'error') {
         finalStatus = 'error';
         const message = result.error ?? 'agent error';
-        const code = result.errorCode ?? (this.adapters.get(thread.agent)?.planExhausted?.(message) ? 'plan_exhausted' : undefined);
+        const adapter = this.adapters.get(thread.agent);
+        const code = result.errorCode ?? (adapter?.sessionInUse?.(message) ? 'session_in_use' : adapter?.planExhausted?.(message) ? 'plan_exhausted' : undefined);
         this.emitThreadEvent(thread.id, turnId, 'turn.error', {
           message,
           ...(code ? { code, ...(code === 'permission_refused' ? { refused: result.refused ?? [] } : {}) } : {}),
         });
+        if (code === 'session_in_use') await this.dropSession(thread.id, 'session_in_use');
       } else {
         this.emitThreadEvent(thread.id, turnId, 'turn.done', { stopReason: result.stopReason });
         if (result.stopReason !== 'cancelled' && this.reportTurns.has(turnId)) this.recordProgress(thread.id, turnId);
@@ -3327,8 +3338,9 @@ export class ThreadManager {
     } catch (err) {
       finalStatus = 'error';
       const message = err instanceof Error ? err.message : String(err);
-      const exhausted = this.adapters.get(thread.agent)?.planExhausted?.(message);
-      this.emitThreadEvent(thread.id, turnId, 'turn.error', { message, ...(exhausted ? { code: 'plan_exhausted' } : {}) });
+      const adapter = this.adapters.get(thread.agent);
+      const code = adapter?.sessionInUse?.(message) ? 'session_in_use' : adapter?.planExhausted?.(message) ? 'plan_exhausted' : undefined;
+      this.emitThreadEvent(thread.id, turnId, 'turn.error', { message, ...(code ? { code } : {}) });
       await this.dropSession(thread.id, 'turn_error');
     } finally {
       this.cancelApprovals(thread.id, turnId);

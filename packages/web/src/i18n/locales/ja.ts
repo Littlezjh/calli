@@ -508,6 +508,7 @@ export const ja: Messages = {
   "pet.installing": "アシスタントをダウンロード中…",
   "pet.installFailed": "アシスタントをダウンロードできませんでした",
   "pet.retry": "再試行",
+  "pet.close": "アシスタントを閉じる",
   "pet.calm1": "今日は急ぎの件はありません。ゆっくりどうぞ。",
   "pet.calm2": "デスクはすっきりしています。何を進めますか？",
   "pet.calm3": "せかすものはありません。お水でもどうぞ。",
@@ -864,6 +865,9 @@ export const ja: Messages = {
   'extensions.perm.memory.read.hint': "このマシンの対応インスタンスの既存メモリを読み取ります。複数のプロジェクトの内容を含む場合があります。同じ保存先を使うインスタンスは閲覧範囲を共有します。変更や生成は行いません。",
   // Shared words
   'common.close': '閉じる',
+  'composer.sessionInUseTitle': '別のアプリで開かれています',
+  'composer.sessionInUseMessage': '続けるには、先にそちらで会話を閉じてください。',
+  'composer.forkSession': 'チャットを分岐',
   'common.cancel': 'キャンセル',
   'common.unknown': '不明',
 
