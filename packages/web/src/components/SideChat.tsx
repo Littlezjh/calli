@@ -1,6 +1,6 @@
 import { mergeHistory, watchHistory } from '../history';
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Api, type AgentMention, type Thread } from '../api';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Api, type AgentInfo, type AgentMention, type ModelOption, type Thread } from '../api';
 import type { PreparedImage } from '../images';
 import { restoreVideos, type PreparedVideo } from '../videos';
 import { folderName } from '../paths';
@@ -9,11 +9,16 @@ import { Composer } from './Composer';
 import { ThreadView } from './ThreadView';
 import { IconClose } from './icons';
 import { t } from '../i18n';
+import { effortsForModel, ModelPicker } from './Pickers';
 
 interface Props {
   api: Api;
   /** Where the question goes: the same setup as the thread the quoted text came from. */
   agent: string;
+  /** The source agent's model and effort capabilities. */
+  agentInfo?: AgentInfo;
+  /** Models already known for that agent; the picker refreshes them when opened. */
+  models: ModelOption[];
   agentLabel: string;
   cwd: string;
   permissionMode: string;
@@ -53,6 +58,8 @@ export function SideChat({
   agentLabel,
   cwd,
   permissionMode,
+  agentInfo,
+  models: cachedModels,
   model,
   effort,
   quoteText,
@@ -66,6 +73,10 @@ export function SideChat({
   onOpenThread,
 }: Props) {
   const [thread, setThread] = useState<Thread | null>(null);
+  const [draftModel, setDraftModel] = useState(model);
+  const [draftEffort, setDraftEffort] = useState(effort);
+  const [models, setModels] = useState(cachedModels);
+  const [modelsStatus, setModelsStatus] = useState<'loading' | 'ready' | 'error'>(cachedModels.length ? 'ready' : 'loading');
   const [events, setEvents] = useState<StoredEvent[]>([]);
   const scrollerRef = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
@@ -75,6 +86,32 @@ export function SideChat({
   const threadId = thread?.id ?? null;
   const timeline = useMemo(() => buildTimeline(events), [events]);
   const running = timeline.running || thread?.status === 'running';
+  const caps = agentInfo?.capabilities;
+  const shownModel = thread ? thread.model : draftModel;
+  const shownEffort = thread ? thread.effort : draftEffort;
+
+  const errorRef = useRef(onError);
+  errorRef.current = onError;
+  const loadModels = useCallback((refresh = false) => {
+    if (agentInfo?.capabilities.modelCatalog === false) return;
+    setModelsStatus(current => current === 'ready' ? 'ready' : 'loading');
+    void api.models(agent, refresh).then(list => {
+      setModels(list);
+      setModelsStatus('ready');
+    }).catch(error => {
+      setModelsStatus(current => current === 'ready' ? 'ready' : 'error');
+      errorRef.current(error);
+    });
+  }, [api, agent, agentInfo?.capabilities.modelCatalog]);
+
+  useEffect(() => {
+    setModels(cachedModels);
+    setModelsStatus(cachedModels.length ? 'ready' : 'loading');
+    // A cached catalog is enough until the person opens the picker; without one, fetch it now.
+    if (cachedModels.length === 0) loadModels();
+    // The catalog belongs to the source agent, not to whichever thread later opens here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agent, loadModels]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -130,6 +167,7 @@ export function SideChat({
     const title = t('sideChat.threadTitle', quoteText.replace(/\s+/g, ' ').slice(0, 24));
     let created: Thread;
     let firstText = text;
+    const choiceChanged = draftModel !== model || draftEffort !== effort;
     if (forkSourceId) {
       // The fork carries the conversation the passage was selected from, so the first question
       // already lands with all its context. The message itself stays just the quote and the
@@ -137,12 +175,18 @@ export function SideChat({
       // history and this panel's turns is read before the question is sent, or the question
       // could be counted as inherited.
       const forked = await api.forkThread(forkSourceId);
-      created = await api.updateThread(forked.id, { title });
+      created = await api.updateThread(forked.id, {
+        title,
+        model: draftModel,
+        effort: draftEffort,
+        ...(choiceChanged ? { rememberModelChoice: true } : {}),
+      });
       baseSeq.current = (await api.historyPosition(created.id)).snapshotSeq;
     } else {
       // A fresh agent seeing a bare snippet has nothing to go on but the words, so the message
       // says which thread the notes were lifted out of.
-      created = await api.createThread({ agent, cwd, permissionMode, model, effort, title });
+      created = await api.createThread({ agent, cwd, permissionMode, model: draftModel, effort: draftEffort, title });
+      if (choiceChanged) created = await api.updateThread(created.id, { model: draftModel, effort: draftEffort, rememberModelChoice: true });
       const { notes, body } = splitNotes(text);
       if (sourceTitle && notes.length) firstText = withNotes(notes, `${t('sideChat.notesFrom', sourceTitle)}\n\n${body}`);
     }
@@ -156,6 +200,41 @@ export function SideChat({
   const loadFile = (path: string) => (threadId ? api.threadFile(threadId, path) : Promise.reject(new Error('no thread')));
 
   const roots = useMemo(() => (thread ? [thread.cwd, thread.cwdReal] : [cwd]), [thread, cwd]);
+
+  const updateChoice = (patch: { model?: string | null; effort?: string | null }) => {
+    if (!thread) {
+      if (patch.model !== undefined) setDraftModel(patch.model);
+      if (patch.effort !== undefined) setDraftEffort(patch.effort);
+      return;
+    }
+    const before = thread;
+    const id = thread.id;
+    setThread({ ...thread, ...patch });
+    void api.updateThread(id, { ...patch, rememberModelChoice: true }).then(updated => {
+      setThread(current => current?.id === id ? updated : current);
+    }).catch(error => {
+      setThread(current => current?.id === id ? before : current);
+      onError(error);
+    });
+  };
+
+  const chooseModel = (next: string | null) => {
+    const levels = effortsForModel(models, next, caps?.effortLevels ?? []);
+    updateChoice({ model: next, effort: shownEffort && levels.includes(shownEffort) ? shownEffort : null });
+  };
+
+  const modelPicker = caps && <ModelPicker
+    catalog={caps.modelCatalog}
+    catalogStatus={modelsStatus}
+    onRetryCatalog={() => loadModels(true)}
+    models={models}
+    model={shownModel}
+    efforts={caps.effortLevels ?? []}
+    effort={shownEffort}
+    onOpen={() => loadModels(true)}
+    onModel={chooseModel}
+    onEffort={effort => updateChoice({ effort })}
+  />;
 
   return (
     <div className="dialog-scrim side-chat-scrim" onClick={onClose}>
@@ -200,7 +279,7 @@ export function SideChat({
           onStop={() => threadId && api.cancel(threadId).catch(onError)}
           header={null}
           left={null}
-          right={null}
+          right={modelPicker}
           commands={[]}
           actions={[]}
           hiddenCommands={[]}
