@@ -7767,6 +7767,131 @@ div.file-card:hover { background: var(--surface); }
   background: var(--hover);
 }
 
+/* The viewer shares the sheet with the conversation; only narrow screens and an explicit
+   expansion cover it. Its content stays mounted in every layout, preserving the VNC session. */
+.desktop-side {
+  position: relative;
+  flex: none;
+  min-width: 0;
+  height: 100%;
+  border-left: 1px solid var(--border);
+  container-type: inline-size;
+}
+
+.desktop-side[hidden] {
+  display: none;
+}
+
+.desktop-side-page {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  width: 100%;
+  border: 0;
+  padding-top: env(safe-area-inset-top);
+  background: var(--bg);
+}
+
+.desktop-side .desktop-panel {
+  animation: none;
+  outline: none;
+}
+
+.desktop-resize {
+  position: absolute;
+  inset: 0 auto 0 -4px;
+  width: 8px;
+  z-index: 4;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.desktop-resize:hover,
+.desktop-resize:focus-visible {
+  background: var(--hover);
+}
+
+.desktop-chat-return {
+  position: relative;
+  z-index: 4;
+  flex: none;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 12px;
+  font-size: 12px;
+  background: var(--surface);
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+}
+
+.desktop-chat-return button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 0;
+  color: var(--text);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+.desktop-chat-return button:hover {
+  background: var(--hover);
+}
+
+.desktop-panel.touch .desktop-chat-return {
+  color: var(--viewer-muted);
+  background: var(--viewer-bg);
+  border-color: var(--viewer-rim);
+}
+
+.desktop-panel.touch .desktop-chat-return button {
+  color: var(--viewer-fg);
+}
+
+.desktop-chat-return.attention {
+  color: var(--warn);
+}
+
+.desktop-chat-return ~ .desktop-touch-head {
+  top: 44px;
+}
+
+.desktop-chat-return ~ .desktop-stage.touch .desktop-viewport {
+  top: 108px;
+}
+
+.desktop-side:not(.desktop-side-page) .panel-head {
+  min-height: 56px;
+  padding: 10px 12px;
+}
+
+.desktop-side:not(.desktop-side-page) .panel-title {
+  display: none;
+}
+
+@container (max-width: 500px) {
+  .desktop-panel .desktop-control span {
+    display: none;
+  }
+  .desktop-panel .desktop-control {
+    padding: 0 8px;
+  }
+  .desktop-panel .desktop-actions {
+    gap: 0;
+  }
+  .desktop-panel .desktop-actions .icon-btn {
+    width: 30px;
+    height: 32px;
+    padding: 5px;
+  }
+}
+
 .desktop-name {
   min-width: 0;
   overflow: hidden;

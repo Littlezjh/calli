@@ -226,6 +226,87 @@ test('minimizing keeps the connection: back from the sidebar without reconnectin
   }
 });
 
+test('a conversation can send while its desktop is beside it, without leaking keys or reconnecting on resize', { skip: skipTouch }, async () => {
+  for (const theme of ['light', 'dark']) {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, colorScheme: theme });
+    const sockets = [];
+    page.on('websocket', ws => { if (ws.url().includes('/desktop/vnc')) sockets.push(ws); });
+    try {
+      await openThread(page, daemonTouchy, `并排聊天 ${theme}`);
+      const input = page.locator('.composer textarea');
+      await input.fill('保留这段草稿');
+      await page.locator('.topbar-desktop').click();
+      await connected(page);
+      assert.equal(await page.locator('.desktop-control').getAttribute('aria-pressed'), 'false');
+      const panel = await page.locator('.desktop-side').boundingBox();
+      const composer = await input.boundingBox();
+      assert.ok(composer.x + composer.width <= panel.x, 'the desktop does not cover the composer');
+      assert.equal(await input.inputValue(), '保留这段草稿');
+      // Even with remote input enabled, typing in the conversation belongs only to the conversation.
+      await page.locator('.desktop-control').click();
+      const from = xevKeys.length;
+      await input.fill('');
+      await input.pressSequentially(`inspect-work-mode side-${theme}`);
+      await page.locator('.composer .send-btn').click();
+      await page.locator('.row.assistant', { hasText: `side-${theme}` }).waitFor({ timeout: 15_000 });
+      assert.equal(/KeyPress event/.test(xevKeys.slice(from)), false, 'chat keys never reach the VNC desktop');
+      await input.fill('下一轮草稿');
+      const divider = page.locator('.desktop-resize');
+      const edge = await divider.boundingBox();
+      await page.mouse.move(edge.x + 4, edge.y + 200);
+      await page.mouse.down();
+      await page.mouse.move(edge.x - 40, edge.y + 200, { steps: 5 });
+      await page.mouse.up();
+      await divider.focus();
+      await page.keyboard.press('ArrowRight');
+      await page.getByRole('button', { name: '展开桌面', exact: true }).click();
+      await page.getByRole('button', { name: '返回并排', exact: true }).click();
+      await page.locator('.desktop-minimize').click();
+      await page.locator('.desktop-side').waitFor({ state: 'hidden' });
+      await page.locator('.topbar-desktop').click();
+      await page.locator('.desktop-side').waitFor();
+      assert.equal(await input.inputValue(), '下一轮草稿');
+      assert.equal(sockets.length, 1, 'layout changes reuse the original connection');
+      assert.equal(sockets[0].isClosed(), false);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      await page.screenshot({ path: shot(`desktop-beside-chat-${theme}`) });
+    } finally { await page.close(); }
+  }
+});
+
+test('the phone conversation opens a viewer and returns to its draft on the same connection', { skip }, async () => {
+  for (const theme of ['light', 'dark']) {
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, colorScheme: theme });
+    const page = await context.newPage();
+    const sockets = [];
+    page.on('websocket', ws => { if (ws.url().includes('/desktop/vnc')) sockets.push(ws); });
+    try {
+      await openThread(page, daemonOpen, `手机会话与桌面 ${theme}`);
+      const input = page.locator('.composer textarea');
+      await input.fill('手机草稿');
+      await page.locator('.topbar-desktop').click();
+      await connected(page);
+      assert.equal(await page.locator('.desktop-pad').count(), 0, 'the conversation opens view only');
+      await page.waitForFunction(() => {
+        const picture = document.querySelector('.desktop-content')?.getBoundingClientRect();
+        return picture && picture.width <= innerWidth;
+      });
+      await page.screenshot({ path: shot(`desktop-beside-phone-view-${theme}`) });
+      await page.getByRole('button', { name: '返回会话', exact: true }).click();
+      assert.equal(await input.inputValue(), '手机草稿');
+      await input.fill(`inspect-work-mode phone-${theme}`);
+      await page.locator('.composer .send-btn').click();
+      await page.locator('.row.assistant', { hasText: `phone-${theme}` }).waitFor({ timeout: 15_000 });
+      await page.locator('.topbar-desktop').click();
+      await page.locator('.desktop-panel').waitFor();
+      await page.getByRole('button', { name: '返回会话', exact: true }).click();
+      assert.equal(sockets.length, 1);
+      assert.equal(sockets[0].isClosed(), false);
+      await page.screenshot({ path: shot(`desktop-beside-phone-chat-${theme}`) });
+    } finally { await context.close(); }
+  }
+});
+
 test('the clipboard goes both ways: through the sheet, and Ctrl+V / Ctrl+C on a keyboard', { skip: skipClip }, async () => {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, permissions: ['clipboard-read', 'clipboard-write'] });
   const page = await ctx.newPage();
@@ -338,11 +419,25 @@ test('the VNC password is asked, asked again when wrong, then kept on the device
     await page.getByRole('button', { name: '连接', exact: true }).click();
     await connected(page);
 
-    await page.getByLabel('关闭').last().click();
+    await page.getByRole('button', { name: '断开并关闭', exact: true }).click();
+    await page.locator('.desktop-panel').waitFor({ state: 'detached' });
     await page.reload();
+    assert.equal(await page.locator('.demo-bar').count(), 0, 'the hub token survives a reload too');
     await openDesktop(page);
     await connected(page);
     assert.equal(await page.locator('.dialog').count(), 0, 'not asked again');
+
+    // A restored browser uses persisted credentials, without the harness signing it in again.
+    const restored = await browser.newContext({ viewport: { width: 1280, height: 800 }, storageState: await ctx.storageState() });
+    try {
+      const reopened = await restored.newPage();
+      await reopened.goto(daemonLocked.base);
+      await reopened.locator('.sidebar-inner').waitFor();
+      assert.equal(await reopened.locator('.demo-bar').count(), 0, 'the saved hub token is reused');
+      await openDesktop(reopened);
+      await connected(reopened);
+      assert.equal(await reopened.locator('.dialog').count(), 0, 'the saved VNC password is reused');
+    } finally { await restored.close(); }
   } finally {
     await ctx.close();
   }

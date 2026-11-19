@@ -126,7 +126,7 @@ import { ConnectDialog, DemoBar } from './components/ConnectDialog';
 import { DemoApi, DemoError } from './demo/DemoApi';
 import { EMPTY_MODEL_PREFERENCE, type DraftModelPreference } from '../../daemon/src/model-preferences';
 import { QUICK_SWITCH_HIDDEN_KEY, clampQuickSwitchBottom, savedQuickSwitchBottom, saveQuickSwitchBottom } from './quick-switch';
-import { IconCheck, IconBell, AgentMark, IconActivity, IconAgents, IconArchive, IconArrowLeft, IconArrowDown, IconBack, IconClose, IconEdit, IconFolder, IconGauge, IconGlobe, IconImport, IconList, IconMenu, IconSettings, IconMore, IconOverview, IconPalette, IconPlus, IconPuzzle, IconServer, IconSidebar, IconSignIn, IconSignOut, IconSparkle, IconTerminal, IconTrace, IconLanguage, IconWaveform, IconSideChat, IconWorktree } from './components/icons';
+import { IconDesktop, IconCheck, IconBell, AgentMark, IconActivity, IconAgents, IconArchive, IconArrowLeft, IconArrowDown, IconBack, IconClose, IconEdit, IconFolder, IconGauge, IconGlobe, IconImport, IconList, IconMenu, IconSettings, IconMore, IconOverview, IconPalette, IconPlus, IconPuzzle, IconServer, IconSidebar, IconSignIn, IconSignOut, IconSparkle, IconTerminal, IconTrace, IconLanguage, IconWaveform, IconSideChat, IconWorktree } from './components/icons';
 import { StatReadings } from './components/SessionStats';
 import { ThreadTracePanel } from './components/TracePanel';
 import { chooseLocale, locale, LOCALES, localeChoice, t } from './i18n';
@@ -895,6 +895,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   const [termOpen, setTermOpen] = useState(false);
   // Minimized keeps the connection: coming back shows the same desktop at once, without reconnecting.
   const [desktop, setDesktop] = useState<'closed' | 'open' | 'minimized'>('closed');
+  const [desktopControl, setDesktopControl] = useState(true);
   // Whether the machine shows a desktop (a VNC server runs on it): its entries appear only then.
   const [hasDesktop, setHasDesktop] = useState(false);
   useEffect(() => {
@@ -1846,6 +1847,20 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   const [overviewSignal, setOverviewSignal] = useState(0);
   const [overviewLoading, setOverviewLoading] = useState(false);
   const activeOverviewDetail = overviewDetail?.api === api && overviewDetail?.threadId === selectedId && !onPage ? overviewDetail : null;
+  const openDesktop = (control = true) => {
+    if (desktop === 'closed') setDesktopControl(control);
+    setDrawer(false);
+    setFiles(null);
+    setTraceOpen(false);
+    setGitOpen(false);
+    setAgentsOpen(false);
+    setOverviewDetail(null);
+    setDesktop('open');
+  };
+  // Auxiliary panels share one edge. Putting the desktop away preserves its connection.
+  useEffect(() => {
+    if (files || traceOpen || gitOpen || agentsOpen || activeOverviewDetail) setDesktop(value => value === 'open' ? 'minimized' : value);
+  }, [files, traceOpen, gitOpen, agentsOpen, activeOverviewDetail]);
   useLayoutEffect(() => { setOverviewDetail(null); setOverviewSignal(0); }, [api, selectedId, onPage]);
   const closeOverviewDetail = () => {
     setOverviewDetail(null);
@@ -1855,7 +1870,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   /** A side panel takes the same edge as the overview, so the panel steps aside while one is open —
    *  but the person's own switch is left alone: it comes back when the side panel closes. */
   const sideOpen = Boolean(agentsOpen && coordination) || Boolean(files) || traceOpen || gitOpen;
-  const overviewShown = overviewDock && overviewOpen && !sideOpen && !activeOverviewDetail && Boolean(selected) && hostUp;
+  const overviewShown = overviewDock && overviewOpen && !sideOpen && desktop !== 'open' && !activeOverviewDetail && Boolean(selected) && hostUp;
   /** Only the person turns the standing panel off; the switch above remembers it. */
   const closeOverview = useCallback(() => { if (overviewDock) setOverviewOpen(false); }, [overviewDock, setOverviewOpen]);
   // A page the agent wrote, rendered in a sandboxed iframe.
@@ -2170,6 +2185,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   // The hub's "back", for a back swipe or the browser's back button (see appHistory.ts): the same
   // steps as the top-left button, one at a time. Nothing left to undo hands the swipe to the browser.
   appBack.current = () => {
+    if (desktop === 'open') { setDesktop('minimized'); return true; }
     if (listOpen) { setDrawer(false); return true; }
     if (activeOverviewDetail) { closeOverviewDetail(); return true; }
     if (onSettings) {
@@ -2599,7 +2615,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
     if (id === 'new') return newThread();
     if (id === 'status') return setStatusOpen(true);
     if (id === 'term') return openTerminal();
-    if (id === 'desktop') return setDesktop('open');
+    if (id === 'desktop') return openDesktop(false);
     if (id === 'usage') return openSettings('quota');
     if (id === 'activity') return openActivity();
     if (id === 'skills') return openSkills();
@@ -3029,7 +3045,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           deskActive={onDesk || onRouterThread}
           petBust={petBust}
           onOpenSchedules={showcase ? undefined : openSchedules}
-          onOpenDesktop={hasDesktop ? () => { setDrawer(false); setDesktop('open'); } : undefined}
+          onOpenDesktop={hasDesktop ? () => openDesktop() : undefined}
           desktopRunning={desktop === 'minimized'}
           schedulesActive={onSchedules}
           extensionNav={extensionNav}
@@ -3057,7 +3073,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
 
       {/* A conversation under way leans toward the middle of the screen, as in Codex; a new
           thread, and the pages, stay centred where they are. */}
-      <main className={`main${selected && !onPage && hostUp && !compact ? ' lean' : ''}${overviewShown || (activeOverviewDetail && overviewDock && overviewOpen) ? ' overview-room' : ''}`} ref={mainRef}>
+      <main className={`main${selected && !onPage && hostUp && !compact && desktop !== 'open' ? ' lean' : ''}${overviewShown || (activeOverviewDetail && overviewDock && overviewOpen) ? ' overview-room' : ''}`} ref={mainRef}>
         {compact && selected && !listOpen && !onPage && hostUp && (
           <ThreadQuickSwitch threads={topLevelThreads} selectedId={selected.id} agents={agents} onSelect={pick} />
         )}
@@ -3105,6 +3121,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           {onDesk && !selected && <div className="topbar-desk" ref={setDeskSlot} />}
           {selected && (
             <div className="topbar-actions">
+              {hasDesktop && hostUp && !onPage && <button type="button" className={`icon-btn topbar-desktop${desktop === 'open' ? ' on' : ''}`} aria-label={t('desktop.title')} title={t('desktop.title')} aria-pressed={desktop === 'open'} onClick={() => desktop === 'open' ? setDesktop('minimized') : openDesktop(false)}><IconDesktop /></button>}
               {/* The thread at a glance: one panel for the team, the plan, the changes, the pictures
                   and the files. The badge is only ever what needs the person. */}
               {api && hostUp && (overviewDock ? (
@@ -3115,7 +3132,10 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
                   aria-pressed={overviewOpen}
                   aria-busy={overviewLoading}
                   title={teamNeeds ? t('overview.needsYou', teamNeeds) : t('overview.label')}
-                  onClick={() => setOverviewOpen(!overviewOpen)}
+                  onClick={() => {
+                    if (desktop === 'open') { setDesktop('minimized'); setOverviewOpen(true); }
+                    else setOverviewOpen(!overviewOpen);
+                  }}
                 >
                   <IconOverview />
                   {teamNeeds > 0 && <span className="topbar-badge">{teamNeeds}</span>}
@@ -3665,12 +3685,12 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           onClose={() => setTraceOpen(false)}
         />
       )}
+      {desktop !== 'closed' && (
+        <DesktopPanel api={api} initialControl={desktopControl} attention={Boolean(waitingOn || error || selected?.status === 'error')} hidden={desktop === 'minimized'} onMinimize={() => setDesktop('minimized')} onClose={() => setDesktop('closed')} />
+      )}
       </div>
       {preview && api && (
         <PreviewPanel key={`${hostId ?? ''}:${preview.threadId}:${preview.path}`} api={api} threadId={preview.threadId} path={preview.path} onClose={() => setPreview(null)} onError={handleError} />
-      )}
-      {desktop !== 'closed' && (
-        <DesktopPanel api={api} hidden={desktop === 'minimized'} onMinimize={() => setDesktop('minimized')} onClose={() => setDesktop('closed')} />
       )}
       {termOpen && (
         <TerminalPanel
