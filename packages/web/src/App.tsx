@@ -2803,7 +2803,8 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   // One file's whole change history, opened from the changes group; read only while it is open.
   const [diffFile, setDiffFile] = useState<{ threadId: string; file: ChangedFile } | null>(null);
   // A member's own thread: it was sent from the lead's, which is where its way back goes.
-  const atMember = Boolean(teamShown && selected!.coordination!.rootId !== selected!.id);
+  // A lead's earlier segments are retired seats of its own team, not members: they carry no "back to the lead" line.
+  const atMember = Boolean(teamShown && selected!.coordination!.rootId !== selected!.id && !selected!.coordination!.retired);
   // Where the thread runs, beside its title; a page or a team task names itself instead.
   const placeShown = Boolean(selected && !viewTitle && !(host && !hostUp) && !selected.coordination?.team && !atMember);
   const leadTitle = atMember ? threads.find((v) => v.id === selected!.coordination!.rootId)?.title ?? '' : '';
