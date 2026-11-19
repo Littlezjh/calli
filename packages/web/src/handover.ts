@@ -94,7 +94,18 @@ export function readingPath(current: { thread: Thread; part?: 'before' | 'after'
   for (let at = path[path.length - 1], next = laterOf?.(at); next && !seen.has(entryKey(next)) && path.length < 200; at = next, next = laterOf?.(at)) {
     seen.add(entryKey(next)); path.push(next);
   }
-  return path;
+  // Opening an earlier thread directly still reads it up to the handover, just like paging back
+  // from its successor. Only the explicit standalone view includes its later follow-ups.
+  return earlier ? path.map((entry, index) => {
+    const next = path[index + 1];
+    const back = next?.part !== 'before' ? next?.thread.handback : null;
+    const link = next?.thread.handover;
+    if (back?.sourceId === entry.thread.id) return { ...entry, clip: back.sourceSeq + 1 };
+    if (link && !link.detached && link.sourceId === entry.thread.id && link.sourceSeq !== undefined) {
+      return { ...entry, clip: link.sourceSeq + 1, followups: link.followups ?? 0 };
+    }
+    return entry;
+  }) : path;
 }
 
 /** The entry after `entry` on the way to `head`: what reading on from it goes into. */

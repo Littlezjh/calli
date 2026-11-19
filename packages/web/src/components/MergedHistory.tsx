@@ -96,7 +96,7 @@ export function MergedHistory({ api, thread, chainThreads, merged, ready, agentL
   const keys = full.map(entryKey);
   const index = Math.max(0, keys.indexOf(view.key));
   const active = full[index];
-  const isCurrent = active ? entryKey(active) === currentKey : true;
+  const isCurrent = active ? entryKey(active) === currentKey && active.clip === undefined : true;
   const olderLink = merged && full.length ? olderOf(full[0]) : null;
   const olderUnknown = Boolean(olderLink && !full.some(entry => entry.thread.id === olderLink.id));
   const paged = merged || full.length > 1;

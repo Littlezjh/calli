@@ -69,3 +69,26 @@ test('a segment the list does not have still reads as the only page', () => {
   const orphan = seg('x', 'gone');
   assert.deepEqual(readingPath({ thread: orphan }, [orphan]).map(e => e.thread.id), ['x']);
 });
+
+test('opening an earlier segment preserves its handover boundary and the way into later follow-ups', () => {
+  const a = seg('a'), b = seg('b', 'a'), c = seg('c', 'b');
+  Object.assign(b.handover!, { sourceSeq: 40, followups: 3 });
+  Object.assign(c.handover!, { sourceSeq: 70, followups: 1 });
+  const later = (entry: { thread: Thread }) => entry.thread.id === 'a' ? { thread: b, followups: 0 } : entry.thread.id === 'b' ? { thread: c, followups: 0 } : undefined;
+  const fromSource = readingPath({ thread: a }, [a, b, c], later);
+  const fromHead = readingPath({ thread: c }, [a, b, c]);
+  assert.deepEqual(fromSource, fromHead, 'every entry point reads the same bounded segments');
+  assert.equal(fromSource[0].clip, 41);
+  assert.equal(fromSource[0].followups, 3, 'native background turns remain available outside the chain');
+  assert.equal(fromSource[1].clip, 71);
+  assert.equal(fromSource[2].clip, undefined, 'the live head stays unbounded');
+  assert.equal(readingPath({ thread: a }, [a, b, c], later, false)[0].clip, undefined, 'explicit standalone reading keeps all later turns');
+});
+
+test('a return supplied by laterOf clips its source even before the older thread is listed', () => {
+  const a = seg('a'), b = seg('b', 'a');
+  Object.assign(b.handover!, { sourceSeq: 10 });
+  a.handback = { sourceId: 'b', afterSeq: 20, sourceSeq: 30, at: 'now' };
+  const path = readingPath({ thread: b }, [b], entry => entry.thread.id === 'b' ? { thread: a, part: 'after', followups: 0 } : undefined);
+  assert.deepEqual(path.map(entry => [entry.thread.id, entry.clip]), [['b', 31], ['a', undefined]]);
+});
