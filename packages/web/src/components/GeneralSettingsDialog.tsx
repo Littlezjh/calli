@@ -52,6 +52,7 @@ export function GeneralSettingsDialog({ api, onSave, onClose }: {
               </button>)}
             </Popover>
           </div>
+          <p className="panel-hint general-hint">{t('general.startupHint')}</p>
           <div className="personal-setting-line general-setting-line">
             <span>{t('general.autoArchive')}</span>
             <Popover label={t('general.autoArchive')} triggerLabel={t('general.autoArchive')} placement="below" align="end"
@@ -64,7 +65,6 @@ export function GeneralSettingsDialog({ api, onSave, onClose }: {
               </button>)}
             </Popover>
           </div>
-          <p className="panel-hint general-hint">{t('general.startupHint')}</p>
           <div className="personal-setting-line general-setting-line">
             <span>{t('quickSwitch.handle')}</span>
             <Popover label={t('quickSwitch.handle')} triggerLabel={t('quickSwitch.handle')} placement="below" align="end"

@@ -13,10 +13,7 @@ const MAX_SHIFT = 0.02;
 
 // Breaks found when this test was written and not fixed yet, by screen prefix. A listed screen
 // that passes fails the test too, so the entry is removed with the fix. Add nothing new here.
-const KNOWN = {
-  'thread-desktop': 'a thread address paints the new-thread composer and a one-line heading first, then the thread (~270ms)',
-  'thread-error-desktop': 'same as thread-desktop',
-};
+const KNOWN = {};
 const known = (name) => Object.keys(KNOWN).find((prefix) => name.startsWith(prefix + '-'));
 
 test('every catalog screen loads without jumping or scrolling sideways', { timeout: 600_000 }, async () => {

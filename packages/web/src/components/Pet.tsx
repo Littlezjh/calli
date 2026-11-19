@@ -539,6 +539,8 @@ export function Pet(props: Props) {
   if (status.installed) return <PetCompanion {...props} status={status} presence={presence} />;
 
   const error = status.installing ? null : installError ?? status.error;
+  // Before she is summoned the offer waits on the desk, her home, instead of covering every page.
+  if (!error && !status.installing && !props.desk) return null;
   const close = <button type="button" className="pet-install-close" aria-label={t('pet.close')} title={t('pet.close')} onClick={() => savePetPresence('off')}>{t('common.close')}</button>;
   return createPortal(
     <div className="pet pet-away" ref={awayRef}>

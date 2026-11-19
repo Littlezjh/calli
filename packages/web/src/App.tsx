@@ -998,6 +998,8 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
     return null;
   }, [timeline.items]);
   const selected = threads.find((t) => t.id === selectedId) ?? null;
+  // A thread address opened before the list arrives keeps the thread's shape, not a new thread's, so nothing jumps.
+  const threadPending = !selected && (Boolean(threadLink) || (Boolean(selectedId) && !threadsKnown));
   // Her own conversation is told apart by the hub's answer, never by its agent or title.
   const [routerThreadId, setRouterThreadId] = useState<string | null>(null);
   useEffect(() => {
@@ -1891,7 +1893,9 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
     if (dockOpen && !wasDock.current) setDesktop(value => value === 'open' ? 'minimized' : value);
     wasSide.current = sideKeys; wasDock.current = dockOpen;
   }, [sideKeys, dockOpen]);
-  const overviewShown = overviewDock && overviewOpen && !sideOpen && desktop !== 'open' && !activeOverviewDetail && Boolean(selected) && hostUp;
+  // The room is kept while a linked thread is still on its way, so the column does not narrow when it lands.
+  const overviewRoom = overviewDock && overviewOpen && !sideOpen && desktop !== 'open' && !activeOverviewDetail && Boolean(selected || threadPending) && hostUp;
+  const overviewShown = overviewRoom && Boolean(selected);
   /** Only the person turns the standing panel off; the switch above remembers it. */
   const closeOverview = useCallback(() => { if (overviewDock) setOverviewOpen(false); }, [overviewDock, setOverviewOpen]);
   const openFileLink = useCallback(
@@ -2664,7 +2668,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
 
   // The top bar names a thread's agent and directory, so the composer does not repeat them: its
   // strip is only for choosing them, before the thread exists.
-  const header = selected ? null : (
+  const header = selected || threadPending ? null : (
     <>
       <AgentPicker api={api} agents={agents} teams={teamDefinitions} value={draftTeam ? `team:${draftTeam}` : draftAgent} onChange={value => { const id = teamRecipient(value); setDraftTeam(id); if (id) { setDraftScratch(false); setDraftWorktree(false); setDraftCollaboration(false); } else pickAgent(value); }} accounts={accounts} onAddAccount={addAccount} />
       <ProjectPicker
@@ -3097,7 +3101,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
 
       {/* A conversation under way leans toward the middle of the screen, as in Codex; a new
           thread, and the pages, stay centred where they are. */}
-      <main className={`main${selected && !onPage && hostUp && !compact && desktop !== 'open' ? ' lean' : ''}${overviewShown || (activeOverviewDetail && overviewDock && overviewOpen && !dockOpen) ? ' overview-room' : ''}`} ref={mainRef}>
+      <main className={`main${(selected || threadPending) && !onPage && hostUp && !compact && desktop !== 'open' ? ' lean' : ''}${overviewRoom || (activeOverviewDetail && overviewDock && overviewOpen && !dockOpen) ? ' overview-room' : ''}`} ref={mainRef}>
         {compact && selected && !listOpen && !onPage && hostUp && (
           <ThreadQuickSwitch threads={topLevelThreads} selectedId={selected.id} agents={agents} onSelect={pick} />
         )}
@@ -3127,13 +3131,14 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
             {/* Every page names itself here, the way a thread does: the bar is never left blank. */}
             {/* On a phone there is no room for the tag: the title itself opens where the thread runs. */}
             {placeShown && !compact && <ThreadPlace thread={selected!} agent={agentLabel(selected!.agent)} host={host?.label} />}
+            {threadPending && !viewTitle && !compact && <div className="pop" aria-hidden="true"><span className="icon-btn place-icon"><IconFolder size={16} /></span></div>}
             {compact && placeShown ? (
               <ThreadPlace thread={selected!} agent={agentLabel(selected!.agent)} host={host?.label} title={onRouterThread ? routerTitle : selected!.title} />
             ) : (
-              <div className="topbar-title">{host && !hostUp ? host.label : viewTitle ?? (selected ? (onRouterThread ? routerTitle : selected.title) : t('sidebar.newThread'))}</div>
+              <div className="topbar-title">{host && !hostUp ? host.label : viewTitle ?? (selected ? (onRouterThread ? routerTitle : selected.title) : threadPending ? '' : t('sidebar.newThread'))}</div>
             )}
             {selected?.coordination?.team && <div className={`team-task-status${['awaiting_confirm', 'needs_attention'].includes(selected.coordination.team.status) ? ' attention' : ''}`}><span className="team-task-name">{selected.coordination.team.name}</span><span> · {t(`teams.${selected.coordination.team.status}`)}</span></div>}
-            {!selected && host && hostUp && <div className="topbar-sub">{host.label}</div>}
+            {!selected && !threadPending && host && hostUp && <div className="topbar-sub">{host.label}</div>}
             {mergedHandover && chainFocus?.index && chainFocus.total && chainFocus.index < chainFocus.total && <div className="topbar-sub topbar-segment">{agentLabel((focusedThread ?? selected!).agent)} · {t('handover.chain.position', chainFocus.index, chainFocus.total)}</div>}
             {busyLine && busyLine.threadId === selected?.id && <div className="topbar-sub topbar-busy">{busyLine.message}</div>}
             {atMember && (

@@ -4262,8 +4262,9 @@ input.picker-search {
   font-size: 12.5px;
 }
 
+/* The same top as the first group, so the list does not move up when threads arrive. */
 .group-empty.top {
-  margin: 14px 10px;
+  margin: 8px 10px 14px;
 }
 
 .thread-row {
