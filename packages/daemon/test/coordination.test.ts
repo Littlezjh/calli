@@ -820,6 +820,64 @@ test('messages for a machine that is away wait for it, and the user can @ an ins
   } finally { await h.close(); await far.close(); }
 });
 
+test('a mid-flight letter waits in the mailbox, and one wake letter carries every piled-up letter in a single turn', async () => {
+  const h = await setup();
+  try {
+    await h.team.enable(h.root.id);
+    const worker = (await h.team.command(h.root.id, spawn('worker', 'claude', 'CALLI_PROGRESS_WORK')) as { to: string }).to;
+    const leadTurns = () => h.store.listEvents(h.root.id, 0, -1).filter(e => e.type === 'turn.started').length;
+    const letters = () => h.team.view(h.root.id)!.messages.filter(d => d.to === h.root.id && d.kind === 'result');
+    // Each mid-flight return lands in the mailbox and wakes nobody.
+    await wait(() => letters().length >= 1 && letters()[0].wake === false);
+    await h.team.command(h.root.id, { op: 'send', target: 'worker', text: 'CALLI_PROGRESS_WORK', requestId: 'w2' });
+    await wait(() => letters().length >= 2 && letters()[1].wake === false && h.manager.threadView(worker).status === 'idle');
+    const before = leadTurns();
+    await new Promise(r => setTimeout(r, 400));
+    assert.equal(leadTurns(), before, 'mid-flight letters never wake the lead');
+    assert.equal(letters().every(d => d.state === 'queued'), true);
+    // A letter that needs the lead wakes it once, with the piled-up notices folded into the same turn.
+    await h.team.command(h.root.id, { op: 'send', target: 'worker', text: 'CALLI_PROGRESS_DONE', requestId: 'w3' });
+    await wait(() => leadTurns() > before);
+    assert.equal(leadTurns(), before + 1, 'one turn for the whole mailbox, not one per letter');
+    const batch = h.store.listEvents(h.root.id, 0, -1).filter(e => e.type === 'turn.started').at(-1)!;
+    // The batch prompt is the letters themselves, in the same shape one letter at a time had.
+    const body = String(batch.data.text);
+    assert.match(body, /^\[协作消息/);
+    assert.equal((body.match(/\[协作消息/g) ?? []).length, 3, 'all three letters ride the one turn');
+    assert.match(body, /\[进度\] 进行中/);
+    assert.match(body, /\[进度\] 待验收/);
+    assert.equal((batch.data.coordination as { from: string }).from, 'worker');
+    // Every claimed letter closes with the one answer it rode in on.
+    await wait(() => letters().every(d => d.state === 'returned') && h.manager.threadView(h.root.id).status === 'idle');
+  } finally { await h.close(); }
+});
+
+test('a queued notice rides the person’s own turn as read-only context, once', async () => {
+  const h = await setup();
+  try {
+    await h.team.enable(h.root.id);
+    const worker = (await h.team.command(h.root.id, spawn('worker', 'claude', 'CALLI_PROGRESS_WORK')) as { to: string }).to;
+    const leadTurns = () => h.store.listEvents(h.root.id, 0, -1).filter(e => e.type === 'turn.started').length;
+    const letters = () => h.team.view(h.root.id)!.messages.filter(d => d.to === h.root.id && d.kind === 'result');
+    await wait(() => letters().length >= 1 && letters()[0].wake === false);
+    // The person speaks: the letter is context on that turn, not a turn of its own.
+    const before = leadTurns();
+    await h.manager.startTurn(h.root.id, { text: 'how is it going' });
+    await wait(() => h.manager.threadView(h.root.id).status === 'idle');
+    assert.equal(leadTurns(), before + 1);
+    const turn = h.store.listEvents(h.root.id, 0, -1).filter(e => e.type === 'turn.started').at(-1)!;
+    assert.match(String(turn.data.text), /成员交回的进行中通报/);
+    assert.match(String(turn.data.text), /\[进度\] 进行中/);
+    await wait(() => letters()[0].state === 'returned' && letters()[0].noticed === true);
+    // Told once, it does not repeat on the next turn.
+    await h.manager.startTurn(h.root.id, { text: 'and now' });
+    await wait(() => h.manager.threadView(h.root.id).status === 'idle');
+    const later = h.store.listEvents(h.root.id, 0, -1).filter(e => e.type === 'turn.started').at(-1)!;
+    assert.doesNotMatch(String(later.data.text), /进行中通报/);
+    assert.equal(h.manager.threadView(worker).status, 'idle');
+  } finally { await h.close(); }
+});
+
 test('the person talking to a member directly is answered there and told to the lead once, without waking it', async () => {
   const h = await setup();
   try {
