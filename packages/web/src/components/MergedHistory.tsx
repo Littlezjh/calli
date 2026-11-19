@@ -4,7 +4,7 @@ import { historyPage, prependHistory, type HistoryPage } from '../history';
 import { buildTimeline, clockLabel } from '../timeline';
 import { t } from '../i18n';
 import { entryKey, readingPath, type ChainEntry } from '../handover';
-import { addPull, gateDirection, gateNeed, KEY_STEP, noPull, pullProgress, pullReady, touchPull, WHEEL_IDLE_MS, WHEEL_NEED, WHEEL_STREAM_GAP_MS, wheelCounts, type Edges, type GateDir, type GateInput, type Pull } from '../segmentGate';
+import { blankPress, dragPull, gateDirection, noPull, pageShift, pullProgress, pullReady, type Edges, type GateDir, type GateInput, type Pull } from '../segmentGate';
 import { AgentMark, IconArrowDown, IconChevron, IconHandover } from './icons';
 import { Prose, ThreadView } from './ThreadView';
 
@@ -207,11 +207,6 @@ export function MergedHistory({ api, thread, chainThreads, merged, ready, agentL
     if (target) navigate(target, dir > 0 ? 'start' : 'end', dir);
     else if (dir < 0 && olderUnknown) void fetchEarlier();
   };
-  /** The dots at the side: straight to a segment, no threshold. */
-  const jump = (target: ChainEntry) => {
-    const at = keys.indexOf(entryKey(target));
-    if (at >= 0 && at !== index) navigate(target, entryKey(target) === currentKey ? 'end' : 'start', at > index ? 1 : -1);
-  };
   const latestKey = [...keys].reverse().find(key => key.startsWith(`${(latest ?? thread).id}:`)) ?? currentKey;
   const firstSignal = useRef(latestSignal);
   useEffect(() => {
@@ -273,101 +268,88 @@ export function MergedHistory({ api, thread, chainThreads, merged, ready, agentL
     still: contentReady && !settling && !leaving,
     atEnd: () => contentReady && (isCurrent || !loaded?.page.hasNewer),
     atStart: () => contentReady && (isCurrent ? !current.hasOlder : !loaded?.page.hasOlder) && !root.current?.querySelector('.older-messages, .older-row') && !(full.length && index === 0 && olderUnknown && fetchingEarlier),
-    label: (dir, full_, input) => {
+    label: (dir, full_) => {
       const target = full[index + dir];
-      const wheel = input !== 'touch';
-      if (!full_) return t(dir > 0 ? (wheel ? 'handover.chain.pullNextWheel' : 'handover.chain.pullNextTouch') : (wheel ? 'handover.chain.pullPrevWheel' : 'handover.chain.pullPrevTouch'));
+      if (!full_) return t(dir > 0 ? 'handover.chain.pullNext' : 'handover.chain.pullPrev');
       if (!target) return t('handover.chain.releasePrevUnknown');
-      const agent = agentLabel(target.thread.agent);
-      return t(dir > 0 ? 'handover.chain.releaseNext' : 'handover.chain.releasePrev', name(target), agent);
+      return t(dir > 0 ? 'handover.chain.releaseNext' : 'handover.chain.releasePrev', name(target), agentLabel(target.thread.agent));
     },
     go,
   };
   useEffect(() => {
     const scroller = root.current?.closest<HTMLElement>('.scroller');
     if (!scroller || !paged) return;
-    let pull: Pull = noPull, input: GateInput = 'wheel';
-    let idle = 0, lastWheel = 0, streamAtEdge = false, lastY = 0, baseY = 0;
+    let pull: Pull = noPull, input: GateInput = 'touch';
+    let lastY = 0, baseY = 0, mouse = false;
     const edges = (): Edges => {
       const c = ctl.current;
       return { atTop: scroller.scrollTop <= 1 && c.atStart(), atBottom: scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 2 && c.atEnd(), hasPrev: c.hasPrev, hasNext: c.hasNext };
     };
     const show = () => {
-      const progress = pullProgress(pull, input), ready_ = progress >= 1;
-      const state = pull.dir ? { progress, label: ctl.current.label(pull.dir, ready_, input) } : null;
+      const progress = pullProgress(pull, input);
+      const state = pull.dir ? { progress, label: ctl.current.label(pull.dir, progress >= 1, input) } : null;
       pillTop.current?.(pull.dir < 0 ? state : null); pillBottom.current?.(pull.dir > 0 ? state : null);
       const page = pageRef.current;
-      if (page) {
-        page.style.transition = pull.dir ? 'none' : '';
-        page.style.transform = pull.dir ? `translateY(${-pull.dir * Math.min(pull.amount, gateNeed(input)) * (input === 'touch' ? 0.3 : 0.1)}px)` : '';
-      }
+      if (page) { page.style.transition = pull.dir ? 'none' : ''; page.style.transform = pull.dir ? `translateY(${pageShift(pull, input)}px)` : ''; }
+      scroller.style.cursor = pull.dir && input === 'mouse' ? 'grabbing' : '';
     };
-    const clear = () => { window.clearTimeout(idle); pull = noPull; show(); };
+    const clear = () => { pull = noPull; show(); };
     const release = () => {
       const turn = pull.dir && pullReady(pull, input) ? pull.dir : 0;
       clear();
       if (turn) ctl.current.go(turn);
     };
+    // Whatever scrolls by itself inside the page (a code block, the handover text) keeps its own drag.
     const nested = (target: EventTarget | null, up: boolean) => {
       for (let el = target instanceof Element ? target : null; el && el !== scroller; el = el.parentElement) {
         if (el.scrollHeight > el.clientHeight + 1 && getComputedStyle(el).overflowY !== 'visible' && (up ? el.scrollTop > 0 : el.scrollTop + el.clientHeight < el.scrollHeight - 1)) return true;
       }
       return false;
     };
-    const onWheel = (e: WheelEvent) => {
-      const now = performance.now();
-      const fresh = now - lastWheel > WHEEL_STREAM_GAP_MS;
-      lastWheel = now;
-      const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
-      const dir = ctl.current.still && !nested(e.target, dy < 0) ? gateDirection(dy, edges()) : 0;
-      if (fresh) streamAtEdge = dir !== 0;
-      if (!dir || !wheelCounts(streamAtEdge)) { if (pull.dir && dir !== pull.dir) clear(); return; }
-      e.preventDefault();
-      input = 'wheel';
-      pull = addPull(pull, dir, dy);
-      show();
-      window.clearTimeout(idle);
-      idle = window.setTimeout(release, WHEEL_IDLE_MS);
-    };
-    const onTouchStart = (e: TouchEvent) => { lastY = baseY = e.touches[0]?.clientY ?? 0; clear(); };
-    const onTouchMove = (e: TouchEvent) => {
-      const y = e.touches[0]?.clientY ?? lastY;
-      if (!ctl.current.still) { lastY = y; return; }
-      input = 'touch';
+    // The same drag for finger and mouse: at an edge with a segment beyond, moving on past it counts from where the edge was reached.
+    const move = (y: number, target: EventTarget | null): boolean => {
+      if (!ctl.current.still) { lastY = y; return false; }
+      let took = false;
       if (pull.dir) {
-        const amount = touchPull(baseY, y, pull.dir);
-        if (e.cancelable) e.preventDefault();
-        if (amount <= 0) { clear(); baseY = y; } else { pull = { dir: pull.dir, amount }; show(); }
+        const amount = dragPull(baseY, y, pull.dir);
+        if (amount <= 0) { clear(); baseY = y; } else { pull = { dir: pull.dir, amount }; show(); took = true; }
       } else {
-        const dir = nested(e.target, lastY < y) ? 0 : gateDirection(lastY - y, edges());
-        if (dir) { baseY = lastY; pull = { dir, amount: touchPull(baseY, y, dir) }; if (e.cancelable) e.preventDefault(); show(); }
+        const dir = nested(target, lastY < y) ? 0 : gateDirection(lastY - y, edges());
+        if (dir) { baseY = lastY; pull = { dir, amount: dragPull(baseY, y, dir) }; show(); took = true; }
       }
       lastY = y;
+      return took;
     };
+    const onTouchStart = (e: TouchEvent) => { input = 'touch'; lastY = baseY = e.touches[0]?.clientY ?? 0; clear(); };
+    const onTouchMove = (e: TouchEvent) => { if (move(e.touches[0]?.clientY ?? lastY, e.target) && e.cancelable) e.preventDefault(); };
     const onTouchEnd = () => { if (pull.dir) release(); };
-    const onKey = (e: globalThis.KeyboardEvent) => {
-      if ((e.key !== 'PageDown' && e.key !== 'PageUp') || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || e.defaultPrevented) return;
-      const target = e.target instanceof HTMLElement ? e.target : null;
-      if (target?.closest('input, textarea, select, [contenteditable="true"], [role="dialog"]')) return;
-      const dir = ctl.current.still ? gateDirection(e.key === 'PageDown' ? 1 : -1, edges()) : 0;
-      if (!dir) return;
-      e.preventDefault();
-      input = 'key';
-      pull = addPull(pull, dir, WHEEL_NEED * KEY_STEP);
-      show();
-      window.clearTimeout(idle);
-      if (pullReady(pull, input)) release(); else idle = window.setTimeout(clear, 1600);
+    const onMouseDown = (e: MouseEvent) => {
+      if (e.button !== 0 || !blankPress(e.target instanceof Element ? e.target : null, window.getSelection()?.isCollapsed ?? true)) return;
+      input = 'mouse'; mouse = true; lastY = baseY = e.clientY; clear();
     };
-    scroller.addEventListener('wheel', onWheel, { passive: false });
+    const onMouseMove = (e: MouseEvent) => {
+      if (!mouse) return;
+      if (!(e.buttons & 1)) { mouse = false; if (pull.dir) release(); return; }
+      if (move(e.clientY, null)) window.getSelection()?.removeAllRanges();
+    };
+    const onMouseUp = () => { if (!mouse) return; mouse = false; if (pull.dir) release(); };
+    const onPointerCancel = () => { mouse = false; clear(); };
+    const onSelect = (e: Event) => { if (pull.dir && input === 'mouse') e.preventDefault(); };
     scroller.addEventListener('touchstart', onTouchStart, { passive: true });
     scroller.addEventListener('touchmove', onTouchMove, { passive: false });
     scroller.addEventListener('touchend', onTouchEnd);
-    scroller.addEventListener('touchcancel', onTouchEnd);
-    document.addEventListener('keydown', onKey);
+    scroller.addEventListener('touchcancel', clear);
+    scroller.addEventListener('mousedown', onMouseDown);
+    scroller.addEventListener('pointercancel', onPointerCancel);
+    scroller.addEventListener('selectstart', onSelect);
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
     return () => {
-      scroller.removeEventListener('wheel', onWheel); scroller.removeEventListener('touchstart', onTouchStart); scroller.removeEventListener('touchmove', onTouchMove);
-      scroller.removeEventListener('touchend', onTouchEnd); scroller.removeEventListener('touchcancel', onTouchEnd);
-      document.removeEventListener('keydown', onKey); window.clearTimeout(idle);
+      scroller.removeEventListener('touchstart', onTouchStart); scroller.removeEventListener('touchmove', onTouchMove);
+      scroller.removeEventListener('touchend', onTouchEnd); scroller.removeEventListener('touchcancel', clear);
+      scroller.removeEventListener('mousedown', onMouseDown); scroller.removeEventListener('pointercancel', onPointerCancel); scroller.removeEventListener('selectstart', onSelect);
+      window.removeEventListener('mousemove', onMouseMove); window.removeEventListener('mouseup', onMouseUp);
+      scroller.style.cursor = '';
     };
   }, [paged]);
 
@@ -377,7 +359,6 @@ export function MergedHistory({ api, thread, chainThreads, merged, ready, agentL
   const beginning = ready && first ? <div className="row chain-beginning" role="status">{t('handover.chain.beginning')}</div> : null;
   const head = latest ?? thread;
   const floating = focus?.lineHidden && (focus.threadId !== head.id || focus.part === 'before') ? focusEntry(focus, full) : null;
-  const nextEntry = full[index + 1];
   const activeKey = view.key;
   const failure = failed[activeKey];
   let body: ReactNode;
@@ -403,16 +384,9 @@ export function MergedHistory({ api, thread, chainThreads, merged, ready, agentL
   } else {
     body = <div className="chain-later" role="status">{t('common.loading')}</div>;
   }
-  const showEnd = contentReady && !failure && !newer;
   const pageClass = `chain-page${leaving ? ` chain-leaving-${leaving > 0 ? 'next' : 'prev'}` : view.dir ? ` chain-enter-${view.dir > 0 ? 'next' : 'prev'}` : ''}${settling && contentReady && !leaving ? ' chain-settling' : ''}`;
   return <div className="merged-history paged" ref={root}>
     <GatePill edge="top" register={pillTop} />
-    {full.length > 1 && <nav className="chain-rail" aria-label={t('handover.chain.segments')}>
-      <div className="chain-rail-dots">
-        {full.map((entry, i) => <button key={entryKey(entry)} type="button" className="chain-rail-dot" aria-current={i === index ? 'true' : undefined}
-          title={`${name(entry)} · ${agentLabel(entry.thread.agent)}`} aria-label={`${name(entry)} · ${agentLabel(entry.thread.agent)}`} onClick={() => jump(entry)} />)}
-      </div>
-    </nav>}
     {/* Overlays the text from the top of the reading; sticky with no height of its own, so nothing moves. */}
     <div className="chain-float" aria-live="polite">
       {floating && <div className="chain-line chain-line-float">{lineBody({ thread: floating.thread, part: floating.part, agentLabel, icon: agentIcon?.(floating.thread.agent), onOpen: onOpenSegment })}
@@ -425,11 +399,6 @@ export function MergedHistory({ api, thread, chainThreads, merged, ready, agentL
     </div>}
     <div className={pageClass} key={activeKey} ref={pageRef}>
       {body}
-      {showEnd && <div className="row chain-end" data-chain-end>
-        <span>{nextEntry ? t('handover.chain.endHere') : t('handover.chain.endLatest')}</span>
-        {nextEntry && <><span className="chain-end-sep" aria-hidden="true">·</span>
-          <button type="button" className="chain-end-next" onClick={() => go(1)}>{t('handover.chain.nextSegment', agentLabel(nextEntry.thread.agent))}</button></>}
-      </div>}
     </div>
     <GatePill edge="bottom" register={pillBottom} />
   </div>;
