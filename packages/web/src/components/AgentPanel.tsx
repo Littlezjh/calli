@@ -62,7 +62,7 @@ export function AgentPanel({ api, memberApi, team, agents, leadAgent, memberMode
   /** How to reach a member that runs on another machine. */
   memberApi?: (host: string) => Api;
   /** The control for a member's own model and thinking effort, shown with its details. */
-  memberModel?: (thread: Thread) => ReactNode;
+  memberModel?: (thread: Thread, part: 'permission' | 'model') => ReactNode;
   /** The member to open on, when the panel is opened from that member's row elsewhere. */
   start?: string | null;
   phone: boolean; onClose: () => void; onOpen: (thread: Thread) => void;
@@ -159,7 +159,6 @@ export function AgentPanel({ api, memberApi, team, agents, leadAgent, memberMode
       {memberId && <button className="icon-btn" aria-label={t('team.back')} onClick={() => setMemberId(null)}><span className="coord-back"><IconChevron /></span></button>}
       {/* A member: how it stands first, then its agent and the folder it works in (the whole path on hover). */}
       <div className="agent-panel-heading"><strong>{member?.name ?? t('team.agents')}</strong><span title={thread?.cwd}>{thread ? `${memberStatus(member!)} · ${agents.find(a => a.id === thread.agent)?.label ?? thread.agent}${member?.hostLabel ? ` · ${member.hostLabel}` : ''} · ${thread.cwd.split('/').filter(Boolean).pop() ?? thread.cwd}` : team.paused ? t('team.pausedHint') : t('team.summary', team.members.filter(m => m.thread?.status === 'running').length, team.members.length)}</span></div>
-      {thread && !remote && memberModel?.(thread)}
       {thread && !remote && <button className="icon-btn" aria-label={t('team.open')} title={t('team.open')} onClick={() => onOpen(thread)}><IconExternal /></button>}
       <button className="icon-btn" aria-label={t('team.close')} onClick={onClose}><IconClose /></button>
     </header>
@@ -207,7 +206,7 @@ export function AgentPanel({ api, memberApi, team, agents, leadAgent, memberMode
       <Composer key={thread.id} draftKey={remote ? `host:${remote}:${thread.id}` : thread.id} running={thread.status === 'running'}
         placeholder={thread.status === 'running' ? t('sideChat.queuePlaceholder') : t('team.directPlaceholder', member.name)}
         banner={take => <div className="agent-panel-via"><button type="button" className="text-btn" onClick={() => onAdjust(member.name, take())}><IconAgents size={13} />{t('team.adjustViaLead')}</button></div>}
-        header={null} left={null} right={null} commands={[]} actions={[]} hiddenCommands={[]} onAction={() => {}}
+        header={null} left={remote ? null : memberModel?.(thread, 'permission') ?? null} right={remote ? null : memberModel?.(thread, 'model') ?? null} commands={[]} actions={[]} hiddenCommands={[]} onAction={() => {}}
         attachBlocked={agents.find(a => a.id === thread.agent)?.capabilities?.images ? null : t('app.noImages', agents.find(a => a.id === thread.agent)?.label ?? thread.agent)}
         note={null} restore={restore?.thread === thread.id ? restore : null} onError={onError}
         onSend={async (text, images, mentions, videos = []) => {

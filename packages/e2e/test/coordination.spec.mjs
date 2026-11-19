@@ -159,9 +159,11 @@ for (const phone of [false, true]) for (const colorScheme of ['light', 'dark']) 
       await page.route(`**/threads/${child}/events?tail=1`, route => route.fulfill({ status: 503, body: '{"error":"offline"}' }), { times: 1 });
       await card.click();
       await panel.getByText('文档审查完成。', { exact: false }).waitFor();
-      const own = panel.locator('.agent-panel-head .member-model.set', { hasText: picked });
+      // The member's own model sits in its box, where the lead's does, not in the panel's head.
+      assert.equal(await panel.locator('.agent-panel-head .member-model').count(), 0);
+      const own = panel.locator('.agent-panel-composer .model-control-trigger');
       await own.waitFor();
-      // Opened from the top of the panel, the member's own setting is all on screen.
+      // Opened from the bottom of the panel, the member's own setting is all on screen.
       await own.click();
       const ownPanel = page.getByRole('menu', { name: '模型与思考强度', exact: true });
       await ownPanel.waitFor();

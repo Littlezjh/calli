@@ -395,17 +395,20 @@ function fitDraftModelPreference(value: DraftModelPreference, models: ModelOptio
 }
 
 /** The model and thinking effort for one instance's members: a quiet mark until something is chosen. */
-function MemberModel({ agent, models, value, permission, onNeed, onChange, onPermission }: {
+function MemberModel({ agent, models, value, permission, part, onNeed, onChange, onPermission }: {
   agent: AgentInfo; models: ModelOption[]; value: MemberDefault; onNeed: (agent: string, refresh?: boolean) => void; onChange: (value: MemberDefault) => void;
   /** The level in force, and how to change it; left out where the agent has no levels. */
   permission?: string; onPermission?: (mode: string) => void;
+  /** One half only, drawn as the composer's own control rather than a quiet line: a member's box sits like the lead's. */
+  part?: 'permission' | 'model';
 }) {
-  useEffect(() => { onNeed(agent.id); }, [agent.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (part !== 'permission') onNeed(agent.id); }, [agent.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const efforts = agent.capabilities.effortLevels ?? [];
+  const quiet = part ? undefined : agent.label;
   return (<>
-    {permission && onPermission && <PermissionPicker quietFor={agent.label} modes={agent.capabilities.permissionModes} value={permission} canAsk={agent.capabilities.approvals ?? true} onChange={onPermission} />}
-    <ModelPicker
-      quietFor={agent.label}
+    {part !== 'model' && permission && onPermission && <PermissionPicker quietFor={quiet} modes={agent.capabilities.permissionModes} value={permission} canAsk={agent.capabilities.approvals ?? true} onChange={onPermission} />}
+    {part !== 'permission' && <ModelPicker
+      quietFor={quiet}
       catalog={agent.capabilities.modelCatalog}
       models={models}
       model={value.model}
@@ -415,7 +418,7 @@ function MemberModel({ agent, models, value, permission, onNeed, onChange, onPer
       // An effort the newly picked model does not take goes back to the default with it.
       onModel={(model) => onChange({ ...value, model, effort: value.effort && effortsForModel(models, model, efforts).includes(value.effort) ? value.effort : null })}
       onEffort={(effort) => onChange({ ...value, effort })}
-    />
+    />}
   </>);
 }
 
@@ -3696,9 +3699,9 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
         </div>
       )}
 
-      {agentsOpen && coordination && <AgentPanel key={`${coordination.rootId}:${agentsStart ?? ''}`} start={agentsStart} api={api} memberApi={(id) => new Api(token ?? '', '', id)} team={coordination} agents={agents} memberModel={(thread) => {
+      {agentsOpen && coordination && <AgentPanel key={`${coordination.rootId}:${agentsStart ?? ''}`} start={agentsStart} api={api} memberApi={(id) => new Api(token ?? '', '', id)} team={coordination} agents={agents} memberModel={(thread, part) => {
         const a = agents.find((v) => v.id === thread.agent);
-        return a ? <MemberModel agent={a} models={modelsByAgent[a.id] ?? []} value={{ model: thread.model ?? null, effort: thread.effort ?? null }} onNeed={needModels} onChange={({ model, effort }) => { void api.updateThread(thread.id, { model, effort }).then(() => refreshThreads()).catch(handleError); }}
+        return a ? <MemberModel part={part} agent={a} models={modelsByAgent[a.id] ?? []} value={{ model: thread.model ?? null, effort: thread.effort ?? null }} onNeed={needModels} onChange={({ model, effort }) => { void api.updateThread(thread.id, { model, effort }).then(() => refreshThreads()).catch(handleError); }}
           permission={a.capabilities.permissionModes.length ? thread.permissionMode : undefined} onPermission={(permissionMode) => { void api.updateThread(thread.id, { permissionMode }).then(() => refreshThreads()).catch(handleError); }} /> : null;
       }} leadAgent={threads.find((t) => t.id === coordination.rootId)?.agent} phone={compact} onClose={() => setAgentsOpen(false)} onOpen={thread => { openThread(thread); setAgentsOpen(false); }} onAdjust={(name, draft) => { setAgentsOpen(false); setSelectedId(coordination.rootId); setRestore({ text: t('app.adjustTask', name) + draft, nonce: Date.now() }); }} onRefresh={() => { void refreshThreads(); }} onError={handleError} />}
       {/* On a computer what the overview opens goes in the column beside the conversation: the whole list of a group here; a page or a file's changes opened from it take its place, with a way back. */}
