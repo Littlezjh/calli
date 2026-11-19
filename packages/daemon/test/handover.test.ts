@@ -13,6 +13,13 @@ const ev = (turnId: string | null, type: StoredEvent['type'], data: Record<strin
   data,
 });
 
+test('a handover prompt that may go back to an older conversation names no reader', () => {
+  const prompt = handoverPrompt();
+  assert.match(prompt, /交给另一个 agent接手/);
+  assert.doesNotMatch(prompt, /（/);
+  assert.match(prompt, /## 任务/);
+});
+
 test('the handover prompt tells the agent what its successor can and cannot see', () => {
   const prompt = handoverPrompt('Claude Code 2');
   assert.match(prompt, /Claude Code 2/);

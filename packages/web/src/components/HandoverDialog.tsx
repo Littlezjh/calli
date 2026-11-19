@@ -1,4 +1,4 @@
-import { AutoHandoverChoice, ReturnChoice } from './AutoHandover';
+import { AutoHandoverChoice, ReturnSwitch } from './AutoHandover';
 import { useEffect, useRef, useState } from 'react';
 import { copyText } from '../clipboard';
 import type { AgentInfo, Api, ReturnTarget, Thread } from '../api';
@@ -31,7 +31,8 @@ export function HandoverDialog({ api, thread, agents, onOpen, onClose }: Props) 
   const [targetModel, setTargetModel] = useState<string | undefined>();
   // An earlier conversation of the chain that could take the work back, offered beside a new one.
   const [returns, setReturns] = useState<ReturnTarget[]>([]);
-  const [choice, setChoice] = useState<'return' | 'new'>('return');
+  // A person is here to choose: a new conversation unless they say the older one.
+  const [backToOld, setBackToOld] = useState(false);
   useEffect(() => {
     if (api.demo) return;
     let active = true;
@@ -78,7 +79,8 @@ export function HandoverDialog({ api, thread, agents, onOpen, onClose }: Props) 
     } else setError(t('handover.copyFailed'));
   };
 
-  const toOld = choice === 'return' && returns.length > 0;
+  const toOld = backToOld && returns.length > 0;
+  const label = (id: string) => agents.find((a) => a.id === id)?.label ?? id;
   const create = async () => {
     if (!toOld && (!summary || !target) || creatingRef.current) return;
     creatingRef.current = true;
@@ -102,14 +104,15 @@ export function HandoverDialog({ api, thread, agents, onOpen, onClose }: Props) 
         <h2 id="handover-title" className="dialog-title">{t('handover.title')}</h2>
         <p className="dialog-message">{t(toOld ? 'handover.messageOld' : 'handover.message')}</p>
         <AutoHandoverChoice api={api} thread={thread} />
-        {returns.length > 0 && <ReturnChoice form returns={returns} value={choice} onChange={setChoice} disabled={creating} />}
         {!toOld && <div className="handover-successor">
           <span>{t('handover.successor')}</span>
           <fieldset disabled={creating}>
             <AgentPicker api={api} agents={agents} value={target} onChange={id => { setTarget(id); setTargetModel(undefined); }} />
           </fieldset>
         </div>}
+        {returns.length > 0 && <ReturnSwitch old={returns[0]} agentLabel={label(returns[0].agent)} toOld={toOld} onChange={setBackToOld} disabled={creating} />}
         {!toOld && targetModel && <p className="handover-note">{targetModel}</p>}
+        {toOld && teamSize > 0 && <p className="handover-note">{t('handover.choice.teamMoves')}</p>}
         {!toOld && teamSize > 0 && (
           <label className="dialog-option">
             <input type="checkbox" checked={takeTeam} onChange={e => setTakeTeam(e.target.checked)} disabled={creating} />

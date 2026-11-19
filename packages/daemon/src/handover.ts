@@ -9,9 +9,10 @@ import type { InjectionGate } from './injections.js';
  */
 
 /** The prompt the current agent is asked to answer in its own session. */
-export function handoverPrompt(targetLabel: string): string {
+export function handoverPrompt(targetLabel?: string): string {
   return [
-    `请写一份交接摘要，交给另一个 agent（${targetLabel}）接手这个任务继续做。`,
+    // With no label the reader is not named: the work may go to a new conversation or back to an older one.
+    `请写一份交接摘要，交给另一个 agent${targetLabel ? `（${targetLabel}）` : ''}接手这个任务继续做。`,
     '它会读你写的摘要，但看不到这段对话，也不要假设它了解任何背景。',
     '用 Markdown，包含这些小节：',
     '## 任务 — 用户想做什么，一两句话',

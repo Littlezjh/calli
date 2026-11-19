@@ -115,9 +115,15 @@ try {
     await view.page.getByLabel('这个线程的更多操作').click();
     await view.page.getByRole('menuitem', { name: '分叉与交接', exact: true }).click();
     await view.page.getByRole('menuitem', { name: '交接', exact: true }).click().catch(async e => { await shot(view, 'debug-menu'); throw e; });
-    await view.page.getByRole('radiogroup', { name: '交接方式' }).waitFor();
+    // A new conversation is the default; the older one is a quiet line below the successor.
+    const switchOld = view.page.getByRole('button', { name: /^或交回/ });
+    await switchOld.waitFor();
     await view.page.waitForTimeout(500);
     await shot(view, 'manual-dialog');
+    await switchOld.click();
+    await view.page.getByRole('button', { name: '改为交到新对话' }).waitFor();
+    await view.page.waitForTimeout(300);
+    await shot(view, 'manual-dialog-old');
     await view.page.close();
   }
 
