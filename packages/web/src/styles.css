@@ -13612,7 +13612,8 @@ button.trace-step-head:hover { background: var(--hover); }
 .chat-strip .warn { color: var(--warn); }
 
 /* The conversation: a readable column on its own scroll, the composer under it. */
-.chat-flow { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; width: min(760px, 100%); margin: 0 auto; padding: 10px 16px 8px; scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
+.chat-flow { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; width: 100%; padding: 0; scrollbar-gutter: stable; scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
+.chat-reading { width: min(760px, 100%); margin: 0 auto; padding: 10px 16px 8px; }
 .chat-error { margin: 8px 8px 4px; color: var(--warn); font-size: 12.5px; }
 .chat-composer { flex: none; width: min(760px, 100%); margin: 0 auto; padding: 6px 16px calc(12px + var(--safe-bottom)); }
 .chat-composer .composer { width: auto; max-width: none; padding: 0; }
@@ -15554,3 +15555,8 @@ body:has(.settings-page, .action-sheet) .pet { display: none; }
   padding: 0;
   border: 0;
 }
+
+/* Referenced conversations use the team panel, with one native scroller per reader. */
+.chat-home > .agent-panel > .composer { flex: none; width: auto; margin: 8px 12px 12px; }
+.chat-home > .agent-panel .agent-panel-body { scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
+.chat-home > .agent-panel .action-sheet { max-height: calc(100% - 76px); overflow-y: auto; }

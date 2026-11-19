@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ApiError, type AgentInfo, type ModelOption, type Api, type PersonalSettings, type ProactiveAction, type ProactiveRun, type Thread, type Todo } from '../api';
 import { historyPage, mergeHistory, mergeHistoryPage, watchHistory } from '../history';
@@ -12,6 +12,7 @@ import { ActionSheet, type SheetTarget } from './ActionSheet';
 import { Composer } from './Composer';
 import { AgentPicker, ModelPicker, effortsForModel } from './Pickers';
 import { ThreadView } from './ThreadView';
+import { ThreadPeek } from './ThreadPeek';
 import { RunControls, RunSummary, type ProactiveState } from './ProactiveRuns';
 import { DeskPage } from './DeskPage';
 import { PlanView } from './PlanView';
@@ -100,6 +101,35 @@ export function AssistantHome({ api, todos, loading, error, threads, threadsKnow
   const [needsSetup, setNeedsSetup] = useState(false);
   const scroll = useRef<HTMLDivElement>(null);
   const root = useRef<HTMLDivElement>(null);
+  const [previewId, setPreviewId] = useState<string | null>(null);
+  const previewOrigin = useRef<{ focus: HTMLElement | null; top: number; offset: number } | null>(null);
+  const previewOverlay = !useMinWidth(901);
+  const openPreview = useCallback((id: string) => {
+    const focus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    previewOrigin.current ??= { focus, top: scroll.current?.scrollTop ?? 0, offset: focus?.getBoundingClientRect().top ?? 0 };
+    stick.current = false;
+    openDrawer(null);
+    setPreviewId(id);
+  }, [openDrawer]);
+  useLayoutEffect(() => {
+    const origin = previewOrigin.current;
+    if (!origin || !scroll.current) return;
+    if (previewId) {
+      if (origin.focus?.isConnected) scroll.current.scrollTop += origin.focus.getBoundingClientRect().top - origin.offset;
+    } else {
+      stick.current = false;
+      scroll.current.scrollTop = origin.top;
+      origin.focus?.focus({ preventScroll: true });
+      previewOrigin.current = null;
+    }
+  }, [previewId]);
+  useLayoutEffect(() => {
+    const main = mainRef.current;
+    if (!previewId || !previewOverlay || !main) return;
+    main.inert = true;
+    return () => { main.inert = false; };
+  }, [previewId, previewOverlay]);
+  useEffect(() => { if (drawer) setPreviewId(null); }, [drawer]);
   const stick = useRef(true);
   const timeline = useMemo(() => buildTimeline(events), [events]);
   const waiting = useMemo(() => timeline.items.flatMap((item): SheetTarget[] =>
@@ -144,7 +174,7 @@ export function AssistantHome({ api, todos, loading, error, threads, threadsKnow
   }, [api]);
   useEffect(() => { loadRuns(); }, [loadRuns, refreshKey]);
 
-  useEffect(() => { if (stick.current && scroll.current) scroll.current.scrollTop = scroll.current.scrollHeight; }, [events, asks.length]);
+  useEffect(() => { if (!previewId && stick.current && scroll.current) scroll.current.scrollTop = scroll.current.scrollHeight; }, [events, asks.length, previewId]);
 
   // The unread dot is the list's; reading here counts as reading.
   useEffect(() => {
@@ -162,7 +192,7 @@ export function AssistantHome({ api, todos, loading, error, threads, threadsKnow
   // '/' (or ⌘K) finds her composer from anywhere on this page; Esc puts the drawer away first.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.isComposing || event.defaultPrevented) return;
+      if (event.isComposing || event.defaultPrevented || previewId) return;
       const el = event.target;
       const typing = el instanceof Element && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || (el instanceof HTMLElement && el.isContentEditable) || el.closest('[role=dialog], [role=menu]'));
       const modal = [...document.querySelectorAll('[role=dialog][aria-modal=true]')].at(-1);
@@ -183,7 +213,7 @@ export function AssistantHome({ api, todos, loading, error, threads, threadsKnow
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [drawer, overlay, openDrawer, focusComposer]);
+  }, [drawer, overlay, openDrawer, focusComposer, previewId]);
 
   const loadImage = useCallback((id: string) => threadId ? api.attachment(threadId, id) : Promise.reject(new Error('no thread')), [api, threadId]);
   const loadFile = useCallback((path: string) => threadId ? api.threadFile(threadId, path) : Promise.reject(new Error('no thread')), [api, threadId]);
@@ -418,29 +448,31 @@ export function AssistantHome({ api, todos, loading, error, threads, threadsKnow
       onSendQueuedNow={id => threadId && void api.sendQueuedNow(threadId, id).then(refresh).catch(report)} />
   </div>;
 
-  return <div className={`chat-home${drawer ? ' drawer-open' : ''}${drawer && wide ? ' side-by-side' : ''}`} ref={root}>
+  return <div className={`chat-home${drawer ? ' drawer-open' : ''}${(drawer && wide) || previewId ? ' side-by-side' : ''}`} ref={root}>
     <div className="chat-main" ref={mainRef}>
       {headerSlot ? createPortal(header, headerSlot) : <header className="chat-top">{header}</header>}
 
       {threadId || threadError ? <>
-        <div className="chat-flow" ref={scroll} onScroll={() => { const el = scroll.current; if (el) stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120; }}>
-          {threadError && <p className="chat-error" role="alert">{threadError} <button className="ghost" onClick={() => onOpenThread(threadId!)}>{t('threadPeek.open')}</button></p>}
-          {!loaded && !threadError && <div className="loading-note">{t('common.loading')}</div>}
-          {/* After an agent switch the earlier talk is one tap away, at the top where it would have been. */}
-          {loaded && cursor === null && thread?.handover?.sourceId && <button className="chat-earlier" onClick={() => onOpenThread(thread.handover!.sourceId)}>{t('desk.earlierWith', agentLabel(thread.handover.agent))}</button>}
-          {loaded && <ThreadView historyApi={api} historyThreadId={threadId!}
-            threads={threads} onOpenThread={onOpenThread}
-            items={timeline.items} roots={thread ? [thread.cwd, thread.cwdReal] : []} loadImage={loadImage} loadFile={loadFile}
-            autoRetry={!api.demo && thread?.autoRetry ? {
-              ...thread.autoRetry, busy: retryBusy,
-              onCancel: () => {
-                setRetryBusy(true);
-                void api.cancelAutoRetry(thread.id).then(value => setThread(current => current?.id === value.id ? value : current))
-                  .catch(e => setError(message(e))).finally(() => setRetryBusy(false));
-              },
-            } : null}
-            observeOlder={false} hasOlder={cursor !== null} loadingOlder={loadingOlder} onLoadOlder={() => void loadOlder()} />}
-          {error_ && <p className="chat-error" role="alert">{error_}</p>}
+        <div className="chat-flow" ref={scroll} tabIndex={0} onScroll={() => { const el = scroll.current; if (el) stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120; }}>
+          <div className="chat-reading">
+            {threadError && <p className="chat-error" role="alert">{threadError} <button className="ghost" onClick={() => onOpenThread(threadId!)}>{t('threadPeek.open')}</button></p>}
+            {!loaded && !threadError && <div className="loading-note">{t('common.loading')}</div>}
+            {/* After an agent switch the earlier talk is one tap away, at the top where it would have been. */}
+            {loaded && cursor === null && thread?.handover?.sourceId && <button className="chat-earlier" onClick={() => onOpenThread(thread.handover!.sourceId)}>{t('desk.earlierWith', agentLabel(thread.handover.agent))}</button>}
+            {loaded && <ThreadView historyApi={api} historyThreadId={threadId!}
+              threads={threads} onOpenThread={openPreview}
+              items={timeline.items} roots={thread ? [thread.cwd, thread.cwdReal] : []} loadImage={loadImage} loadFile={loadFile}
+              autoRetry={!api.demo && thread?.autoRetry ? {
+                ...thread.autoRetry, busy: retryBusy,
+                onCancel: () => {
+                  setRetryBusy(true);
+                  void api.cancelAutoRetry(thread.id).then(value => setThread(current => current?.id === value.id ? value : current))
+                    .catch(e => setError(message(e))).finally(() => setRetryBusy(false));
+                },
+              } : null}
+              observeOlder={false} hasOlder={cursor !== null} loadingOlder={loadingOlder} onLoadOlder={() => void loadOlder()} />}
+            {error_ && <p className="chat-error" role="alert">{error_}</p>}
+          </div>
         </div>
         {askCards}
         {composer}
@@ -468,6 +500,9 @@ export function AssistantHome({ api, todos, loading, error, threads, threadsKnow
         onRejectPlan={() => { if (threadId) onOpenThread(threadId); }} onSkipPlan={() => { if (threadId) onOpenThread(threadId); }} />}
     </div>
 
+    {previewId && <ThreadPeek key={previewId} side api={api} initial={previewId}
+      draftKey={previewId} returnFocus={null} onClose={() => setPreviewId(null)}
+      onOpen={() => onOpenThread(previewId)} onChange={onReload} />}
     {drawer && <aside className={`chat-drawer${wide ? ' side' : ' over'}`} ref={drawerRef} role="dialog" aria-modal={overlay || undefined} aria-label={t('desk.drawerLabel')}>
       <header className="chat-drawer-head">
         <b>{t(`desk.tab.${drawer === 'sessions' ? 'sessions' : drawer === 'matters' ? 'matters' : 'desk'}`)}</b>

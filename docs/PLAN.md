@@ -228,3 +228,9 @@ Calli 扩展不进入 agent 的工具循环，不改用户消息、上下文或�
 ### agy ACP 协议核验（1.5.12）
 
 会话复用共享 `AcpAdapter`／`AcpSession`；原生可用命令优先，`/usage` 等查询保留一次性 print，登录、模型目录、导入和终端恢复继续使用实例隔离环境。参考 [Claude ACP](https://github.com/agentclientprotocol/claude-agent-acp) 的统一审批与命令通知，以及 [Gemini CLI ACP](https://github.com/google-gemini/gemini-cli/blob/main/packages/cli/src/acp/acpSession.ts) 的会话内模式／模型变更；复用协议层，差异留在 agy 适配器。
+
+### 助手中的会话预览
+
+助手正文和表格中的 `thread://` 引用在右侧打开目标会话，助手正文不卸载。与子 agent 共用 `AgentPanelFrame`：宽屏并排、拖动调整宽度，窄屏覆盖阅读区。阅读内容复用 `ThreadPeek`，只在点击后读取目标会话和历史，加载失败直接显示错误并可重试；关闭或 Esc 返回原链接和滚动位置。飞书等 HTTPS 链接仍作为外链打开。
+
+阅读宽度由内部正文列控制，外层滚动容器占满可用宽度，细滚动条贴容器边缘；保留原生滚轮、触摸、键盘和拖动操作，外层页面不再增加滚动条。参考 [LibreChat 并排内容面板](https://www.librechat.ai/docs/features/artifacts) 与 [Chatwoot SidePanel 的关闭和焦点返回](https://github.com/chatwoot/chatwoot/blob/develop/app/javascript/dashboard/components-next/side-panel/SidePanel.vue)，最终按用户指定与现有子 agent 体验对齐。

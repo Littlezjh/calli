@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { mkdirSync } from 'node:fs';
-import { startDaemon, launchBrowser, api, openUi } from '../harness.mjs';
+import { startDaemon, launchBrowser, api, openUi, openCollaboration } from '../harness.mjs';
 
 const json = async (daemon, path, method = 'GET', body) => {
   const response = await api(daemon, path, { method, ...(body ? { body: JSON.stringify(body) } : {}) });
@@ -27,14 +27,15 @@ const configurePersonal = async (daemon, text = '先记一件事') => {
   return threadId;
 };
 
-test('assistant thread links navigate from paragraphs, tables and inferred references on desktop and phone', async () => {
+test('assistant thread links preview beside the retained conversation on desktop and phone', async () => {
   const daemon = await startDaemon();
-  const browser = await launchBrowser();
+  const browser = await launchBrowser({ showScrollbars: true });
   try {
     const target = await json(daemon, '/api/threads', 'POST', { agent: 'pi', cwd: daemon.workdir, title: '助手链接目标' });
     await json(daemon, `/api/threads/${target.id}/turns`, 'POST', { text: '目标会话正文' });
     await waitFor(async () => (await json(daemon, `/api/threads/${target.id}`)).status === 'idle', 'target reply');
     const markdown = [
+      ...Array.from({ length: 10 }, (_, i) => `前文 ${i}：核对统计口径与出处。\n`),
       `普通段落：[打开目标会话](thread://${target.id})。`,
       '',
       '| 会话 | 操作 |',
@@ -44,6 +45,9 @@ test('assistant thread links navigate from paragraphs, tables and inferred refer
       `已知引用：「${target.title}」（${target.id.slice(0, 8)}）。`,
       '',
       `完整 ID：${target.id}`,
+      '',
+      '[飞书材料](https://www.feishu.cn/)',
+      ...Array.from({ length: 12 }, (_, i) => `\n补充材料 ${i}：保留原阅读位置与讨论上下文。`),
     ].join('\n');
     await configurePersonal(daemon, `router-fixture-markdown ${JSON.stringify(markdown)}`);
     const shots = join(import.meta.dirname, '../shots/assistant-thread-links');
@@ -56,8 +60,14 @@ test('assistant thread links navigate from paragraphs, tables and inferred refer
       try {
         const page = await context.newPage();
         page.setDefaultTimeout(10000);
+        const cdp = await context.newCDPSession(page);
         const errors = []; page.on('pageerror', error => errors.push(error.message));
+        const targetReads = [];
+        page.on('request', request => { if (request.url().includes(`/threads/${target.id}`)) targetReads.push(request.url()); });
         await openUi(page, daemon);
+        await page.evaluate(() => { location.hash = '#/desk'; });
+        await page.locator('.chat-flow .row.assistant').waitFor();
+        assert.equal(targetReads.length, 0, 'target details are not prefetched');
         for (const kind of ['paragraph', 'table', 'title', 'id', 'keyboard']) {
           await page.evaluate(() => { location.hash = '#/desk'; });
           const answer = page.locator('.chat-flow .row.assistant');
@@ -67,15 +77,79 @@ test('assistant thread links navigate from paragraphs, tables and inferred refer
             : answer.locator('p a.thread-link', { hasText: '打开目标会话' });
           await link.waitFor();
           assert.equal(await link.count(), 1, `${kind} renders one actionable link`);
-          if (kind === 'paragraph') await page.screenshot({ path: join(shots, `${phone ? 'phone' : 'desktop'}-${theme}.png`) });
+          await link.scrollIntoViewIfNeeded();
+          const flow = page.locator('.chat-flow');
+          const before = await flow.evaluate(el => el.scrollTop);
+          assert.ok(before > 0);
           if (kind === 'keyboard') { await link.focus(); await page.keyboard.press('Enter'); }
           else if (phone) await link.tap();
           else await link.click();
-          await page.locator('.chat-home').waitFor({ state: 'detached' });
-          await page.locator('.topbar-title', { hasText: target.title }).waitFor();
-          await page.locator('.row.user', { hasText: '目标会话正文' }).waitFor();
-          assert.equal(await page.locator('.thread-row.active .thread-title').textContent(), target.title);
+          const panel = page.locator('.chat-home > .agent-panel');
+          await panel.locator('.agent-panel-heading', { hasText: target.title }).waitFor();
+          await panel.locator('.row.user', { hasText: '目标会话正文' }).waitFor();
+          assert.equal(await page.locator('.chat-flow').count(), 1);
+          assert.equal(await page.locator('.chat-drawer').count(), 0, 'only one side container');
+          assert.equal(new URL(page.url()).hash, '#/desk');
+          const mainBox = await page.locator('.chat-main').boundingBox(), panelBox = await panel.boundingBox();
+          if (phone) {
+            assert.equal(Math.round(panelBox.width), Math.round(mainBox.width));
+            assert.equal(await page.locator('.chat-main').evaluate(el => el.inert), true);
+          } else assert.ok(panelBox.x >= mainBox.x + mainBox.width - 1, 'beside the talk like a subagent');
+          if (kind === 'table') {
+            await page.waitForTimeout(500);
+            await page.screenshot({ path: join(shots, `${phone ? 'phone' : 'desktop'}-${theme}.png`) });
+            if (!phone) {
+              const handle = panel.locator('.agent-panel-resize'), box = await handle.boundingBox();
+              await page.mouse.move(box.x + 3, box.y + 100); await page.mouse.down();
+              await page.mouse.move(box.x - 70, box.y + 100); await page.mouse.up();
+              assert.ok((await panel.boundingBox()).width > panelBox.width, 'shares the subagent resize behavior');
+              await handle.dblclick();
+            }
+          }
+          if (kind === 'keyboard') await page.keyboard.press('Escape');
+          else await panel.getByRole('button', { name: '返回助手', exact: true }).click();
+          await panel.waitFor({ state: 'detached' });
+          assert.equal(await flow.evaluate(el => el.scrollTop), before, 'closing restores reading position');
+          assert.equal(await link.evaluate(el => document.activeElement === el), true, 'closing returns focus to the source');
+          assert.equal(await page.locator('.chat-main').evaluate(el => el.inert), false);
+          if (phone) await page.waitForTimeout(400);
+
         }
+        const external = page.locator('.chat-flow a[href="https://www.feishu.cn/"]');
+        assert.equal(await external.getAttribute('target'), '_blank');
+        const flow = page.locator('.chat-flow');
+        await flow.evaluate(el => el.scrollTop = 100);
+        await flow.hover(); await page.mouse.wheel(0, 240); await page.waitForTimeout(300);
+        assert.ok(await flow.evaluate(el => el.scrollTop) > 100);
+        await flow.focus(); const beforeKey = await flow.evaluate(el => el.scrollTop);
+        await page.keyboard.press('PageDown'); await page.waitForTimeout(300);
+        assert.ok(await flow.evaluate(el => el.scrollTop) > beforeKey);
+        await page.waitForTimeout(300);
+        await flow.evaluate(el => el.scrollTop = 100);
+        await page.waitForTimeout(100);
+        const bounds = await flow.boundingBox();
+        if (phone) {
+          const x = bounds.x + bounds.width / 2, y = bounds.y + bounds.height - 70;
+          await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
+          for (let n = 1; n <= 5; n++) await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y: y - n * 35 }] });
+          await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+        } else {
+          const size = await flow.evaluate(el => ({ h: el.clientHeight, total: el.scrollHeight, gutter: el.offsetWidth - el.clientWidth }));
+          const thumb = size.h * size.h / size.total;
+          const x = bounds.x + bounds.width - size.gutter / 2;
+          const y = bounds.y + 100 / (size.total - size.h) * (size.h - thumb) + thumb / 2;
+          await page.mouse.move(x, y); await page.waitForTimeout(100); await page.mouse.down();
+          await page.mouse.move(x, y + 100, { steps: 10 }); await page.mouse.up();
+        }
+        await page.waitForTimeout(300);
+        assert.ok(await flow.evaluate(el => el.scrollTop) > 100, phone ? 'touch scrolls the reader' : 'native scrollbar can be dragged');
+        const geometry = await page.evaluate(() => {
+          const flow = document.querySelector('.chat-flow'), main = document.querySelector('.chat-main');
+          return { edge: Math.abs(flow.getBoundingClientRect().right - main.getBoundingClientRect().right),
+            width: getComputedStyle(flow).scrollbarWidth,
+            outer: document.querySelector('.scroller:has(.chat-home)').scrollHeight - document.querySelector('.scroller:has(.chat-home)').clientHeight };
+        });
+        assert.ok(geometry.edge < 2); assert.equal(geometry.width, 'thin'); assert.ok(geometry.outer <= 1, 'no outer vertical scroll');
         assert.deepEqual(errors, []);
       } finally { await context.close(); }
     }
@@ -359,5 +433,99 @@ for (const state of ['answered', 'starting']) test(`a dispatch start conflict ${
     assert.equal(posts, 1, 'recovering a conflict never repeats POST start');
     assert.ok(started.threadId);
     assert.equal((await json(daemon, '/api/personal/proactive')).runs.find(item => item.id === run.id).threadId, started.threadId);
+  } finally { await browser.close(); await daemon.stop(); }
+});
+
+test('assistant preview keeps its origin while loading, failing, retrying and switching targets', async () => {
+  const daemon = await startDaemon();
+  const browser = await launchBrowser();
+  try {
+    const first = await json(daemon, '/api/threads', 'POST', { agent: 'pi', cwd: daemon.workdir, title: '预览一' });
+    const second = await json(daemon, '/api/threads', 'POST', { agent: 'pi', cwd: daemon.workdir, title: '预览二' });
+    for (const thread of [first, second]) {
+      await json(daemon, `/api/threads/${thread.id}/turns`, 'POST', { text: thread.title });
+      await waitFor(async () => (await json(daemon, `/api/threads/${thread.id}`)).status === 'idle', 'preview target idle');
+    }
+    await configurePersonal(daemon, `router-fixture-markdown ${JSON.stringify(`[预览一](thread://${first.id})\n\n[预览二](thread://${second.id})`)}`);
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    await openUi(page, daemon);
+    await page.evaluate(() => { location.hash = '#/desk'; });
+    let release;
+    await page.route(`**/api/threads/${first.id}`, async route => {
+      if (route.request().method() !== 'GET') return route.continue();
+      await new Promise(resolve => { release = resolve; });
+      await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'preview temporarily unavailable' }) });
+    });
+    const firstLink = page.locator('.chat-flow a.thread-link', { hasText: '预览一' });
+    await firstLink.click();
+    const panel = page.locator('.chat-home > .agent-panel');
+    await panel.locator('.loading-note').waitFor();
+    await waitFor(() => release, 'held request');
+    // A different link reuses the same panel; a late first response must not replace it.
+    await page.locator('.chat-flow a.thread-link', { hasText: '预览二' }).click();
+    await panel.locator('.row.user', { hasText: '预览二' }).waitFor();
+    release();
+    await page.waitForTimeout(100);
+    assert.equal(await panel.locator('.agent-panel-heading strong').textContent(), '预览二');
+    await panel.getByRole('button', { name: '返回助手', exact: true }).click();
+    await firstLink.click();
+    await panel.locator('.loading-note').waitFor();
+    await page.waitForTimeout(100); release();
+    await panel.getByRole('alert').waitFor();
+    assert.match(await panel.getByRole('alert').textContent(), /preview temporarily unavailable/);
+    assert.equal(await panel.locator('.loading-note').count(), 0);
+    await page.unroute(`**/api/threads/${first.id}`);
+    await panel.getByRole('button', { name: '重试', exact: true }).click();
+    await panel.locator('.row.user', { hasText: '预览一' }).waitFor();
+    // Sending from this reader goes to the target, and does not replace the assistant page.
+    await panel.locator('textarea').fill('侧栏继续核对');
+    await panel.getByRole('button', { name: '发送', exact: true }).click();
+    try { await panel.locator('.row.assistant', { hasText: '侧栏继续核对' }).waitFor({ timeout: 10000 }); } catch (error) { throw new Error(`${error.message}\n${await panel.innerText()}`); }
+    assert.equal(await page.locator('.chat-flow a.thread-link').count(), 2);
+    await panel.getByRole('button', { name: '返回助手', exact: true }).click();
+    assert.equal(await firstLink.evaluate(el => document.activeElement === el), true);
+  } finally { await browser.close(); await daemon.stop(); }
+});
+
+test('the shared preview frame keeps the original subagent reader working', async () => {
+  const daemon = await startDaemon();
+  const browser = await launchBrowser();
+  try {
+    const root = await json(daemon, '/api/threads', 'POST', { agent: 'pi', cwd: daemon.workdir, title: '侧栏框架回归' });
+    await json(daemon, `/api/threads/${root.id}/coordination`, 'POST', {});
+    const directive = Buffer.from(JSON.stringify({ args: ['spawn', '--agent', 'pi', '--name', 'worker', '--message-file', '-', '--request-id', 'panel-regression'], text: '成员正文' })).toString('base64');
+    await json(daemon, `/api/threads/${root.id}/turns`, 'POST', { text: `CALLI_COMMAND:${directive}` });
+    const member = await waitFor(async () => (await json(daemon, `/api/threads/${root.id}/coordination`)).members[0], 'member created');
+    await waitFor(async () => (await json(daemon, `/api/threads/${member.id}`)).status === 'idle', 'member reply');
+    for (const phone of [false, true]) {
+      const context = await browser.newContext({ viewport: phone ? { width: 390, height: 844 } : { width: 1440, height: 900 }, isMobile: phone, hasTouch: phone });
+      try {
+        const page = await context.newPage(); page.setDefaultTimeout(10000);
+        await openUi(page, daemon);
+        if (phone) await page.locator('.menu-btn').click();
+        await page.locator('.thread-row', { hasText: root.title }).click();
+        await openCollaboration(page);
+        await page.getByRole('button', { name: '协作设置', exact: true }).click();
+        await page.getByRole('button', { name: '查看智能体', exact: true }).click();
+        await page.locator('.agent-member', { hasText: 'worker' }).click();
+        const panel = page.locator('.agent-panel.detail');
+        await panel.locator('.agent-panel-heading strong', { hasText: 'worker' }).waitFor();
+        await panel.locator('.row.assistant', { hasText: '成员正文' }).waitFor();
+        if (!phone) {
+          const before = await panel.boundingBox(), handle = panel.locator('.agent-panel-resize');
+          const edge = await handle.boundingBox();
+          await page.mouse.move(edge.x + 3, edge.y + 100); await page.mouse.down();
+          await page.mouse.move(edge.x - 60, edge.y + 100); await page.mouse.up();
+          assert.ok((await panel.boundingBox()).width > before.width);
+          await handle.dblclick();
+        }
+        await panel.locator('textarea').fill(`核对侧栏 ${phone}`);
+        await panel.getByRole('button', { name: '发送', exact: true }).click();
+        await panel.locator('.row.assistant', { hasText: `核对侧栏 ${phone}` }).waitFor();
+        await page.keyboard.press('Escape');
+        await panel.waitFor({ state: 'detached' });
+        await page.locator('.topbar-title', { hasText: root.title }).waitFor();
+      } finally { await context.close(); }
+    }
   } finally { await browser.close(); await daemon.stop(); }
 });

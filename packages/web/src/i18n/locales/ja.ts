@@ -2723,6 +2723,7 @@ export const ja: Messages = {
   "extensions.assistant.cancelled": "送信をキャンセルしました",
   "threadPeek.needsAction": "対応が必要です · 全画面で開く",
   "app.machineNotFound": "マシンが見つかりません",
+  "threadPeek.back": "アシスタントに戻る",
   "threadPeek.open": "全画面で開く",
   "extensions.perm.assistant.ask": "個人アシスタントに相談",
   "extensions.perm.assistant.ask.hint": "クリックすると、選択したスレッドの要約をあなたのメッセージとして個人アシスタントに送ります。",

@@ -2725,6 +2725,7 @@ export const zh = {
   "extensions.assistant.cancelled": "已取消交给助手",
   "threadPeek.needsAction": "有待处理事项 · 打开完整页面",
   "app.machineNotFound": "找不到这台机器",
+  "threadPeek.back": "返回助手",
   "threadPeek.open": "打开完整页面",
   "extensions.perm.assistant.ask": "交给个人助手分析",
   "extensions.perm.assistant.ask.hint": "经你点击后，将所选线程的摘要作为你的消息发送给个人助手。",

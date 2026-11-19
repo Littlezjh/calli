@@ -220,7 +220,7 @@ function inChinese(browser) {
 }
 
 /** Finds a Chromium the installed playwright-core can drive: the cache, then a system browser. */
-export function launchBrowser() {
+export function launchBrowser({ showScrollbars = false } = {}) {
   const home = process.env.HOME ?? '';
   const candidates = [
     `${home}/.cache/ms-playwright/chromium-1243/chrome-linux64/chrome`,
@@ -231,7 +231,7 @@ export function launchBrowser() {
   ];
   return (async () => {
     try {
-      return inChinese(await chromium.launch({ headless: true, args: ['--no-sandbox'] }));
+      return inChinese(await chromium.launch({ headless: true, ignoreDefaultArgs: showScrollbars ? ['--hide-scrollbars'] : undefined, args: ['--no-sandbox'] }));
     } catch {
       // fall through to an explicit executable
     }
@@ -239,7 +239,7 @@ export function launchBrowser() {
     for (const executablePath of candidates) {
       if (!existsSync(executablePath)) continue;
       try {
-        return inChinese(await chromium.launch({ headless: true, args: ['--no-sandbox'], executablePath }));
+        return inChinese(await chromium.launch({ headless: true, ignoreDefaultArgs: showScrollbars ? ['--hide-scrollbars'] : undefined, args: ['--no-sandbox'], executablePath }));
       } catch (err) {
         lastErr = err;
       }

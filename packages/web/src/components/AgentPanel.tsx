@@ -1,6 +1,6 @@
 import { historyPage, mergeHistory, prependHistory, watchHistory } from '../history';
 import { waitingLabel } from '../notices';
-import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { AgentInfo, Api, Coordination, Thread } from '../api';
 import { buildTalks } from '../coordination';
 import { buildTimeline, clockLabel, deliveredPreview, type StoredEvent } from '../timeline';
@@ -11,13 +11,7 @@ import { AgentMark, IconAgents, IconChevron, IconClose, IconExternal, IconFile, 
 import { downloadBlob } from '../images';
 import { sizeLabel } from '../files';
 import { t } from '../i18n';
-
-/** The width the user dragged the panel to, on a wide screen. Unset, the panel keeps its own. */
-const WIDTH_KEY = 'calli.agents.width';
-const MIN_WIDTH = 320;
-/** What the conversation beside the panel is always left with. */
-const MIN_MAIN = 380;
-const clampWidth = (w: number) => Math.max(MIN_WIDTH, Math.min(w, window.innerWidth - MIN_MAIN));
+import { AgentPanelFrame } from './AgentPanelFrame';
 
 const labels: Record<string, string> = { queued: t('team.queued'), running: t('status.running'), returned: t('team.returned'), failed: t('team.failed'), stopped: t('team.stopped'), interrupted: t('team.interrupted') };
 export function memberStatus(m: Coordination['members'][number]): string {
@@ -76,28 +70,7 @@ export function AgentPanel({ api, memberApi, team, agents, leadAgent, memberMode
   onAdjust: (name: string, draft: string) => void; onRefresh: () => void; onError: (err: unknown) => void;
 }) {
   const [memberId, setMemberId] = useState<string | null>(start ?? null);
-  const [width, setWidth] = useState<number | null>(() => { const saved = Number(localStorage.getItem(WIDTH_KEY)); return saved > 0 ? clampWidth(saved) : null; });
   const panel = useRef<HTMLElement>(null);
-  const startResize = (e: ReactPointerEvent) => {
-    e.preventDefault();
-    const startX = e.clientX;
-    const startW = panel.current?.getBoundingClientRect().width ?? MIN_WIDTH;
-    const at = (ev: PointerEvent) => clampWidth(startW + startX - ev.clientX);
-    const move = (ev: PointerEvent) => setWidth(at(ev));
-    const up = (ev: PointerEvent) => {
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', up);
-      localStorage.setItem(WIDTH_KEY, String(at(ev)));
-    };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
-  };
-  // A window made narrower must not leave the panel wider than the room there is.
-  useEffect(() => {
-    const fit = () => setWidth((w) => (w === null ? w : clampWidth(w)));
-    window.addEventListener('resize', fit);
-    return () => window.removeEventListener('resize', fit);
-  }, []);
   const [tab, setTab] = useState<'members' | 'talk'>('members');
   // Answers are folded under their message; the newest conversation starts open.
   const [opened, setOpened] = useState<Record<string, boolean>>({});
@@ -181,8 +154,7 @@ export function AgentPanel({ api, memberApi, team, agents, leadAgent, memberMode
       requestAnimationFrame(() => { if (el) el.scrollTop += el.scrollHeight - height; });
     } catch (err) { if (olderRequest.current === request) onError(err); } finally { if (olderRequest.current === request) { olderRequest.current = null; setLoadingOlder(false); } }
   };
-  return <aside ref={panel} className={`agent-panel${memberId ? ' detail' : ''}`} role="region" aria-label={t('team.panel')} style={width === null ? undefined : { ['--agent-panel-width' as string]: `${width}px` }}>
-    <div className="agent-panel-resize" onPointerDown={startResize} onDoubleClick={() => { setWidth(null); localStorage.removeItem(WIDTH_KEY); }} role="separator" aria-orientation="vertical" aria-label={t('common.resize')} title={t('team.resizeHint')} />
+  return <AgentPanelFrame panelRef={panel} detail={Boolean(memberId)} label={t('team.panel')}>
     <header className="agent-panel-head">
       {memberId && <button className="icon-btn" aria-label={t('team.back')} onClick={() => setMemberId(null)}><span className="coord-back"><IconChevron /></span></button>}
       {/* A member: how it stands first, then its agent and the folder it works in (the whole path on hover). */}
@@ -254,5 +226,5 @@ export function AgentPanel({ api, memberApi, team, agents, leadAgent, memberMode
     </div> : <footer className="agent-panel-footer">
       <button title={team.paused ? t('team.resumeHint') : t('team.stopHint')} onClick={() => { api.configureCoordination(team.rootId, { action: team.paused ? 'resume' : 'stop' }).then(onRefresh).catch(onError); }}>{team.paused ? t('team.resume') : t('team.stopAll')}</button>
     </footer>}
-  </aside>;
+  </AgentPanelFrame>;
 }

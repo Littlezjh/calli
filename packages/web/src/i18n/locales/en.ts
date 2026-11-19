@@ -2727,6 +2727,7 @@ export const en: Messages = {
   "extensions.assistant.cancelled": "Assistant request cancelled",
   "threadPeek.needsAction": "Action needed · Open full page",
   "app.machineNotFound": "Machine not found",
+  "threadPeek.back": "Back to assistant",
   "threadPeek.open": "Open full page",
   "extensions.perm.assistant.ask": "Ask your personal assistant",
   "extensions.perm.assistant.ask.hint": "When you click, send the selected thread summaries to your personal assistant as your message.",
