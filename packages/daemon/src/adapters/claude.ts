@@ -16,7 +16,7 @@ import { CLAUDE_ICON } from './icons.js';
 import { titlePlan } from './plans.js';
 import type { JsonRpcPeer } from './jsonrpc.js';
 import { installJsonMcpServer, jsonMcpServers, removeJsonMcpServer } from '../mcp-format.js';
-import { claudeForkPoints } from './claude-history.js';
+import { claudeForkPoints, writeClaudeTitle } from './claude-history.js';
 import { configDirectory, findSessionFile, quoteArg } from './session-location.js';
 import { claudeSystemPromptLine, scanJsonl } from './system-prompt.js';
 import type { DiscoveredAccount, ForkPoint, McpServerInfo, ModelOption, PermissionMode, PlanQuota, QuotaWindow, SkillDir, SlashCommand, StartOptions, SystemPrompt } from './types.js';
@@ -381,6 +381,13 @@ export class ClaudeAcpAdapter extends AcpAdapter {
     const raw = await readFile(sessionPath, 'utf8');
     const points = claudeForkPoints(raw);
     return points.length === 0 && raw.trim() !== '' ? null : points;
+  }
+
+  async renameSessions(entries: Array<{ agentSessionId: string; cwd: string; title: string }>): Promise<void> {
+    for (const { agentSessionId, cwd, title } of entries) {
+      const { sessionPath } = await this.sessionLocation(agentSessionId, cwd);
+      if (sessionPath) await writeClaudeTitle(sessionPath, agentSessionId, title).catch(() => undefined);
+    }
   }
 
   /**

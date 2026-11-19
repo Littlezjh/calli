@@ -607,8 +607,13 @@ rl.on('line', (line) => {
       return;
     }
     case 'thread/name/set': {
-      const path = rolloutPath();
-      if (path) appendFileSync(path, JSON.stringify({ timestamp: new Date().toISOString(), type: 'session_name', payload: { id: msg.params?.threadId ?? threadId, name: msg.params?.name ?? '' } }) + '\n');
+      const path = (msg.params?.threadId ?? threadId) === threadId ? rolloutPath() : null;
+      if (path && existsSync(path)) appendFileSync(path, JSON.stringify({ timestamp: new Date().toISOString(), type: 'session_name', payload: { id: msg.params?.threadId ?? threadId, name: msg.params?.name ?? '' } }) + '\n');
+      // The real server names any thread, loaded or not, in this index.
+      if (process.env.CODEX_HOME) {
+        mkdirSync(process.env.CODEX_HOME, { recursive: true });
+        appendFileSync(join(process.env.CODEX_HOME, 'session_index.jsonl'), JSON.stringify({ id: msg.params?.threadId, thread_name: msg.params?.name ?? '', updated_at: new Date().toISOString() }) + '\n');
+      }
       return out({ jsonrpc: '2.0', id: msg.id, result: {} });
     }
     case 'thread/start':
