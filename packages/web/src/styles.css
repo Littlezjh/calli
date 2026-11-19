@@ -10736,11 +10736,10 @@ div.file-card:hover { background: var(--surface); }
 /* Collaboration: one list and a readable transcript alongside the main conversation. */
 /* The add menu keeps the active collaboration state visible without another toolbar button. */
 .composer-add.on { color: var(--text); }
-/* Once on: one small line above the composer says how many agents there are and opens them. */
-.coord-bar { display: flex; min-width: 0; padding: 0 6px 8px; }
-.coord-status { display: inline-flex; align-items: center; gap: 7px; min-width: 0; max-width: 100%; min-height: 32px; padding: 5px 11px; border: 1px solid var(--border); border-radius: var(--radius-pill); background: var(--surface); color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; }
+/* Keep the member count and urgent state in the header, outside the floating composer. */
+.coord-status { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; min-height: 32px; padding: 0 8px; border: 0; border-radius: var(--radius-pill); background: transparent; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; }
 .coord-status > svg { flex-shrink: 0; }
-.coord-status-names { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+.coord-status-count { white-space: nowrap; font-variant-numeric: tabular-nums; }
 .coord-status-note { flex-shrink: 0; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .coord-status.attention .coord-status-note { color: var(--warn); }
 .coord-status:hover, .coord-status[aria-pressed='true'] { background: var(--hover); color: var(--text); }
@@ -10751,7 +10750,7 @@ div.file-card:hover { background: var(--surface); }
 .sent-collaborator-heading > span { min-width: 0; overflow-wrap: anywhere; }
 .sent-collaborator-heading .icon-btn { flex-shrink: 0; width: 24px; height: 24px; margin-left: auto; }
 .sent-collaborator p { margin: 5px 0 0; font-size: 13px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
-@media (max-width: 640px) { .coord-status { min-height: 36px; } }
+@media (max-width: 899.98px) { .coord-status { min-height: 42px; gap: 4px; padding: 0 6px; font-size: 11px; } }
 /* The team in the top bar: one more icon, with how many as a badge; orange when one needs you. */
 .topbar-agents { position: relative; }
 .topbar-agents.on { background: var(--active); color: var(--text); }
