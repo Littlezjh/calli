@@ -10378,6 +10378,11 @@ div.file-card:hover { background: var(--surface); }
 .team-member-text { flex: 1; }
 /* A card with both a handover chain and a team: which fold is which, as the overview marks them. */
 .handover-toggle-kind { display: inline-flex; color: var(--muted); }
+/* Chain and team in one row: two compact toggles side by side, one chevron at the end for the row. */
+.handover-toggles { display: flex; align-items: center; gap: 2px; min-width: 0; }
+.handover-toggle.inline { width: auto; flex: none; padding: 0 8px 0 10px; }
+.handover-toggle.inline[aria-expanded="true"] { background: var(--hover); color: var(--text); }
+.handover-toggles-chevron { margin-left: auto; padding-right: 12px; display: inline-flex; color: var(--faint); }
 .team-note { color: var(--positive); }
 .handover-member-time { flex: none; margin-left: auto; padding-left: 6px; font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .handover-chain { width: min(420px, calc(100vw - 32px)); }

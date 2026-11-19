@@ -66,11 +66,19 @@ try {
     if (phone) { await page.locator('.menu-btn').click(); await page.locator('.drawer-open').waitFor(); }
     const card = page.locator('.handover-group').first();
     await card.waitFor();
-    // Both folds open: the chain's segments, then the team.
-    for (const toggle of await card.locator('.handover-toggle').all()) if (await toggle.getAttribute('aria-expanded') !== 'true') await toggle.click();
-    await page.waitForTimeout(500);
-    console.log(name, 'chain rows', await card.locator('.handover-chain .handover-member').count(), 'team rows', await card.locator(':scope > .handover-members:not(.handover-chain) .handover-member').count());
-    await page.screenshot({ path: join(out, `sidebar-${name}.png`), animations: 'disabled' });
+    // Chain and team share one row; each side opens its own list, one at a time.
+    const [chainToggle, teamToggle] = await card.locator('.handover-toggles .handover-toggle').all();
+    const count = async () => [await card.locator('.handover-chain .handover-member').count(), await card.locator(':scope > .handover-members:not(.handover-chain) .handover-member').count()];
+    if (await teamToggle.getAttribute('aria-expanded') === 'true') await teamToggle.click();
+    await page.waitForTimeout(300);
+    console.log(name, 'closed', await count());
+    await page.screenshot({ path: join(out, `sidebar-closed-${name}.png`), animations: 'disabled' });
+    await chainToggle.click(); await page.waitForTimeout(300);
+    console.log(name, 'chain', await count());
+    await page.screenshot({ path: join(out, `sidebar-chain-${name}.png`), animations: 'disabled' });
+    await teamToggle.click(); await page.waitForTimeout(300);
+    console.log(name, 'team', await count());
+    await page.screenshot({ path: join(out, `sidebar-team-${name}.png`), animations: 'disabled' });
     await page.close();
   }
   console.log('shots in', out);

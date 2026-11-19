@@ -383,46 +383,44 @@ export function Sidebar({
 
   const teamOf = (thread: Thread) => members?.get(thread.id);
   const teamOpenFor = (thread: Thread, team: Thread[]) => Boolean(search.trim()) || (teamOpen.get(thread.id) ?? team.some((m) => busy(m) > 0 || m.id === selectedId));
-  /** A lead's team: a toggle with who is on it, then one line per member saying what it is doing. */
-  const teamPart = (thread: Thread, team: Thread[], kind = false) => {
+  /** A lead's team: a toggle with who is on it (`inline` for the chain card's shared row), then one line per member. */
+  const teamToggle = (thread: Thread, team: Thread[], inline = false, onOpen?: () => void) => {
     const sorted = [...team].sort(teamOrder);
     const open = teamOpenFor(thread, team);
     const working = sorted.filter((m) => m.status === 'running').length;
     const waiting = sorted.filter((m) => m.waiting).length;
     const stack = stackLine(sorted);
-    return <>
-      <button className="handover-toggle" aria-expanded={open} onClick={() => setTeamOpen((old) => new Map(old).set(thread.id, !open))}
-        aria-label={[t('sidebar.agents', sorted.length), waiting ? t('sidebar.waitingCount', waiting) : working ? t('team.running', working) : null, open ? t('sidebar.collapseTeam', thread.title) : t('sidebar.expandTeam', thread.title)].filter(Boolean).join(' · ')}>
-        {kind && <span className="handover-toggle-kind"><IconAgents size={13} /></span>}
-        {stack ? <>
-          {runDot(sorted)}
-          {stack}
-        </> : <>
-          <span>{t('sidebar.agents', sorted.length)}</span>
-          {(waiting || working) > 0 && <span className="team-note">{waiting ? t('sidebar.waitingCount', waiting) : t('team.running', working)}</span>}
-        </>}
-        <IconChevron size={13} open={open} />
-      </button>
-      {open && <div className="handover-members">{sorted.map((m) => {
-        const agent = agentById.get(m.agent);
-        const mark = threadMark(m, m.id === selectedId);
-        return <button
-          key={m.id}
-          className={`handover-member${m.id === selectedId ? ' active' : ''}`}
-          aria-current={m.id === selectedId ? 'true' : undefined}
-          title={m.title}
-          onClick={() => onSelect(m.id)}
-          onContextMenu={(e) => { e.preventDefault(); onThreadMenu(m, e.clientX, e.clientY); }}
-          {...longPress(m)}
-        >
-          <span className={`dot ${mark ?? 'idle'}`} role="img" aria-label={mark === 'waiting' ? waitingLabel(m) : mark ? MARK_LABELS[mark] : t('status.idle')} />
-          {agent?.icon ? <span className="agent-mark" role="img" aria-label={agent.label}><AgentMark path={agent.icon} size={compact ? 14 : 13} /></span> : null}
-          <span className="handover-member-name team-member-text">{deliveredPreview(m.coordination?.doing ?? '') || m.title}</span>
-          <time className="handover-member-time" dateTime={m.updatedAt}>{timeAgo(m.updatedAt, now)}</time>
-        </button>;
-      })}</div>}
-    </>;
+    return <button className={`handover-toggle${inline ? ' inline' : ''}`} aria-expanded={open} onClick={() => { if (!open) onOpen?.(); setTeamOpen((old) => new Map(old).set(thread.id, !open)); }}
+      aria-label={[t('sidebar.agents', sorted.length), waiting ? t('sidebar.waitingCount', waiting) : working ? t('team.running', working) : null, open ? t('sidebar.collapseTeam', thread.title) : t('sidebar.expandTeam', thread.title)].filter(Boolean).join(' · ')}>
+      {inline && <span className="handover-toggle-kind"><IconAgents size={13} /></span>}
+      {stack ? <>
+        {runDot(sorted)}
+        {stack}
+      </> : <>
+        <span>{t('sidebar.agents', sorted.length)}</span>
+        {(waiting || working) > 0 && <span className="team-note">{waiting ? t('sidebar.waitingCount', waiting) : t('team.running', working)}</span>}
+      </>}
+      {!inline && <IconChevron size={13} open={open} />}
+    </button>;
   };
+  const teamList = (thread: Thread, team: Thread[]) => teamOpenFor(thread, team) && <div className="handover-members">{[...team].sort(teamOrder).map((m) => {
+    const agent = agentById.get(m.agent);
+    const mark = threadMark(m, m.id === selectedId);
+    return <button
+      key={m.id}
+      className={`handover-member${m.id === selectedId ? ' active' : ''}`}
+      aria-current={m.id === selectedId ? 'true' : undefined}
+      title={m.title}
+      onClick={() => onSelect(m.id)}
+      onContextMenu={(e) => { e.preventDefault(); onThreadMenu(m, e.clientX, e.clientY); }}
+      {...longPress(m)}
+    >
+      <span className={`dot ${mark ?? 'idle'}`} role="img" aria-label={mark === 'waiting' ? waitingLabel(m) : mark ? MARK_LABELS[mark] : t('status.idle')} />
+      {agent?.icon ? <span className="agent-mark" role="img" aria-label={agent.label}><AgentMark path={agent.icon} size={compact ? 14 : 13} /></span> : null}
+      <span className="handover-member-name team-member-text">{deliveredPreview(m.coordination?.doing ?? '') || m.title}</span>
+      <time className="handover-member-time" dateTime={m.updatedAt}>{timeAgo(m.updatedAt, now)}</time>
+    </button>;
+  })}</div>;
   // Like Orca's agents under a task: the lead's row, then one line per member saying what it is doing.
   const entry = (thread: Thread, on?: Elsewhere) => {
     if (thread.external) return externalRow(thread);
@@ -431,7 +429,8 @@ export function Sidebar({
     const current = thread.id === selectedId || team.some((m) => m.id === selectedId);
     return <div key={thread.id} className={`handover-group team-group${teamOpenFor(thread, team) ? ' open' : ''}${current ? ' selected' : ''}`}>
       {row(thread, thread.title, thread.preview, undefined, on)}
-      {teamPart(thread, team)}
+      {teamToggle(thread, team)}
+      {teamList(thread, team)}
     </div>;
   };
 
@@ -449,19 +448,33 @@ export function Sidebar({
     // Like Orca's agents under a task: one card, the latest conversation on top, the chain folded below it.
     return <div key={key} className={`handover-group${expanded ? ' open' : ''}${current ? ' selected' : ''}`}>
       {row(latest, latest.title.replace(/(?:（接手）)+$/, ''), latest.preview, members)}
-      <button className="handover-toggle" aria-expanded={expanded} onClick={() => setExpandedHandovers((old) => {
-        const next = new Set(old);
-        if (next.has(storageKey)) next.delete(storageKey); else next.add(storageKey);
-        return next;
-      })}
-        aria-label={[t('sidebar.sessions', members.length), expanded ? t('sidebar.collapseHandover', latest.title) : t('sidebar.expandHandover', latest.title)].join(' · ')}>
-        {team && <span className="handover-toggle-kind"><IconHandover size={13} /></span>}
-        {chainStack ? <>
-          {chainDot && <span className={`dot ${chainDot}`} role="img" aria-label={t('sidebar.otherHandover', MARK_LABELS[chainDot])} title={t('sidebar.otherHandover', MARK_LABELS[chainDot])} />}
-          {chainStack}
-        </> : <span>{t('sidebar.sessions', members.length)}</span>}
-        <IconChevron size={13} open={expanded} />
-      </button>
+      {(() => {
+        const toggleChain = () => {
+          if (!expanded && lead && team) setTeamOpen((old) => new Map(old).set(lead.id, false));
+          setExpandedHandovers((old) => {
+            const next = new Set(old);
+            if (next.has(storageKey)) next.delete(storageKey); else next.add(storageKey);
+            return next;
+          });
+        };
+        const chainButton = <button className={`handover-toggle${team ? ' inline' : ''}`} aria-expanded={expanded} onClick={toggleChain}
+          aria-label={[t('sidebar.sessions', members.length), expanded ? t('sidebar.collapseHandover', latest.title) : t('sidebar.expandHandover', latest.title)].join(' · ')}>
+          {team && <span className="handover-toggle-kind"><IconHandover size={13} /></span>}
+          {chainStack ? <>
+            {chainDot && <span className={`dot ${chainDot}`} role="img" aria-label={t('sidebar.otherHandover', MARK_LABELS[chainDot])} title={t('sidebar.otherHandover', MARK_LABELS[chainDot])} />}
+            {chainStack}
+          </> : <span>{t('sidebar.sessions', members.length)}</span>}
+          {!team && <IconChevron size={13} open={expanded} />}
+        </button>;
+        if (!lead || !team) return chainButton;
+        // Chain and team share one row: each side opens its own list, one at a time.
+        const closeChain = () => setExpandedHandovers((old) => { const next = new Set(old); next.delete(storageKey); return next; });
+        return <div className="handover-toggles">
+          {chainButton}
+          {teamToggle(lead, team, true, closeChain)}
+          <span className="handover-toggles-chevron" aria-hidden="true"><IconChevron size={13} open={expanded || teamOpenFor(lead, team)} /></span>
+        </div>;
+      })()}
       {expanded && <div className="handover-members handover-chain">{members.map((thread) => {
         const agent = agentById.get(thread.agent);
         const mark = threadMark(thread, thread.id === selectedId);
@@ -482,7 +495,7 @@ export function Sidebar({
           <time className="handover-member-time" dateTime={thread.updatedAt}>{timeAgo(thread.updatedAt, now)}</time>
         </button>;
       })}</div>}
-      {lead && team ? teamPart(lead, team, true) : null}
+      {lead && team ? teamList(lead, team) : null}
     </div>;
   });
 
