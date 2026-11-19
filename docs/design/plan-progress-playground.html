@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light" data-device="desktop" data-state="running">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>计划进度段 · Playground</title>
+<style>
+/* Colours copied from packages/web/src/styles.css (paper palette, light and dark). */
+:root {
+  --bg: #f8f6f1; --sidebar: #f1efe9; --surface: #ffffff; --surface-2: #fbfaf7;
+  --text: #1f1e1c; --muted: #827f77; --faint: #a9a69e;
+  --border: #e5e2da; --border-strong: #d6d2c8;
+  --hover: rgba(31, 30, 28, 0.045); --active: rgba(31, 30, 28, 0.08);
+  --shadow-card: 0 1px 2px rgba(31, 30, 28, 0.04), 0 6px 20px rgba(31, 30, 28, 0.05);
+  --radius-sm: 8px; --radius: 12px; --radius-lg: 18px; --radius-pill: 999px;
+  --font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Helvetica Neue', 'Noto Sans CJK SC', sans-serif;
+}
+[data-theme='dark'] {
+  --bg: #1b1a18; --sidebar: #161514; --surface: #252422; --surface-2: #201f1d;
+  --text: #ecebe7; --muted: #9a978f; --faint: #6f6c65;
+  --border: #32302c; --border-strong: #423f3a;
+  --hover: rgba(236, 235, 231, 0.06); --active: rgba(236, 235, 231, 0.1);
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 6px 20px rgba(0, 0, 0, 0.25);
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--font); -webkit-font-smoothing: antialiased; }
+button { font: inherit; color: inherit; cursor: pointer; }
+.num { font-variant-numeric: tabular-nums; }
+
+/* ---------------- Playground controls ---------------- */
+.controls { max-width: 1440px; margin: 0 auto; padding: 14px 18px 2px; display: grid; gap: 9px; }
+.title-row { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.controls h1 { margin: 0; font-size: 15px; font-weight: 650; letter-spacing: -0.01em; }
+.sub { color: var(--faint); font-size: 11.5px; }
+.row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.lab { color: var(--faint); font-size: 11px; letter-spacing: 0.04em; white-space: nowrap; }
+.seg { display: inline-flex; padding: 2px; border: 1px solid var(--border); border-radius: var(--radius-pill); background: var(--surface); }
+.seg button { border: 0; background: none; padding: 5px 10px; border-radius: var(--radius-pill); font-size: 12px; color: var(--muted); white-space: nowrap; }
+.seg button[aria-pressed='true'] { background: var(--text); color: var(--bg); }
+.notes { margin-top: 2px; color: var(--muted); font-size: 11.5px; line-height: 1.65; }
+.notes summary { cursor: pointer; color: var(--faint); }
+.notes ul { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 2px; }
+
+/* ---------------- Columns ---------------- */
+.stage { display: grid; grid-template-columns: repeat(4, minmax(280px, 1fr)); gap: 16px; max-width: 1440px; margin: 0 auto; padding: 12px 18px 40px; align-items: start; }
+[data-device='phone'] .stage { grid-template-columns: minmax(0, 420px); justify-content: center; }
+.col-head { display: grid; gap: 3px; margin-bottom: 10px; }
+.col-head h2 { margin: 0; font-size: 13px; font-weight: 650; }
+.col-head p { margin: 0; color: var(--muted); font-size: 11.5px; line-height: 1.55; }
+.badge { justify-self: start; padding: 2px 8px; border-radius: var(--radius-pill); font-size: 10.5px; letter-spacing: 0.03em; }
+.badge.cur { background: var(--active); color: var(--muted); }
+.badge.fix { background: var(--active); color: var(--text); }
+
+/* The two contexts every variant must survive. */
+.ctx-chat { padding: 14px 14px 10px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg); margin-bottom: 14px; }
+.answer-text { margin: 0 0 10px; font-size: 13.5px; line-height: 1.6; }
+.ctx-label { color: var(--faint); font-size: 10.5px; letter-spacing: 0.05em; margin: 0 0 6px; }
+
+/* Overview card (交接链卡片), as in the screenshot. */
+.ov-card { border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-card); overflow: hidden; }
+.ov-row { display: flex; align-items: center; gap: 8px; min-height: 42px; padding: 0 14px; border-top: 1px solid var(--border); color: var(--muted); font-size: 12.5px; }
+.ov-row:first-child { border-top: 0; }
+.ov-row .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ov-num { color: var(--muted); font-size: 12px; }
+.ov-num .pos { color: #2f7d5b; }
+[data-theme='dark'] .ov-num .pos { color: #3f9a72; }
+.ov-num .neg { color: #b42318; }
+[data-theme='dark'] .ov-num .neg { color: #f97066; }
+.ov-link { border: 0; background: none; color: var(--muted); font-size: 12px; padding: 8px 14px; display: flex; align-items: center; gap: 4px; }
+.ov-link:hover { color: var(--text); }
+.ov-plan { padding: 2px 14px 4px; }
+
+/* ---------------- Shared plan-piece markup ---------------- */
+.plan-toggle { display: flex; align-items: center; gap: 6px; align-self: flex-start; max-width: 100%; min-height: 28px; width: 100%; padding: 0; border: 0; background: none; color: var(--muted); font-size: 14px; text-align: left; white-space: nowrap; }
+.plan-toggle > svg { flex: none; }
+.ring-track { stroke: var(--border-strong); }
+.ring-fill { stroke: currentColor; }
+.plan-count { flex: none; }
+.plan-current { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chev { transition: transform 0.15s; }
+.closed .plan-list { display: none; }
+.closed .chev { transform: rotate(-90deg); }
+.plan-list { margin: 0; padding: 0; list-style: none; }
+.plan-text { min-width: 0; overflow-wrap: anywhere; }
+/* The real PlanList only renders the check for a completed entry. */
+.plan-mark .ic-check { display: none; }
+.plan-entry.completed .plan-mark .ic-check { display: block; }
+.ic-check { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+
+/* ---------------- 对照：现状（串味后） ---------------- */
+/* What renders today: PlanView's bordered card rules clobber the quiet list. */
+.vCur .plan-list { margin: 4px 0 6px; padding: 0; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); overflow: hidden; }
+.vCur .plan-list li + li { border-top: 1px solid var(--border); }
+.vCur .plan-entry { display: flex; align-items: flex-start; gap: 8px; padding: 9px 12px; color: var(--muted); font-size: 13.5px; line-height: 1.45; }
+.vCur .plan-mark { display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; flex-shrink: 0; margin-top: 2px; border: 1.5px solid var(--border-strong); border-radius: 50%; }
+.vCur .plan-entry.completed .plan-mark { border-color: transparent; }
+.vCur .plan-entry.active { color: var(--text); font-weight: 600; }
+.vCur .plan-entry.active .plan-mark { border-color: currentColor; }
+.vCur .plan-entry.active .plan-mark::after { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.vCur .ov-plan { padding: 6px 14px 10px; }
+.vCur .ov-plan .plan-list { margin: 0; }
+
+/* ---------------- A：修回原设计（细线悬挂 + 圆记号） ---------------- */
+.vA .plan-list { display: flex; flex-direction: column; gap: 5px; margin: 4px 0 6px 6px; padding: 2px 0 2px 13px; border-left: 1px solid var(--border); }
+.vA .plan-entry { display: flex; align-items: flex-start; gap: 8px; color: var(--muted); font-size: 13.5px; line-height: 1.45; }
+.vA .plan-mark { display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; flex-shrink: 0; margin-top: 2px; border: 1.5px solid var(--border-strong); border-radius: 50%; }
+.vA .plan-entry.completed .plan-mark { border-color: transparent; }
+.vA .plan-entry.active { color: var(--text); }
+.vA .plan-entry.active .plan-mark { border-color: currentColor; }
+.vA .plan-entry.active .plan-mark::after { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.vA .ov-plan .plan-list { margin: 0; padding: 2px 0 2px 11px; gap: 3px; }
+.vA .ov-plan .plan-entry { min-height: 24px; font-size: 12.5px; }
+.vA .ov-plan .plan-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---------------- B：无记号（Codex 式纯文字） ---------------- */
+.vB .plan-list { display: flex; flex-direction: column; gap: 6px; margin: 6px 0 8px 22px; }
+.vB .plan-mark { display: none; }
+.vB .plan-entry { color: var(--muted); font-size: 13.5px; line-height: 1.45; }
+.vB .plan-entry.completed { color: var(--faint); text-decoration: line-through; text-decoration-color: var(--border-strong); }
+.vB .plan-entry.active { color: var(--text); font-weight: 600; }
+.vB .ov-plan .plan-list { margin: 2px 0 4px 0; gap: 3px; }
+.vB .ov-plan .plan-entry { min-height: 24px; font-size: 12.5px; }
+.vB .ov-plan .plan-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---------------- C：完成小勾（Claude Code 式） ---------------- */
+.vC .plan-list { display: flex; flex-direction: column; gap: 7px; margin: 6px 0 8px 22px; }
+.vC .plan-entry { display: flex; align-items: flex-start; gap: 8px; color: var(--muted); font-size: 13.5px; line-height: 1.45; }
+.vC .plan-mark { display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; flex-shrink: 0; margin-top: 2px; }
+.vC .plan-entry.completed { color: var(--faint); }
+.vC .plan-entry.completed .plan-mark { color: var(--muted); }
+.vC .plan-entry.active { color: var(--text); font-weight: 600; }
+.vC .plan-entry.pending .plan-mark { visibility: hidden; }
+.vC .ov-plan .plan-list { margin: 2px 0 4px 0; gap: 3px; }
+.vC .ov-plan .plan-entry { min-height: 24px; font-size: 12.5px; }
+.vC .ov-plan .plan-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+</style>
+</head>
+<body>
+
+<header class="controls">
+  <div class="title-row">
+    <h1>计划进度段 · Playground</h1>
+    <span class="sub">对话与交接链卡片里的「计划 0/3」展开列表 · 修串味 + 三个候选样子</span>
+  </div>
+  <div class="row">
+    <span class="lab">主题</span>
+    <div class="seg" id="seg-theme">
+      <button data-v="light" aria-pressed="true">亮</button>
+      <button data-v="dark">暗</button>
+    </div>
+    <span class="lab">进度</span>
+    <div class="seg" id="seg-state">
+      <button data-v="running" aria-pressed="true">进行中 0/3</button>
+      <button data-v="half">过半 1/3</button>
+    </div>
+    <span class="lab">宽度</span>
+    <div class="seg" id="seg-device">
+      <button data-v="desktop" aria-pressed="true">桌面</button>
+      <button data-v="phone">手机</button>
+    </div>
+  </div>
+  <details class="notes">
+    <summary>为什么丑、参考了谁、四个案是什么</summary>
+    <ul>
+      <li><b>串味（bug）</b>：助手「未来时段」面板（PlanView）复用了对话计划段的 <code>.plan-list</code>/<code>.plan-text</code> 类名，它靠后的「边框卡片」样式把原来安静的细线悬挂列表盖掉了——两处截图里的边框圆角卡片就是这么来的。这条先修掉，与选哪个案无关。</li>
+      <li><b>参考</b>：Codex 对话把工作过程折成安静灰字行、不用表单控件；Claude Code 网页版给完成步骤一个小勾。结论：计划列表不该长得像表单——现在的圆点像 radio、边框像输入卡片。</li>
+      <li><b>对照</b>＝现在串味后的样子；<b>A 修回原设计</b>＝细线悬挂 + 圆记号（进行中是圆点）；<b>B 无记号</b>＝纯文字，完成删除线、进行中加粗；<b>C 完成小勾</b>＝完成的给一个安静的小勾，进行中加粗。</li>
+      <li>每案都放在两个场景里：对话（无气泡回答下方）和交接链卡片。点「计划 0/3 …」那行可以收起，看收起后的样子。</li>
+    </ul>
+  </details>
+</header>
+
+<main class="stage" id="stage"></main>
+
+<template id="variant-tpl">
+  <div class="plan-demo">
+    <button class="plan-toggle" type="button" aria-expanded="true">
+      <svg class="ring" width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
+        <circle class="ring-track" cx="8" cy="8" r="6" fill="none" stroke-width="2.4"></circle>
+        <circle class="ring-fill" cx="8" cy="8" r="6" fill="none" stroke-width="2.4" pathLength="100" stroke-dasharray="0 100" transform="rotate(-90 8 8)" style="display:none"></circle>
+      </svg>
+      <span class="plan-count">计划 <span class="num frac">0/3</span></span>
+      <span class="plan-current">· <span class="cur-text">确认三个目录的 MR 差异、移出范围和忽略规则</span></span>
+      <svg class="chev" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 4 10 8 6 12"></polyline></svg>
+    </button>
+    <ol class="plan-list">
+      <li class="plan-entry active">
+        <span class="plan-mark" aria-hidden="true"><svg class="ic-check" viewBox="0 0 16 16"><polyline points="3.5 8.5 6.5 11.5 12.5 4.5"></polyline></svg></span>
+        <span class="plan-text">确认三个目录的 MR 差异、移出范围和忽略规则</span>
+      </li>
+      <li class="plan-entry pending">
+        <span class="plan-mark" aria-hidden="true"><svg class="ic-check" viewBox="0 0 16 16"><polyline points="3.5 8.5 6.5 11.5 12.5 4.5"></polyline></svg></span>
+        <span class="plan-text">将目录改动保留至独立分支并从 PPE 分支移除</span>
+      </li>
+      <li class="plan-entry pending">
+        <span class="plan-mark" aria-hidden="true"><svg class="ic-check" viewBox="0 0 16 16"><polyline points="3.5 8.5 6.5 11.5 12.5 4.5"></polyline></svg></span>
+        <span class="plan-text">更新分支说明文档和 .bytedev，验证并推送</span>
+      </li>
+    </ol>
+  </div>
+</template>
+
+<script>
+const VARIANTS = [
+  { cls: 'vCur', badge: '对照 · 现状', badgeClass: 'cur', title: '串味后的现状',
+    desc: 'PlanView 的边框卡片规则盖住了对话计划段：圆角卡片 + 分隔线 + 圆点像 radio。这就是截图里的样子，先修掉。' },
+  { cls: 'vA', badge: 'A · 修回原设计', badgeClass: 'fix', title: '细线悬挂 + 圆记号',
+    desc: '修复串味后回到本来的样子：一条细线把步骤挂在「计划 0/3」下面，进行中是实心圆点，完成打勾进圈。改动最小，但圆记号仍略像单选。' },
+  { cls: 'vB', badge: 'B · 无记号', badgeClass: 'fix', title: 'Codex 式纯文字',
+    desc: '最安静：没有任何记号，完成的删除线变灰，进行中加粗深色，未开始的浅灰。完全不像表单，但一眼扫过去少一个「打勾」的落点。' },
+  { cls: 'vC', badge: 'C · 完成小勾', badgeClass: 'fix', title: '安静小勾 + 加粗进行中',
+    desc: '折中：完成的步骤给一个中性色小勾（不是绿色），进行中加粗，未开始留白。有「做完了吗」的一眼答案，又不像表单控件。' },
+];
+
+const ENTRIES = [
+  '确认三个目录的 MR 差异、移出范围和忽略规则',
+  '将目录改动保留至独立分支并从 PPE 分支移除',
+  '更新分支说明文档和 .bytedev，验证并推送',
+];
+// index -> class per state
+const STATES = {
+  running: { classes: ['active', 'pending', 'pending'], frac: '0/3', pct: 0 },
+  half:    { classes: ['completed', 'active', 'pending'], frac: '1/3', pct: 100 / 3 },
+};
+
+const stage = document.getElementById('stage');
+const tpl = document.getElementById('variant-tpl');
+
+for (const v of VARIANTS) {
+  const col = document.createElement('section');
+  col.innerHTML = `
+    <div class="col-head">
+      <span class="badge ${v.badgeClass}">${v.badge}</span>
+      <h2>${v.title}</h2>
+      <p>${v.desc}</p>
+    </div>
+    <div class="ctx-chat">
+      <p class="ctx-label">对话 · 回答下方</p>
+      <p class="answer-text">好，移出范围确认：保留测试记录。移出时只处理 MR 中的已提交差异，原有未提交文档和草稿继续保留。</p>
+      <div class="plan-piece chat-piece ${v.cls}"></div>
+    </div>
+    <p class="ctx-label">交接链卡片 · 计划一节</p>
+    <div class="ov-card">
+      <div class="ov-plan"><div class="plan-piece ${v.cls}"></div></div>
+      <button class="ov-link" type="button">查看全部
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 4 10 8 6 12"></polyline></svg>
+      </button>
+      <div class="ov-row"><span class="grow">变更</span><span class="ov-num num">5 · <span class="pos">+114</span> <span class="neg">−6</span></span></div>
+      <div class="ov-row"><span class="grow">文件</span><span class="ov-num num">2</span></div>
+    </div>`;
+  // Two independent instances (chat + overview) from the same markup.
+  for (const slot of col.querySelectorAll('.plan-piece')) slot.appendChild(tpl.content.cloneNode(true));
+  col.querySelectorAll('.plan-toggle').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const block = btn.closest('.plan-demo');
+      const closed = block.classList.toggle('closed');
+      btn.setAttribute('aria-expanded', String(!closed));
+    });
+  });
+  stage.appendChild(col);
+}
+
+function apply() {
+  const s = STATES[document.documentElement.dataset.state];
+  document.querySelectorAll('.plan-demo').forEach((block) => {
+    block.querySelectorAll('.plan-entry').forEach((li, i) => {
+      li.className = `plan-entry ${s.classes[i]}`;
+    });
+    block.querySelector('.frac').textContent = s.frac;
+    const fill = block.querySelector('.ring-fill');
+    fill.style.display = s.pct > 0 ? '' : 'none';
+    fill.setAttribute('stroke-dasharray', `${s.pct} 100`);
+    block.querySelector('.cur-text').textContent = ENTRIES[s.classes.indexOf('active')];
+  });
+}
+
+const segs = [
+  ['seg-theme', 'data-theme'],
+  ['seg-state', 'data-state'],
+  ['seg-device', 'data-device'],
+];
+for (const [id, attr] of segs) {
+  const seg = document.getElementById(id);
+  seg.addEventListener('click', (e) => {
+    const btn = e.target.closest('button');
+    if (!btn) return;
+    document.documentElement.setAttribute(attr, btn.dataset.v);
+    seg.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b === btn)));
+    syncHash();
+  });
+}
+
+function syncHash() {
+  const h = document.documentElement;
+  const parts = [
+    h.dataset.theme === 'dark' ? 'dark' : '',
+    h.dataset.state === 'half' ? 'half' : '',
+    h.dataset.device === 'phone' ? 'phone' : '',
+  ].filter(Boolean);
+  history.replaceState(null, '', parts.length ? `#${parts.join('-')}` : location.pathname);
+}
+// Read the hash on load: #dark, #dark-half-phone, …
+const tokens = (location.hash || '').replace('#', '').split('-').filter(Boolean);
+if (tokens.includes('dark')) fire('seg-theme', 'dark');
+if (tokens.includes('half')) fire('seg-state', 'half');
+if (tokens.includes('phone')) fire('seg-device', 'phone');
+function fire(id, val) {
+  const seg = document.getElementById(id);
+  document.documentElement.setAttribute(segs.find(([i]) => i === id)[1], val);
+  seg.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.v === val)));
+}
+apply();
+</script>
+</body>
+</html>
