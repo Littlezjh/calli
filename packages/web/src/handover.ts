@@ -82,6 +82,21 @@ export function chainEntries(head: Thread, threads: Thread[]): ChainEntry[] {
   return entries;
 }
 
+/**
+ * The segments read as pages, oldest first: what leads up to `current` that the list knows of, then
+ * what reading on from it goes into. A loop of relations ends the walk instead of repeating a page.
+ */
+export function readingPath(current: { thread: Thread; part?: 'before' | 'after' }, threads: Thread[], laterOf?: (entry: { thread: Thread; part?: 'before' | 'after' }) => ChainEntry | undefined, earlier = true): ChainEntry[] {
+  const own: ChainEntry = { thread: current.thread, ...(current.part ? { part: current.part } : {}), followups: 0 };
+  const path = earlier ? chainEntries(current.thread, threads) : [];
+  if (!path.length || entryKey(path[path.length - 1]) !== entryKey(own)) path.push(own);
+  const seen = new Set(path.map(entryKey));
+  for (let at = path[path.length - 1], next = laterOf?.(at); next && !seen.has(entryKey(next)) && path.length < 200; at = next, next = laterOf?.(at)) {
+    seen.add(entryKey(next)); path.push(next);
+  }
+  return path;
+}
+
 /** The entry after `entry` on the way to `head`: what reading on from it goes into. */
 export function nextEntry(entry: { thread: Thread; part?: 'before' | 'after' }, head: Thread, threads: Thread[]): ChainEntry | undefined {
   const entries = chainEntries(head, threads);

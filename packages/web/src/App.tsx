@@ -1020,9 +1020,11 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   const inputThread = focusedThread ?? selected;
   // The segment a message is aimed at is not the chain's latest: say so, quietly, beside the input.
   const aimedAtEarlier = Boolean(mergedHandover && latestSegment && inputThread && inputThread.id !== latestSegment.id);
+  const [latestSignal, setLatestSignal] = useState(0);
   const goLatest = () => {
     if (!latestSegment) return;
     if (latestSegment.id !== selectedId) { pick(latestSegment.id); return; }
+    setLatestSignal(n => n + 1);
     stickToBottom.current = true;
     const scroller = scrollerRef.current;
     if (scroller) scroller.scrollTo({ top: scroller.scrollHeight });
@@ -3092,6 +3094,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
             )}
             {selected?.coordination?.team && <div className={`team-task-status${['awaiting_confirm', 'needs_attention'].includes(selected.coordination.team.status) ? ' attention' : ''}`}><span className="team-task-name">{selected.coordination.team.name}</span><span> · {t(`teams.${selected.coordination.team.status}`)}</span></div>}
             {!selected && host && hostUp && <div className="topbar-sub">{host.label}</div>}
+            {mergedHandover && chainFocus?.index && chainFocus.total && chainFocus.index < chainFocus.total && <div className="topbar-sub topbar-segment">{agentLabel((focusedThread ?? selected!).agent)} · {t('handover.chain.position', chainFocus.index, chainFocus.total)}</div>}
             {busyLine && busyLine.threadId === selected?.id && <div className="topbar-sub topbar-busy">{busyLine.message}</div>}
             {atMember && (
               <button className="topbar-sub topbar-lead-link" title={t('app.backToLead')} onClick={() => pick(selected!.coordination!.rootId)}>
@@ -3355,7 +3358,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           {selected ? (
             <MergedHistory
               key={`${handoverHistoryKey(selected, threads)}:${mergedHandover}`}
-              api={api} thread={selected} merged={mergedHandover} ready={historyReady} agentLabel={agentLabel}
+              api={api} thread={selected} chainThreads={threads} merged={mergedHandover} ready={historyReady} agentLabel={agentLabel} latestSignal={latestSignal}
               laterOf={latestSegment ? entry => laterSegment(entry.thread, latestSegment, threads, entry.part) : undefined}
               latest={latestSegment ?? undefined}
               agentIcon={id => agents.find(a => a.id === id)?.icon}
