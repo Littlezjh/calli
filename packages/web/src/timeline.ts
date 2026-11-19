@@ -134,7 +134,7 @@ export function coordinationNote(shown: string): { note: CoordinationNote; text:
 export function deliveredPreview(text: string): string {
   return text
     .split('\n')
-    .map((line) => line.replace(/^\s*(#{1,6}|[-*+>]|\d+\.)\s+/, '').replace(/[*_`]/g, '').trim())
+    .map((line) => line.replace(/^\s*(#{1,6}|[-*+>]|\d+\.)\s+/, '').replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/[*_`]/g, '').trim())
     // The report's own bookkeeping — tables, rules, the [进度] line — is not its words.
     .filter((line) => line && !line.startsWith('|') && !/^[-=]+$/.test(line) && !line.startsWith('[进度]'))
     .slice(0, 3)

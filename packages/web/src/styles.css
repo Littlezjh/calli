@@ -10376,6 +10376,8 @@ div.file-card:hover { background: var(--surface); }
 .compact .agent-stack { width: 21px; height: 21px; }
 .compact .agent-stack > svg:first-child { -webkit-mask: radial-gradient(circle at -2px -2px, transparent 8px, var(--text) 8.6px); mask: radial-gradient(circle at -2px -2px, transparent 8px, var(--text) 8.6px); }
 .team-member-text { flex: 1; }
+/* A card with both a handover chain and a team: which fold is which, as the overview marks them. */
+.handover-toggle-kind { display: inline-flex; color: var(--muted); }
 .team-note { color: var(--positive); }
 .handover-member-time { flex: none; margin-left: auto; padding-left: 6px; font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .handover-chain { width: min(420px, calc(100vw - 32px)); }

@@ -281,6 +281,26 @@ export function buildActivity(threads: Thread[], search: string, now: Date, sele
  * the most recently moved first, or with `keepOrder` in the order their first thread has in `threads`.
  * `latest` is the group's face: the member that is alive (see `faceOrder`), which the row stands for.
  */
+/**
+ * The threads listed as rows of their own: team members go under their lead instead. A lead's earlier
+ * segments are retired members of the team the handover moved along, but they are the lead's own
+ * conversations, so they stay in the list and fold into its handover chain.
+ */
+export function ownRows(threads: Thread[]): Thread[] {
+  const byId = new Map(threads.map((t) => [t.id, t]));
+  const chains = new Map<string, Set<string>>();
+  const chainOf = (rootId: string) => {
+    let chain = chains.get(rootId);
+    if (chain) return chain;
+    chain = new Set<string>();
+    for (let t = byId.get(rootId); t?.handover && !t.handover.detached && !chain.has(t.handover.sourceId); t = byId.get(t.handover.sourceId)) chain.add(t.handover.sourceId);
+    chains.set(rootId, chain);
+    return chain;
+  };
+  return threads.filter((t) => !t.coordination || t.coordination.rootId === t.id || !byId.has(t.coordination.rootId)
+    || Boolean(t.coordination.retired) && chainOf(t.coordination.rootId).has(t.id));
+}
+
 export function handoverGroups(threads: Thread[], keepOrder = false): Array<{ key: string; latest: Thread; members: Thread[] }> {
   const byId = new Map(threads.map((t) => [t.id, t]));
   const root = (t: Thread): string => {
@@ -372,9 +392,7 @@ export function buildMerged(sources: HostSource[], search: string, now: Date, se
   const owner = new Map<Thread, string | null>();
   const all: Thread[] = [];
   for (const source of sources) {
-    const ids = new Set(source.threads.map((t) => t.id));
-    for (const thread of source.threads) {
-      if (thread.coordination && thread.coordination.rootId !== thread.id && ids.has(thread.coordination.rootId)) continue;
+    for (const thread of ownRows(source.threads)) {
       owner.set(thread, source.hostId);
       all.push(thread);
     }

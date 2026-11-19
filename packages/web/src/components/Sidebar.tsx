@@ -14,7 +14,7 @@ import { Menu } from './Menu';
 import { PetBustImage, type PetBust } from './Pet';
 import type { HostIconName } from '@calli/extension-api';
 import { HostIcon } from '../extensions/ui';
-import { AgentMark, IconBell, IconChevron, IconClock, IconClose, IconDesktop, IconEdit, IconFolder, IconList, IconMore, IconPin, IconPlus, IconSearch, IconSettings, IconSidebar, IconSparkle, IconServer } from './icons';
+import { AgentMark, IconAgents, IconBell, IconChevron, IconClock, IconClose, IconDesktop, IconEdit, IconHandover, IconFolder, IconList, IconMore, IconPin, IconPlus, IconSearch, IconSettings, IconSidebar, IconSparkle, IconServer } from './icons';
 import { t } from '../i18n';
 
 export { folderName } from '../paths';
@@ -381,22 +381,19 @@ export function Sidebar({
     );
   };
 
-  // Like Orca's agents under a task: the lead's row, then one line per member saying what it is doing.
-  const entry = (thread: Thread, on?: Elsewhere) => {
-    if (thread.external) return externalRow(thread);
-    const team = members?.get(thread.id);
-    if (!team?.length || on?.open) return row(thread, thread.title, thread.preview, undefined, on);
+  const teamOf = (thread: Thread) => members?.get(thread.id);
+  const teamOpenFor = (thread: Thread, team: Thread[]) => Boolean(search.trim()) || (teamOpen.get(thread.id) ?? team.some((m) => busy(m) > 0 || m.id === selectedId));
+  /** A lead's team: a toggle with who is on it, then one line per member saying what it is doing. */
+  const teamPart = (thread: Thread, team: Thread[], kind = false) => {
     const sorted = [...team].sort(teamOrder);
-    const auto = sorted.some((m) => busy(m) > 0 || m.id === selectedId);
-    const open = Boolean(search.trim()) || (teamOpen.get(thread.id) ?? auto);
+    const open = teamOpenFor(thread, team);
     const working = sorted.filter((m) => m.status === 'running').length;
     const waiting = sorted.filter((m) => m.waiting).length;
     const stack = stackLine(sorted);
-    const current = thread.id === selectedId || sorted.some((m) => m.id === selectedId);
-    return <div key={thread.id} className={`handover-group team-group${open ? ' open' : ''}${current ? ' selected' : ''}`}>
-      {row(thread, thread.title, thread.preview, undefined, on)}
+    return <>
       <button className="handover-toggle" aria-expanded={open} onClick={() => setTeamOpen((old) => new Map(old).set(thread.id, !open))}
         aria-label={[t('sidebar.agents', sorted.length), waiting ? t('sidebar.waitingCount', waiting) : working ? t('team.running', working) : null, open ? t('sidebar.collapseTeam', thread.title) : t('sidebar.expandTeam', thread.title)].filter(Boolean).join(' · ')}>
+        {kind && <span className="handover-toggle-kind"><IconAgents size={13} /></span>}
         {stack ? <>
           {runDot(sorted)}
           {stack}
@@ -424,6 +421,17 @@ export function Sidebar({
           <time className="handover-member-time" dateTime={m.updatedAt}>{timeAgo(m.updatedAt, now)}</time>
         </button>;
       })}</div>}
+    </>;
+  };
+  // Like Orca's agents under a task: the lead's row, then one line per member saying what it is doing.
+  const entry = (thread: Thread, on?: Elsewhere) => {
+    if (thread.external) return externalRow(thread);
+    const team = teamOf(thread);
+    if (!team?.length || on?.open) return row(thread, thread.title, thread.preview, undefined, on);
+    const current = thread.id === selectedId || team.some((m) => m.id === selectedId);
+    return <div key={thread.id} className={`handover-group team-group${teamOpenFor(thread, team) ? ' open' : ''}${current ? ' selected' : ''}`}>
+      {row(thread, thread.title, thread.preview, undefined, on)}
+      {teamPart(thread, team)}
     </div>;
   };
 
@@ -434,7 +442,10 @@ export function Sidebar({
     const marks = [...new Set(members.filter((thread) => thread.id !== latest.id).map((thread) => threadMark(thread, thread.id === selectedId)).filter(Boolean))] as ThreadMark[];
     const chainStack = stackLine(members, false);
     const chainDot = (['waiting', 'error', 'unread', 'running'] as const).find((m) => marks.includes(m));
-    const current = members.some((thread) => thread.id === selectedId);
+    // The team moves along with a handover, so one segment leads it, not always the one on the card.
+    const lead = members.find((thread) => teamOf(thread)?.length);
+    const team = lead && teamOf(lead);
+    const current = members.some((thread) => thread.id === selectedId) || Boolean(team?.some((m) => m.id === selectedId));
     // Like Orca's agents under a task: one card, the latest conversation on top, the chain folded below it.
     return <div key={key} className={`handover-group${expanded ? ' open' : ''}${current ? ' selected' : ''}`}>
       {row(latest, latest.title.replace(/(?:（接手）)+$/, ''), latest.preview, members)}
@@ -444,6 +455,7 @@ export function Sidebar({
         return next;
       })}
         aria-label={[t('sidebar.sessions', members.length), expanded ? t('sidebar.collapseHandover', latest.title) : t('sidebar.expandHandover', latest.title)].join(' · ')}>
+        {team && <span className="handover-toggle-kind"><IconHandover size={13} /></span>}
         {chainStack ? <>
           {chainDot && <span className={`dot ${chainDot}`} role="img" aria-label={t('sidebar.otherHandover', MARK_LABELS[chainDot])} title={t('sidebar.otherHandover', MARK_LABELS[chainDot])} />}
           {chainStack}
@@ -468,6 +480,7 @@ export function Sidebar({
           <time className="handover-member-time" dateTime={thread.updatedAt}>{timeAgo(thread.updatedAt, now)}</time>
         </button>;
       })}</div>}
+      {lead && team ? teamPart(lead, team, true) : null}
     </div>;
   });
 

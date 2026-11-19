@@ -121,6 +121,7 @@ test('a delivered message is split into who sent it, how it went and its text', 
   assert.deepEqual(coordinationNote('来自 w 的结果\n\n无法启动任务：x'), { note: { from: 'w', kind: 'result', failed: false }, text: '无法启动任务：x' });
   assert.deepEqual(coordinationNote('something else'), { note: { from: '', kind: 'result', failed: false }, text: 'something else' });
   assert.equal(deliveredPreview('## 结论\n\n- **没有**问题\n| a | b |\n|---|---|\n1. `x` 要改'), '结论 没有问题 x 要改');
+  assert.equal(deliveredPreview('已在 [api.test.ts:3426](/tmp/x/api.test.ts#L3426) 补上 ![图](a.png)'), '已在 api.test.ts:3426 补上 图');
 });
 
 test('user text and streamed assistant text are grouped per turn', () => {
