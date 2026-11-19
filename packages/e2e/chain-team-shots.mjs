@@ -46,6 +46,8 @@ try {
   await idle(b.id);
   const c = await request(`/api/threads/${b.id}/handover-thread`, 'POST', { agent: 'agy', model: 'gemini-pro', mode: 'continue' });
   await idle(c.id);
+  // A segment renamed later is listed by its new name.
+  await request(`/api/threads/${b.id}`, 'PATCH', { title: '压测脚本与回归检查' });
   const listed = (await request('/api/threads')).threads ?? await request('/api/threads');
   console.log('coordination', JSON.stringify(listed.filter(t => [a.id, b.id, c.id, member].includes(t.id)).map(t => [t.id.slice(0, 6), t.title, t.coordination])));console.log('ids', a.id.slice(0,6), b.id.slice(0,6), c.id.slice(0,6), member.slice(0,6));
 

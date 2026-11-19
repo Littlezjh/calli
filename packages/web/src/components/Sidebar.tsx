@@ -469,13 +469,15 @@ export function Sidebar({
           key={thread.id}
           className={`handover-member${thread.id === selectedId ? ' active' : ''}`}
           aria-current={thread.id === selectedId ? 'true' : undefined}
+          title={`${thread.title} · ${agent?.label ?? thread.agent}`}
           onClick={() => onSelect(thread.id)}
           onContextMenu={(e) => { e.preventDefault(); onThreadMenu(thread, e.clientX, e.clientY); }}
           {...longPress(thread)}
         >
           <span className={`dot ${mark ?? 'idle'}`} role="img" aria-label={mark === 'waiting' ? waitingLabel(thread) : mark ? MARK_LABELS[mark] : t('status.idle')} />
-          {agent?.icon ? <span className="agent-mark"><AgentMark path={agent.icon} size={compact ? 14 : 13} /></span> : null}
-          <span className="handover-member-name">{agent?.label ?? thread.agent}</span>
+          {agent?.icon ? <span className="agent-mark" role="img" aria-label={agent.label}><AgentMark path={agent.icon} size={compact ? 14 : 13} /></span> : null}
+          {/* Each segment by its own name, so one renamed later reads as renamed; the agent is its mark. */}
+          <span className="handover-member-name">{thread.title.replace(/(?:（接手）)+$/, '') || agent?.label || thread.agent}</span>
           <span className="handover-member-role">{thread.handover ? t('sidebar.successor') : t('sidebar.original')}</span>
           <time className="handover-member-time" dateTime={thread.updatedAt}>{timeAgo(thread.updatedAt, now)}</time>
         </button>;
