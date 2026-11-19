@@ -12865,12 +12865,6 @@ button.trace-step-head:hover { background: var(--hover); }
 @media (hover: hover) { .chain-line-title:hover { color: var(--text); text-decoration: underline; text-underline-offset: 3px; } }
 .chain-line-meta { flex: none; white-space: nowrap; }
 @media (max-width: 640px) { .chain-line-time { display: none; } }
-/* The same line, floated over the top of the reading once the segment's own has scrolled away: sticky with no height, so nothing moves. */
-.chain-float { position: sticky; top: -20px; z-index: 4; height: 0; overflow: visible; pointer-events: none; }
-.chain-line-float { position: absolute; top: 0; left: 0; right: 0; margin: 0; padding: 6px 0; pointer-events: auto; background: var(--bg); }
-.chain-line-float::after { order: 2; }
-.chain-line-latest { order: 3; margin-right: -4px; display: inline-grid; place-items: center; flex: none; width: 24px; height: 24px; padding: 0; border: 0; border-radius: var(--radius-pill); background: none; color: var(--muted); cursor: pointer; }
-@media (hover: hover) { .chain-line-latest:hover { background: var(--hover); color: var(--text); } }
 .row.chain-followups { display: block; color: var(--faint); font-size: 12px; text-align: center; padding: 6px 0 2px; }
 .chain-followups .text-btn { display: inline; width: auto; min-height: 0; padding: 0; background: none; font-size: 12px; text-decoration: underline; text-underline-offset: 3px; }
 /* One segment to a page: short ones leave room below, and dragging past an edge shows a pill. */
