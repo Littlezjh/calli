@@ -248,13 +248,13 @@ test('a conversation can send while its desktop is beside it, without leaking ke
       await input.fill('保留这段草稿');
       await openConversationDesktop(page, `desktop-menu-${theme}`);
       await connected(page);
-      assert.equal(await page.locator('.desktop-control').getAttribute('aria-pressed'), 'false');
+      // The conversation opens it in control, as the machine's entry does.
+      assert.equal(await page.locator('.desktop-control').getAttribute('aria-pressed'), 'true');
       const panel = await page.locator('.desktop-side').boundingBox();
       const composer = await input.boundingBox();
       assert.ok(composer.x + composer.width <= panel.x, 'the desktop does not cover the composer');
       assert.equal(await input.inputValue(), '保留这段草稿');
       // Even with remote input enabled, typing in the conversation belongs only to the conversation.
-      await page.locator('.desktop-control').click();
       const from = xevKeys.length;
       await input.fill('');
       await input.pressSequentially(`inspect-work-mode side-${theme}`);
@@ -285,7 +285,7 @@ test('a conversation can send while its desktop is beside it, without leaking ke
   }
 });
 
-test('the phone conversation opens a viewer and returns to its draft on the same connection', { skip }, async () => {
+test('the phone conversation opens in control and returns to its draft on the same connection', { skip }, async () => {
   for (const theme of ['light', 'dark']) {
     const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, colorScheme: theme });
     const page = await context.newPage();
@@ -297,10 +297,11 @@ test('the phone conversation opens a viewer and returns to its draft on the same
       await input.fill('手机草稿');
       await openConversationDesktop(page, `desktop-menu-phone-${theme}`);
       await connected(page);
-      assert.equal(await page.locator('.desktop-pad').count(), 0, 'the conversation opens view only');
+      // In control, as the machine's entry: a touch pad over the picture, filled to the height.
+      assert.ok((await page.locator('.desktop-pad').count()) > 0, 'the conversation opens in control');
       await page.waitForFunction(() => {
         const picture = document.querySelector('.desktop-content')?.getBoundingClientRect();
-        return picture && picture.width <= innerWidth;
+        return picture && picture.width > innerWidth;
       });
       await page.screenshot({ path: shot(`desktop-beside-phone-view-${theme}`) });
       await page.getByRole('button', { name: '返回会话', exact: true }).click();

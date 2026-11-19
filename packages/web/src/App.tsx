@@ -1999,7 +1999,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
       void refreshThreads();
     },
     onOpenTerminal: () => (demo ? askToConnect() : openTerminal()),
-    onOpenDesktop: hasDesktop && hostUp && !onPage ? () => openDesktop(false) : undefined,
+    onOpenDesktop: hasDesktop && hostUp && !onPage ? () => openDesktop() : undefined,
     onNewBeside: (thread) => newThread({ beside: thread }),
     onOpenGit: () => { setFiles(null); setTraceOpen(false); setAgentsOpen(false); setGitOpen(true); },
     onOpenFiles: (thread) => {
@@ -2616,7 +2616,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
     if (id === 'new') return newThread();
     if (id === 'status') return setStatusOpen(true);
     if (id === 'term') return openTerminal();
-    if (id === 'desktop') return openDesktop(false);
+    if (id === 'desktop') return openDesktop();
     if (id === 'usage') return openSettings('quota');
     if (id === 'activity') return openActivity();
     if (id === 'skills') return openSkills();
