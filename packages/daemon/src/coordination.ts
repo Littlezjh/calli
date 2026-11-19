@@ -93,6 +93,8 @@ export class CoordinationManager {
   readonly handovers: HandoverReader;
   private teams = new Map<string, Team>();
   private credentials = new Map<string, string>();
+  /** Keys of seats the work moved away from, by key: where it went, so a stale caller is told instead of refused. */
+  private moved = new Map<string, string>();
   private chain: Promise<unknown> = Promise.resolve();
   private scheduled = false;
   private stopping = new Set<string>();
@@ -315,7 +317,7 @@ export class CoordinationManager {
       this.teams.delete(target); this.store.deleteCoordination(target);
       t.rootId = source; this.teams.set(source, t);
     }
-    this.credentials.delete(target);
+    this.forgetSeat(target, source);
     for (const d of t.deliveries) {
       if (d.from === target && (d.state === 'queued' || d.state === 'running')) d.from = source;
       if (d.to === target && (d.state === 'queued' || d.state === 'running')) d.to = source;
@@ -341,7 +343,7 @@ export class CoordinationManager {
       this.teams.delete(source); this.store.deleteCoordination(source);
       t.rootId = target; this.teams.set(target, t);
     }
-    this.credentials.delete(source);
+    this.forgetSeat(source, target);
     if (!t.agents.includes(after.agent)) t.agents.push(after.agent);
     for (const d of t.deliveries) {
       if (d.from === source && (d.state === 'queued' || d.state === 'running')) d.from = target;
@@ -567,9 +569,19 @@ export class CoordinationManager {
   }
 
   /** Auth is scoped to one member. The browser continues to use the ordinary authenticated API. */
+  /** The seat's key stops working; a caller still holding it is later told where the seat went. */
+  private forgetSeat(from: string, to: string): void {
+    const key = this.credentials.get(from);
+    if (key) { this.moved.set(key, to); this.credentials.delete(from); }
+  }
   caller(key: string): string {
     const id = [...this.credentials].find(([, v]) => v === key)?.[0];
-    if (!id) throw new HttpError(401, '协作凭据无效');
+    if (!id) {
+      const to = this.moved.get(key);
+      const title = to ? this.store.getThread(to)?.title : undefined;
+      if (to) throw new HttpError(409, `协作已随交接转到另一段对话${title ? `「${title}」` : ''}（${to.slice(0, 8)}），请在那一段里操作`);
+      throw new HttpError(401, '协作凭据无效；这段对话若已交接，协作随交接转走了，请在接手的那一段里操作');
+    }
     return id;
   }
   async command(caller: string, input: Record<string, unknown>): Promise<unknown> {

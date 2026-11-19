@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { AgentInfo, Api, HandoverTarget, ReturnTarget, Thread } from '../api';
-import { ReturnChoice } from './AutoHandover';
+import { ReturnSwitch } from './AutoHandover';
 import { AgentPicker } from './Pickers';
 import { IconHand } from './icons';
 import { t } from '../i18n';
@@ -28,7 +28,8 @@ export function TakeoverDialog({ api, thread, agents, onTakeOver, onClose }: Pro
   const [compressor, setCompressor] = useState<HandoverTarget | null>(null);
   // An earlier conversation of the chain that could take the work back, offered beside a new one.
   const [returns, setReturns] = useState<ReturnTarget[]>([]);
-  const [choice, setChoice] = useState<'return' | 'new'>('return');
+  // A person is here to choose: a new conversation unless they say the older one.
+  const [backToOld, setBackToOld] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const busyRef = useRef(false);
@@ -50,7 +51,7 @@ export function TakeoverDialog({ api, thread, agents, onTakeOver, onClose }: Pro
   // Without a compression agent set up, the successor writes the summary of its own takeover.
   const other = compressor ?? (target.agent ? { agent: target.agent } : null);
   const label = (id: string) => agents.find(a => a.id === id)?.label ?? id;
-  const toOld = choice === 'return' && returns.length > 0;
+  const toOld = backToOld && returns.length > 0;
   const ready = (toOld ? true : usable(target.agent) && (target.agent !== thread.agent || !!target.model))
     && (writer === 'source' || !!other && usable(other.agent));
 
@@ -76,11 +77,11 @@ export function TakeoverDialog({ api, thread, agents, onTakeOver, onClose }: Pro
         <h2 id="takeover-title" className="dialog-title">{t('takeover.title')}</h2>
         <p className="dialog-message">{t('takeover.message')}</p>
         <fieldset className="takeover-fields" disabled={busy}>
-          {returns.length > 0 && <ReturnChoice form returns={returns} value={choice} onChange={setChoice} disabled={busy} />}
           {!toOld && <div className="handover-successor">
             <span>{t('handover.successor')}</span>
             <AgentPicker api={api} agents={agents} value={target.agent} onChange={id => setTarget({ agent: id })} />
           </div>}
+          {returns.length > 0 && <ReturnSwitch old={returns[0]} agentLabel={label(returns[0].agent)} toOld={toOld} onChange={setBackToOld} disabled={busy} />}
           <div className="handover-successor">
             <span id="takeover-writer">{t('takeover.writer')}</span>
             <div className="chip-row" role="radiogroup" aria-labelledby="takeover-writer">

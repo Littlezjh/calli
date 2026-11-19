@@ -2985,12 +2985,12 @@ export class ThreadManager {
    * Asks this thread's agent to write a handover summary for another agent, in its own session:
    * it knows its own context best. The turn runs like any other and streams into the thread.
    */
-  async startHandover(threadId: string, target: string, allowSame = false): Promise<{ turnId: string }> {
+  async startHandover(threadId: string, target: string, allowSame = false, unnamed = false): Promise<{ turnId: string }> {
     const thread = this.getThread(threadId);
     const successor = this.adapters.get(target);
     if (!successor) throw new HttpError(404, `no such agent: ${target}`);
     if (!allowSame && target === thread.agent) throw new HttpError(400, 'the successor must be another agent');
-    const started = await this.startTurn(threadId, { text: handoverPrompt(successor.label) + this.personal.context(threadId), handover: target }, undefined, true);
+    const started = await this.startTurn(threadId, { text: handoverPrompt(unnamed ? undefined : successor.label) + this.personal.context(threadId), handover: target }, undefined, true);
     if (!('turnId' in started)) throw new HttpError(409, 'a turn is already running in this thread');
     return started;
   }
@@ -3087,11 +3087,12 @@ export class ThreadManager {
     const run = this.running.get(id);
     if (run && this.store.listTurnEvents(id, run.turnId).some(e => e.type === 'turn.started' && e.data.handover)) await this.stopTurn(id).catch(() => undefined);
   }
-  async autoHandoverSummary(id: string, target: string, exhausted: boolean): Promise<string> {
+  /** `unnamed`: the brief does not say who reads it (an older conversation may take it back instead of the named target). */
+  async autoHandoverSummary(id: string, target: string, exhausted: boolean, unnamed = false): Promise<string> {
     let summaryTurn: string | null = null;
     if (!exhausted) {
       try {
-        const started = await this.startHandover(id, target, true);
+        const started = await this.startHandover(id, target, true, unnamed);
         summaryTurn = started.turnId;
         await new Promise<void>((resolve) => {
           const finish = () => { clearTimeout(timer); off(); resolve(); };
@@ -3190,7 +3191,7 @@ export class ThreadManager {
     const failed = last && this.store.listTurnEvents(id, last).some(e => e.type === 'turn.error') ? last : null;
     const target = { agent, ...(model ? { model } : {}) };
     if (returnTo) {
-      const brief = writer === 'source' ? await this.autoHandoverSummary(id, agent, false) : await this.handoverSummary(id, null, { compress: writer ? [{ agent: writer.agent, ...(writer.model ? { model: writer.model } : {}) }] : true }).then(r => {
+      const brief = writer === 'source' ? await this.autoHandoverSummary(id, agent, false, true) : await this.handoverSummary(id, null, { compress: writer ? [{ agent: writer.agent, ...(writer.model ? { model: writer.model } : {}) }] : true }).then(r => {
         if (!('summary' in r)) throw new HttpError(409, 'handover summary unavailable');
         return r.summary;
       });

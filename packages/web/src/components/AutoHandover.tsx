@@ -22,20 +22,28 @@ export function AutoHandoverChoice({ api, thread }: { api: Api; thread: Thread }
   </div>;
 }
 
-/**
- * Older conversation or new one: what a handover goes to when an earlier segment of the chain could
- * take the work back. Under a countdown it is a pair of quiet words; in a dialog, a row of its own.
- */
-export function ReturnChoice({ returns, value, onChange, disabled, form }: { returns: ReturnTarget[]; value: 'return' | 'new'; onChange: (value: 'return' | 'new') => void; disabled?: boolean; form?: boolean }) {
+/** Older conversation or new one, as a pair of quiet words under a countdown: what a handover goes to when an earlier segment could take the work back. */
+export function ReturnChoice({ returns, value, onChange, disabled }: { returns: ReturnTarget[]; value: 'return' | 'new'; onChange: (value: 'return' | 'new') => void; disabled?: boolean }) {
   const old = returns[0];
   if (!old) return null;
-  const options = <>
-    <button type="button" role="radio" aria-checked={value === 'return'} disabled={disabled} title={t('handover.choice.oldHint')} className={form ? `chip${value === 'return' ? ' on' : ''}` : undefined} onClick={() => onChange('return')}>{t('handover.choice.old', old.title)}</button>
-    <button type="button" role="radio" aria-checked={value === 'new'} disabled={disabled} title={t('handover.choice.newHint')} className={form ? `chip${value === 'new' ? ' on' : ''}` : undefined} onClick={() => onChange('new')}>{t('handover.choice.new')}</button>
-  </>;
-  return form
-    ? <div className="handover-successor stacked"><span id="handover-choice-label">{t('handover.choice.label')}</span><div className="chip-row" role="radiogroup" aria-labelledby="handover-choice-label">{options}</div></div>
-    : <div className="handover-choice" role="radiogroup" aria-label={t('handover.choice.label')}>{options}</div>;
+  return <div className="handover-choice" role="radiogroup" aria-label={t('handover.choice.label')}>
+    <button type="button" role="radio" aria-checked={value === 'return'} disabled={disabled} title={t('handover.choice.oldHint')} onClick={() => onChange('return')}>{t('handover.choice.old', old.title)}</button>
+    <button type="button" role="radio" aria-checked={value === 'new'} disabled={disabled} title={t('handover.choice.newHint')} onClick={() => onChange('new')}>{t('handover.choice.new')}</button>
+  </div>;
+}
+
+/**
+ * In a dialog a person is there to choose, so a new conversation is the default and the older one is
+ * one quiet line away. Chosen, it stands in place of the successor picker and says who it is.
+ */
+export function ReturnSwitch({ old, agentLabel, toOld, onChange, disabled }: { old: ReturnTarget; agentLabel: string; toOld: boolean; onChange: (toOld: boolean) => void; disabled?: boolean }) {
+  return toOld ? <>
+    <div className="handover-successor">
+      <span>{t('handover.choice.oldRow')}</span>
+      <span className="handover-old" title={old.title}>{agentLabel} · {old.title}</span>
+    </div>
+    <button type="button" className="text-btn handover-switch" disabled={disabled} onClick={() => onChange(false)}>{t('handover.choice.switchNew')}</button>
+  </> : <button type="button" className="text-btn handover-switch" disabled={disabled} title={t('handover.choice.oldHint')} onClick={() => onChange(true)}>{t('handover.choice.switchOld', agentLabel, old.title)}</button>;
 }
 
 export function AutoHandoverNotice({ api, thread, agents }: { api: Api; thread: Thread; agents: AgentInfo[] }) {

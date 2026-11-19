@@ -886,3 +886,15 @@ test('a message the person queues behind a member\'s task is still theirs when i
     assert.equal(h.store.listEvents(h.root.id, 0, -1).filter(e => e.type === 'turn.started').at(-1)!.data.fromUser, undefined);
   } finally { await h.close(); }
 });
+
+test('a key whose seat moved with a handover says where the seat went', async () => {
+  const h = await setup();
+  try {
+    await h.team.enable(h.root.id);
+    const key = h.team.environment(h.root.id)!.CALLI_TEAM_KEY;
+    assert.equal(h.team.caller(key), h.root.id);
+    (h.team as any).forgetSeat(h.root.id, h.root.id.replace(/^./, 'f'));
+    assert.throws(() => h.team.caller(key), (error: any) => error.status === 409 && /协作已随交接转到/.test(error.message));
+    assert.throws(() => h.team.caller('wrong'), (error: any) => error.status === 401 && /接手的那一段/.test(error.message));
+  } finally { await h.close(); }
+});

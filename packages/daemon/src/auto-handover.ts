@@ -318,7 +318,7 @@ export class AutoHandover {
       // with an older conversation on offer both ways go over as a brief, never as a copy.
       const resume = !switchModel && !back && this.settings().method === 'resume' && await this.manager.canResumeHandover(id, target.agent, failedTurn);
       if (!switchModel && !resume) { attempt.view = { ...attempt.view, step: 'summary' }; this.manager.notifyHandover(id); }
-      let summary = switchModel || resume ? null : await this.manager.autoHandoverSummary(id, target.agent, exhausted);
+      let summary = switchModel || resume ? null : await this.manager.autoHandoverSummary(id, target.agent, exhausted, Boolean(back));
       if (attempt.cancelled || !this.view(id).enabled || this.closed) return 'parked';
       const { step: _step, ...ready } = attempt.view;
       attempt.view = { ...ready, state: 'countdown', deadline: new Date(Date.now() + this.delayMs).toISOString() };
@@ -352,7 +352,7 @@ export class AutoHandover {
         } else if (sessionId) await this.manager.executeResumeHandover(id, target, sessionId, failedTurn);
         else {
           // A conversation that could not be copied goes over as a brief, written from the log.
-          summary ??= await this.manager.autoHandoverSummary(id, target.agent, true);
+          summary ??= await this.manager.autoHandoverSummary(id, target.agent, true, Boolean(back));
           await this.manager.executeAutoHandover(id, target, summary, failedTurn);
         }
         transferred = true;

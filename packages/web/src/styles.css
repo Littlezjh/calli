@@ -4961,7 +4961,9 @@ input.picker-search {
   font-size: 13px;
 }
 
-.handover-successor.stacked { flex-direction: column; align-items: flex-start; gap: 6px; }
+.handover-old { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; color: var(--text); }
+.text-btn.handover-switch { display: block; max-width: 100%; min-height: 28px; margin: -2px 0 8px; padding: 0 10px 0 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; font-size: 12.5px; color: var(--muted); background: none; }
+.text-btn.handover-switch:hover:not(:disabled) { color: var(--text); background: none; }
 .handover-successor fieldset {
   min-width: 0;
   margin: 0;
@@ -12735,7 +12737,6 @@ button.trace-step-head:hover { background: var(--hover); }
 @media (hover: hover) { .chain-line-title:hover { color: var(--text); text-decoration: underline; text-underline-offset: 3px; } }
 .chain-line-meta { flex: none; white-space: nowrap; }
 @media (max-width: 640px) { .chain-line-time { display: none; } }
-#handover-choice-label { white-space: nowrap; }
 /* The same line, floated over the top of the reading once the segment's own has scrolled away: sticky with no height, so nothing moves. */
 .chain-float { position: sticky; top: -20px; z-index: 4; height: 0; overflow: visible; pointer-events: none; }
 .chain-line-float { position: absolute; top: 0; left: 0; right: 0; margin: 0; padding: 6px 0; pointer-events: auto; background: var(--bg); }
