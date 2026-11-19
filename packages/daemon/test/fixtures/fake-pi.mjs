@@ -480,7 +480,8 @@ rl.on('line', (line) => {
       const script = scriptedTurn(sessionId, cmd.message);
       if (script) {
         for (const m of script) {
-          const content = Array.isArray(m.content) ? m.content : [];
+          // A tool result's text is the tool's output, not the agent's words.
+          const content = m.role === 'assistant' && Array.isArray(m.content) ? m.content : [];
           for (const block of content) {
             if (block.type === 'thinking') out({ type: 'message_update', assistantMessageEvent: { type: 'thinking_delta', contentIndex: 0, delta: block.thinking } });
             else if (block.type === 'toolCall') out({ type: 'tool_execution_start', toolCallId: block.id, toolName: block.name, args: block.arguments });
