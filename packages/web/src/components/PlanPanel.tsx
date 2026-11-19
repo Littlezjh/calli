@@ -1,6 +1,5 @@
 import type { Item, PlanEntry } from '../timeline';
 import { t } from '../i18n';
-import { IconCheck } from './icons';
 import { Popover } from './Popover';
 
 export type PlanItem = Extract<Item, { kind: 'plan' }>;
@@ -51,9 +50,6 @@ export function PlanList({ item }: { item: PlanItem }) {
         const state = planEntryState(entry, item.done);
         return (
           <li key={i} className={`plan-entry ${state}`}>
-            <span className="plan-mark" aria-hidden="true">
-              {state === 'completed' && <IconCheck size={12} />}
-            </span>
             <span className="plan-text">{entry.content}</span>
             <span className="sr-only">{state === 'completed' ? t('view.entryDone') : state === 'active' ? t('view.entryActive') : t('view.entryPending')}</span>
           </li>

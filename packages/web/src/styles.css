@@ -7406,36 +7406,21 @@ div.file-card:hover { background: var(--surface); }
   white-space: nowrap;
 }
 
-/* The whole list, hung under the line by a hairline like the steps of a work block. */
+/* The whole list hangs under the line as plain text: done steps strike through and fade, the
+   step in progress is simply bold. No marks — it should not read as a form. */
 .plan-list {
   display: flex;
   flex-direction: column;
-  gap: 5px;
-  margin: 4px 0 6px 6px;
-  padding: 2px 0 2px 13px;
-  border-left: 1px solid var(--border);
+  gap: 6px;
+  margin: 6px 0 8px 22px;
+  padding: 0;
   list-style: none;
 }
 
 .plan-entry {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
   color: var(--muted);
   font-size: 13.5px;
   line-height: 1.45;
-}
-
-.plan-mark {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 14px;
-  height: 14px;
-  flex-shrink: 0;
-  margin-top: 2px;
-  border: 1.5px solid var(--border-strong);
-  border-radius: 50%;
 }
 
 /* A long path or URL breaks rather than pushing the thread sideways on a phone. */
@@ -7444,25 +7429,15 @@ div.file-card:hover { background: var(--surface); }
   overflow-wrap: anywhere;
 }
 
-.plan-entry.completed .plan-mark {
-  border-color: transparent;
+.plan-entry.completed {
+  color: var(--faint);
+  text-decoration: line-through;
+  text-decoration-color: var(--border-strong);
 }
 
 .plan-entry.active {
   color: var(--text);
-}
-
-.plan-entry.active .plan-mark {
-  border-color: currentColor;
-}
-
-.plan-entry.active .plan-mark::after {
-  content: '';
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: currentColor;
-  animation: pulse 1.4s ease-in-out infinite;
+  font-weight: 600;
 }
 
 /* The newest turn's plan, as a top-bar button: the ring and the count. */
@@ -7475,7 +7450,7 @@ div.file-card:hover { background: var(--surface); }
 @media (min-width: 641px) { .pop-panel.plan-panel { width: 360px; padding: 12px 14px 14px; } }
 .plan-panel .plan-panel-head, .plan-panel .plan-list { padding-inline: 4px; }
 .plan-panel-head { margin-bottom: 8px; color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
-.plan-panel .plan-list { margin: 0; padding-block: 0; border-left: 0; gap: 8px; }
+.plan-panel .plan-list { margin: 0; gap: 8px; }
 .plan-panel .plan-entry { font-size: 14px; }
 
 /* ---------- Images an answer points at ---------- */
@@ -10863,11 +10838,9 @@ div.file-card:hover { background: var(--surface); }
 /* The plan hangs under its title one step smaller: a finished step fades, the current one carries
    the weight, the rest wait quietly. Every step stays on one line. */
 .overview-plan { padding: 1px 7px 3px; }
-.overview-plan .plan-list { margin: 0; padding: 0; gap: 0; }
+.overview-plan .plan-list { margin: 2px 0 4px; padding: 0; gap: 3px; }
 .overview-plan .plan-entry { min-height: 24px; padding: 0; font-size: 12.5px; }
 .overview-plan .plan-entry .plan-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.overview-plan .plan-entry.completed { color: var(--faint); }
-.overview-plan .plan-entry.active { color: var(--text); font-weight: 600; }
 /* A picture that left the disk keeps one faint line instead of a square that cannot be read. */
 .overview-missing-line { padding: 1px 7px 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); font-size: 11.5px; }
 /* The readings and the way to the trace share one faint line at the bottom. Readings that have
@@ -13652,24 +13625,26 @@ button.trace-step-head:hover { background: var(--hover); }
 .desk-card-actions .ghost.quiet:hover { background: var(--hover); color: var(--text); }
 .chat-drawer-sub { margin: 0 0 6px; color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .02em; }
 
-/* Hours, today, this week, this month: one switch, then short sections. */
+/* Hours, today, this week, this month: one switch, then short sections. Everything is scoped
+   under the panel's own class: the conversation's plan list uses .plan-list and .plan-text too,
+   and these card rules used to clobber it from further down the file. */
 .plan-view { display: flex; flex-direction: column; gap: 12px; margin-bottom: 18px; }
-.plan-ranges { display: flex; gap: 2px; padding: 2px; border-radius: var(--radius-pill); background: var(--active); align-self: flex-start; }
-.plan-ranges button { min-height: 28px; padding: 0 12px; border: 0; border-radius: var(--radius-pill); background: none; color: var(--muted); font-size: 12px; white-space: nowrap; }
-.plan-ranges button[aria-pressed='true'] { background: var(--surface); color: var(--text); box-shadow: var(--shadow-card); font-weight: 600; }
-.plan-group h4 { margin: 0 0 6px; color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .02em; }
-.plan-group h4.warn, .plan-state.warn, .plan-meta .warn { color: var(--warn); }
-.plan-list { margin: 0; padding: 0; list-style: none; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); overflow: hidden; }
-.plan-list li + li { border-top: 1px solid var(--border); }
-.plan-list button, .plan-list a, .plan-row { display: flex; align-items: baseline; gap: 10px; width: 100%; min-height: 36px; padding: 8px 12px; border: 0; background: none; color: var(--text); font-size: 12.5px; text-align: left; text-decoration: none; }
-.plan-list button:hover, .plan-list a:hover { background: var(--hover); }
-.plan-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
-.plan-meta { flex: none; display: inline-flex; gap: 8px; max-width: 45%; overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
-.plan-list .plan-more { justify-content: center; min-height: 32px; color: var(--muted); font-size: 11.5px; }
-.plan-state { margin: 0; color: var(--muted); font-size: 12.5px; }
-.plan-skeleton li { height: 36px; padding: 13px 12px; }
-.plan-skeleton li span { display: block; width: 60%; height: 10px; border-radius: var(--radius-xs); background: var(--active); }
-.plan-skeleton li:nth-child(2) span { width: 42%; }
+.plan-view .plan-ranges { display: flex; gap: 2px; padding: 2px; border-radius: var(--radius-pill); background: var(--active); align-self: flex-start; }
+.plan-view .plan-ranges button { min-height: 28px; padding: 0 12px; border: 0; border-radius: var(--radius-pill); background: none; color: var(--muted); font-size: 12px; white-space: nowrap; }
+.plan-view .plan-ranges button[aria-pressed='true'] { background: var(--surface); color: var(--text); box-shadow: var(--shadow-card); font-weight: 600; }
+.plan-view .plan-group h4 { margin: 0 0 6px; color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .02em; }
+.plan-view .plan-group h4.warn, .plan-view .plan-state.warn, .plan-view .plan-meta .warn { color: var(--warn); }
+.plan-view .plan-list { margin: 0; padding: 0; list-style: none; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); overflow: hidden; }
+.plan-view .plan-list li + li { border-top: 1px solid var(--border); }
+.plan-view .plan-list button, .plan-view .plan-list a, .plan-view .plan-row { display: flex; align-items: baseline; gap: 10px; width: 100%; min-height: 36px; padding: 8px 12px; border: 0; background: none; color: var(--text); font-size: 12.5px; text-align: left; text-decoration: none; }
+.plan-view .plan-list button:hover, .plan-view .plan-list a:hover { background: var(--hover); }
+.plan-view .plan-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.plan-view .plan-meta { flex: none; display: inline-flex; gap: 8px; max-width: 45%; overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.plan-view .plan-list .plan-more { justify-content: center; min-height: 32px; color: var(--muted); font-size: 11.5px; }
+.plan-view .plan-state { margin: 0; color: var(--muted); font-size: 12.5px; }
+.plan-view .plan-skeleton li { height: 36px; padding: 13px 12px; }
+.plan-view .plan-skeleton li span { display: block; width: 60%; height: 10px; border-radius: var(--radius-xs); background: var(--active); }
+.plan-view .plan-skeleton li:nth-child(2) span { width: 42%; }
 .plan-view[aria-busy='true'] .plan-ranges button[aria-pressed='true'] { opacity: .75; }
 
 /* The drawer. Beside the talk when there is room — real width, nothing covered; over the
@@ -13727,7 +13702,7 @@ body:has(.chat-home) .pet { visibility: hidden; }
   .chat-strip { justify-content: flex-start; }
   .topbar-desk .chat-entry { min-width: 40px; min-height: 42px; }
   .topbar-desk .chat-badge { position: absolute; top: 4px; right: 2px; min-width: 15px; height: 15px; padding: 0 3px; font-size: 9.5px; line-height: 15px; }
-  .chat-strip button, .chat-ask-acts .primary, .chat-ask-acts .ghost, .chat-drawer-tabs button, .chat-tray-head, .chat-ask-row, .plan-ranges button { min-height: 40px; }
+  .chat-strip button, .chat-ask-acts .primary, .chat-ask-acts .ghost, .chat-drawer-tabs button, .chat-tray-head, .chat-ask-row, .plan-view .plan-ranges button { min-height: 40px; }
   .chat-asks { padding: 4px 12px 0; }
   .chat-composer { padding-bottom: calc(8px + var(--safe-bottom)); }
   .chat-drawer.over { top: 0; left: 0; width: auto; padding-top: var(--safe-top); padding-bottom: var(--safe-bottom); border: 0; border-radius: 0; animation: chat-drawer-up .3s cubic-bezier(.2,.8,.2,1); }
