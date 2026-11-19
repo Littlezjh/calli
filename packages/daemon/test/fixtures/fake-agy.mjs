@@ -1,9 +1,7 @@
 #!/usr/bin/env node
 if (process.argv.includes('--version')) { process.stdout.write('fixture 1.2.3\n'); process.exit(0); }
-// A stand-in for the Antigravity CLI in headless stream-json mode, for tests.
-// Prompt text drives behaviour: "tool" runs a command, "command" needs a permission that headless
-// mode cannot ask for, "slow" waits until interrupted, "crash" exits.
-import { existsSync, mkdirSync, readFileSync, writeFileSync, symlinkSync } from 'node:fs';
+// Antigravity ACP fixture plus the account-query and login CLI entry points.
+import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, symlinkSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { agyUsage } from './live-usage.mjs';
 import { coordinationFixture } from './coordination.mjs';
@@ -82,33 +80,46 @@ if (promptIndex >= 0 && args[promptIndex + 1] !== undefined) {
   process.exit(0);
 }
 
-const flag = (name) => (args.includes(name) ? args[args.indexOf(name) + 1] : undefined);
-if (!args.includes('-p=') || flag('--input-format') !== 'stream-json' || flag('--output-format') !== 'stream-json') {
-  process.stderr.write('fake-agy: expected stream-json in both directions and -p=\n');
-  process.exit(2);
-}
-
-const conversation = flag('--conversation') ?? (process.env.FAKE_HANDOVER_EXHAUST_ONCE || process.env.FAKE_TRANSIENT_ONCE ? `agy-conv-${process.pid}` : 'agy-conv-1');
-const model = flag('--model') ?? 'default';
-const effort = flag('--effort');
-const fullAccess = args.includes('--dangerously-skip-permissions');
-const mode = fullAccess ? 'always-proceed' : (flag('--mode') ?? 'request-review');
-
-const out = (obj) => process.stdout.write(JSON.stringify(obj) + '\n');
+if (args[0] !== 'acp') throw new Error('expected agy acp');
+let conversation = 'agy-conv-1', model = 'default', effort, mode = 'default';
+let fullAccess = false, pending, waiting = false;
 let stepIndex = 0;
-const step = (fields) => out({ event: 'step_update', step_update: { conversation_id: conversation, ...fields } });
-const result = (fields) => out({ event: 'result', result: { conversation_id: conversation, ...fields } });
+const out = obj => process.stdout.write(JSON.stringify(obj) + '\n');
+const update = u => out({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: conversation, update: u } });
+const reply = (id, result) => out({ jsonrpc: '2.0', id, result });
+const started = new Set();
+const step = s => {
+  if (s.step_type === 'agent_response' && s.text_delta) update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: s.text_delta } });
+  if (!['tool', 'subagent'].includes(s.step_type)) return;
+  const id = `agy-step-${s.step_index}`;
+  const sub = s.subagent_info?.subagents?.[0];
+  const name = s.tool_name ?? s.tool_info?.name ?? (sub ? 'invoke_subagent' : 'tool');
+  if (!started.has(id)) {
+    started.add(id);
+    update({ sessionUpdate: 'tool_call', toolCallId: id, name, title: s.tool_info?.parameters?.CommandLine ?? name,
+      kind: name === 'run_command' ? 'execute' : 'other', status: 'in_progress',
+      rawInput: sub ? { TypeName: sub.type_name } : s.tool_info?.parameters });
+  }
+  if (['DONE', 'ERROR'].includes(s.state)) update({ sessionUpdate: 'tool_call_update', toolCallId: id,
+    status: s.state === 'ERROR' ? 'failed' : 'completed', rawOutput: s.tool_info?.error?.message ?? s.tool_info?.output ?? '' });
+};
+const result = fields => {
+  waiting = false;
+  if (fields.status !== 'SUCCESS') {
+    if (fields.error === 'interrupted') reply(pending, { stopReason: 'cancelled' });
+    else out({ jsonrpc: '2.0', id: pending, error: { code: -32000, message: fields.error } });
+  } else {
+    update({ sessionUpdate: 'usage_update', used: 1234, size: 1048576 });
+    reply(pending, { stopReason: 'end_turn', ...(fields.usage ? { usage: fields.usage } : {}) });
+  }
+};
+const config = () => [{ id: 'model', category: 'model', currentValue: model, options: [{ value: 'fast' }, { value: 'big-thinking' }] },
+  { id: 'thought_level', category: 'thought_level', currentValue: effort ?? 'high', options: [{ value: 'low' }, { value: 'high' }] }];
+const info = () => ({ sessionId: conversation, configOptions: config(), modes: { currentModeId: mode,
+  availableModes: ['default', 'accept-edits', 'auto', 'plan'].map(id => ({ id, name: id })) } });
 
-setTimeout(() => out({ event: 'init', conversation_id: conversation, init: { cwd: process.cwd(), tools: [], permission_mode: mode } }), 10);
-
-let waiting = false;
 let advanceIndex = 0;
 let advanceScript = '';
-process.on('SIGINT', () => {
-  if (waiting) result({ status: 'ERROR', response: 'partial', error: 'interrupted' });
-  process.exit(1);
-});
-
 function runTurn(text) {
   step({ step_index: stepIndex++, state: 'DONE', step_type: 'user_input' });
   if (process.env.FAKE_AGY_WEB && text.startsWith('Search the web using')) {
@@ -237,7 +248,7 @@ function runTurn(text) {
   if (process.env.FAKE_LIVE_USAGE && text.includes('live usage')) {
     agyUsage(conversation, stepIndex++);
     if (text.includes('slow')) { waiting = true; return; }
-    setTimeout(() => result({ status: 'SUCCESS', response: 'live usage', num_turns: 1 }), 2400);
+    setTimeout(() => result({ status: 'SUCCESS', response: 'live usage', num_turns: 1, usage: { inputTokens: 100, cachedReadTokens: 50, cachedWriteTokens: 0, outputTokens: 20, totalTokens: 170 } }), 2400);
     return;
   }
   if (text.includes('crash')) {
@@ -255,14 +266,6 @@ function runTurn(text) {
     step({ step_index: index, state: 'ACTIVE', step_type: 'tool', tool_name: 'run_command', tool_info: info });
     step({ step_index: index, state: 'DONE', step_type: 'tool', tool_name: 'run_command', tool_info: { ...info, output: 'hi\r\n' } });
   }
-  if (text.includes('command') && !fullAccess) {
-    const index = stepIndex++;
-    const info = { name: 'run_command', parameters: { CommandLine: 'make test' } };
-    step({ step_index: index, state: 'ACTIVE', step_type: 'tool', tool_name: 'run_command', tool_info: info });
-    step({ step_index: index, state: 'ERROR', step_type: 'tool', tool_name: 'run_command', tool_info: { ...info, error: { type: 'TOOL_ERROR', message: 'user denied permission to run command' } } });
-    process.stderr.write('jetski: no output produced\n');
-    return result({ status: 'SUCCESS', response: '', denied_actions: [{ action: 'command', display_name: 'RunCommand' }] });
-  }
   const index = stepIndex++;
   const reply = `echo:${text};model:${model};${effort ? `effort:${effort};` : ''}mode:${mode};conv:${conversation}`;
   step({ step_index: index, state: 'ACTIVE', step_type: 'agent_response', text_delta: reply });
@@ -270,21 +273,56 @@ function runTurn(text) {
   result({ status: 'SUCCESS', response: reply + '\n', num_turns: 1 });
 }
 
-let buffer = '';
-process.stdin.setEncoding('utf8');
-process.stdin.on('data', (chunk) => {
-  buffer += chunk;
-  let idx;
-  while ((idx = buffer.indexOf('\n')) >= 0) {
-    const line = buffer.slice(0, idx).trim();
-    buffer = buffer.slice(idx + 1);
-    if (!line) continue;
-    const msg = JSON.parse(line);
-    if (msg.event !== 'user') {
-      process.stderr.write(`warning: ignoring unsupported stream input message event "${msg.event}"\n`);
-      continue;
+const approvals = new Map();
+let approvalId = 1000;
+createInterface({ input: process.stdin }).on('line', async line => {
+  const msg = JSON.parse(line), p = msg.params ?? {};
+  if (process.env.FAKE_AGY_RPC_LOG) appendFileSync(process.env.FAKE_AGY_RPC_LOG, JSON.stringify({ pid: process.pid, ...msg }) + '\n');
+  if (!msg.method) { approvals.get(msg.id)?.(msg.result); approvals.delete(msg.id); return; }
+  switch (msg.method) {
+    case 'initialize': reply(msg.id, { protocolVersion: 1, agentCapabilities: { loadSession: true, sessionCapabilities: { resume: {} } } }); break;
+    case 'session/new':
+    case 'session/resume':
+    case 'session/load':
+      conversation = p.sessionId ?? (process.env.FAKE_HANDOVER_EXHAUST_ONCE || process.env.FAKE_TRANSIENT_ONCE ? `agy-conv-${process.pid}` : 'agy-conv-1');
+      reply(msg.id, info());
+      update({ sessionUpdate: 'available_commands_update', availableCommands: [
+        { name: 'compact', description: 'Compact the conversation' }, { name: 'goal', description: 'Set a native goal' },
+        { name: 'make-video', description: 'Turn a brief into a video' }] });
+      update({ sessionUpdate: 'usage_update', used: 0, size: 1048576 });
+      break;
+    case 'session/set_mode': mode = p.modeId; fullAccess = mode === 'auto';
+      update({ sessionUpdate: 'current_mode_update', currentModeId: mode }); reply(msg.id, {}); break;
+    case 'session/set_config_option':
+      if (p.configId === 'model') model = p.value;
+      else if (p.configId === 'thought_level') effort = p.value;
+      else { out({ jsonrpc: '2.0', id: msg.id, error: { code: -32602, message: 'unknown config' } }); break; }
+      reply(msg.id, { configOptions: config() }); break;
+    case 'session/prompt': {
+      pending = msg.id;
+      let text = p.prompt.filter(c => c.type === 'text').map(c => c.text).join('');
+      if (p.prompt.some(c => c.type === 'image')) text += ';image:embedded';
+      if (/^\/compact(?:\s|$)/.test(text)) {
+        if (text === '/compact fail') { result({ status: 'ERROR', error: 'compact failed' }); break; }
+        if (text === '/compact slow') { waiting = true; break; }
+        // agy 1.5.12 reports occupancy and a normal prompt result, no compaction entity.
+        update({ sessionUpdate: 'usage_update', used: 250, size: 1048576 });
+        reply(msg.id, { stopReason: 'end_turn' }); break;
+      }
+      if (text === 'usage-drop') { update({ sessionUpdate: 'usage_update', used: 10, size: 1048576 }); reply(msg.id, { stopReason: 'end_turn' }); break; }
+      if (text.includes('run a command')) {
+        const id = ++approvalId;
+        const answer = new Promise(resolve => approvals.set(id, resolve));
+        out({ jsonrpc: '2.0', id, method: 'session/request_permission', params: { sessionId: conversation,
+          toolCall: { toolCallId: 'approval-command', title: 'Run command' },
+          options: [{ optionId: 'allow', kind: 'allow_once', name: 'Allow' }, { optionId: 'reject', kind: 'reject_once', name: 'Reject' }] } });
+        const res = await answer;
+        if (res.outcome?.optionId !== 'allow') { reply(msg.id, { stopReason: 'cancelled' }); break; }
+      }
+      runTurn(text); break;
     }
-    runTurn(String(msg.message?.content ?? ''));
+    case 'session/cancel': if (waiting) result({ status: 'ERROR', error: 'interrupted' }); break;
+    default: out({ jsonrpc: '2.0', id: msg.id, error: { code: -32601, message: 'Unknown method' } });
   }
 });
 process.stdin.on('end', () => process.exit(0));

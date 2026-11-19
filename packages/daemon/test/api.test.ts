@@ -1637,24 +1637,24 @@ test('matchTurns pairs the two histories from the start and gives up when they d
   assert.deepEqual(matchTurns([], ['a'], 3), { hubToAgent: [-1], agentNext: 0 });
 });
 
-test('agy: two permission levels, no approvals, no images; settings are flags of its process', async () => {
+test('agy: ACP approvals, images, compact and per-session settings', async () => {
   const agents = (await (await api('/api/agents')).json()) as Array<{ id: string; label: string; available: boolean; capabilities: any }>;
   const agy = agents.find((a) => a.id === 'agy')!;
   assert.equal(agy.label, 'Antigravity');
   assert.equal(agy.available, true);
-  assert.deepEqual(agy.capabilities.permissionModes, ['auto_edit', 'full_access']);
-  assert.deepEqual([agy.capabilities.approvals, agy.capabilities.images, agy.capabilities.effortLevels], [false, true, ['low', 'medium', 'high', 'xhigh', 'max']]);
+  assert.deepEqual(agy.capabilities.permissionModes, ['ask', 'auto_edit', 'full_access']);
+  assert.equal(agy.capabilities.compact, true);
+  assert.deepEqual([agy.capabilities.approvals, agy.capabilities.images, agy.capabilities.effortLevels], [true, true, ['low', 'medium', 'high', 'xhigh', 'max']]);
   const models = (await (await api('/api/agents/agy/models')).json()) as Array<{ id: string; label: string; efforts: string[]; isDefault?: boolean }>;
   assert.deepEqual(models, [
     { id: 'fast', label: 'Fast', efforts: ['low', 'high'], isDefault: true },
     { id: 'big-thinking', label: 'Big (Thinking)', efforts: [] },
   ]);
 
-  // It cannot ask, so "ask" is not offered, and a new thread starts with full access: at the lower
-  // level every command is refused. The lower level can still be chosen; other agents keep theirs.
+  // ACP adds ask while preserving the existing full-access default.
   assert.equal(agy.capabilities.defaultPermissionMode, 'full_access');
   const ask = await api('/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'agy', cwd: workdir, permissionMode: 'ask' }) });
-  assert.equal(ask.status, 400);
+  assert.equal(ask.status, 201);
   assert.equal((await api('/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'agy', cwd: workdir, effort: 'max' }) })).status, 400);
   assert.equal((await api('/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'agy', cwd: workdir, model: 'big-thinking', effort: 'low' }) })).status, 400);
   assert.equal(((await newThread({ agent: 'agy' })) as { permissionMode?: string }).permissionMode, 'full_access');
@@ -1683,11 +1683,14 @@ test('agy: two permission levels, no approvals, no images; settings are flags of
   assert.equal(view.agentSessionId, 'agy-conv-1');
   assert.equal(view.resumeCommand, `cd ${workdir} && '${process.execPath}' '${join(here, 'fixtures', 'fake-agy.mjs')}' --conversation 'agy-conv-1'`);
 
-  // A command needs a permission it cannot ask for: the turn ends with an explanation.
-  const refused = await sendAndWait('run a command');
-  assert.equal(refused.end.type, 'turn.error');
-  assert.match(refused.end.data.message, /full access/);
-  assert.deepEqual([refused.end.data.code, refused.end.data.refused], ['permission_refused', ['RunCommand']]);
+  // Native approval requests reach the ordinary approval API.
+  await post(`/api/threads/${thread.id}/turns`, { text: 'run a command' });
+  const approval = await waitFor(async () => {
+    const log = await events(thread.id);
+    return log.find(e => e.type === 'approval.request') ?? null;
+  });
+  await post(`/api/approvals/${approval.data.approvalId}`, { optionId: 'allow' });
+  await untilIdle(thread.id);
 
   // Raising the level, changing the effort, and switching to a fixed-effort model all carry on in the same conversation.
   assert.equal((await api(`/api/threads/${thread.id}`, { method: 'PATCH', body: JSON.stringify({ effort: 'high' }) })).status, 200);
@@ -1698,9 +1701,17 @@ test('agy: two permission levels, no approvals, no images; settings are flags of
   assert.equal((await api(`/api/threads/${thread.id}`, { method: 'PATCH', body: JSON.stringify({ permissionMode: 'full_access', model: 'big-thinking' }) })).status, 200);
   const allowed = await sendAndWait('run a command');
   assert.equal(allowed.end.type, 'turn.done');
-  assert.equal(replyOf(allowed.list, allowed.turnId), 'echo:run a command;model:big-thinking;mode:always-proceed;conv:agy-conv-1');
+  assert.equal(replyOf(allowed.list, allowed.turnId), 'echo:run a command;model:big-thinking;mode:auto;conv:agy-conv-1');
 
-  // Pictures go in as paths to the stored files; agy opens them itself.
+  // The picker sends null effort alongside a model even when effort is already unset.
+  // It must not discard the ACP session that just accepted the model.
+  const closes = (await events(thread.id)).filter(e => e.type === 'session.lifecycle' && e.data.action === 'close').length;
+  await post(`/api/threads/${thread.id}/turns`, { text: 'before model picker' });
+  await untilIdle(thread.id);
+  assert.equal((await api(`/api/threads/${thread.id}`, { method: 'PATCH', body: JSON.stringify({ model: 'fast', effort: null }) })).status, 200);
+  assert.equal((await events(thread.id)).filter(e => e.type === 'session.lifecycle' && e.data.action === 'close').length, closes);
+
+  // Pictures are native ACP image blocks.
   const image = await sendAndWait('look at this');
   assert.equal(image.end.type, 'turn.done');
   const pictured = await api(`/api/threads/${thread.id}/turns`, { method: 'POST', body: JSON.stringify({ text: 'look', images: [{ data: PNG, mimeType: 'image/png' }] }) });
@@ -1710,9 +1721,8 @@ test('agy: two permission levels, no approvals, no images; settings are flags of
     const all = await events(thread.id);
     return all.some((e) => e.turnId === picturedTurn && e.type === 'turn.done') ? all : null;
   });
-  const stored = withPicture.find((e) => e.turnId === picturedTurn && e.type === 'turn.started')!.data.images[0];
   const said = withPicture.filter((e) => e.turnId === picturedTurn && e.type === 'message.delta').map((e) => e.data.text).join('');
-  assert.ok(said.includes(join(dataDir, 'attachments', thread.id, `${stored.id}.png`)), said);
+  assert.ok(said.includes(';image:embedded;'), said);
 
   // What it cannot do is refused up front.
   assert.equal((await api(`/api/threads/${thread.id}/fork`, { method: 'POST' })).status, 400);
@@ -2449,7 +2459,7 @@ test('download serves any readable file whole or by range, with the name it has'
 test('commands: agy lists and answers its own commands; the answer is a normal turn in the thread', async () => {
   const list = (await (await api(`/api/agents/agy/commands?cwd=${encodeURIComponent(workdir)}`)).json()) as Array<{ name: string; kind: string }>;
   assert.ok(list.some((c) => c.name === 'usage' && c.kind === 'command'));
-  assert.ok(list.some((c) => c.name === 'make-video' && c.kind === 'skill'));
+  assert.ok(list.some((c) => c.name === 'make-video'));
   assert.ok(!list.some((c) => c.name === 'model'));
 
   const thread = await newThread({ agent: 'agy' });

@@ -64,8 +64,8 @@ Plan 交互参考了 [Cline 的 Plan / Act](https://docs.cline.bot/core-workflow
 - **远程协作交接文件：** 跨机器的协作成员，任务写成那台机器上的 `handoff.md`，消息只给路径和摘要；成员把完整结果写成 `result.md`，hub 经 relay exec 读回并在结果下提供文件下载。`calli remote ls/read/write` 经 relay exec 读写成员工作目录，主控可写、其他成员只读，按真实路径收口。详见 `remote-collaboration-design.md`。
 
 - **事件日志是唯一真相。** 每个事件有递增的 `seq`，SSE 断线后用 `after=<seq>` 续传。
-- **上下文占用和累计用量分开。** Codex 取 `tokenUsage.last.totalTokens`，不能取会话累计的 `total`；pi 取 `contextUsage`，压缩后返回 `tokens: null` 时隐藏旧占用，等下一次响应更新；Claude 和 TRAE 取 ACP 的 `usage_update.used / size`。agy 尚未提供占用数据。前端只消费统一事件，不按 agent 分支；80% 提示只是界面阈值，不表示 agent 已触发自动压缩。
-- **压缩只认原生信号。** Codex / TRAE 的 `contextCompaction`、Claude ACP 的带标识工具事件或 `compaction_update`、Pi 新旧 compaction 事件、ZCode 保留在 `session.updated` 的原生压缩操作载荷，统一映射到 `context.compaction`。在工作记录中按发生顺序独立显示，不计入工具步数；重复通知只更新同一行，未收到成功通知不显示“已压缩”。手动 `/compact` 沿用现有操作行，不重复展示。刷新与翻页从事件日志回放；旧日志缺失的事件不倒推补造，agy 暂无可靠信号。
+- **上下文占用和累计用量分开。** Codex 取 `tokenUsage.last.totalTokens`，不能取会话累计的 `total`；pi 取 `contextUsage`，压缩后返回 `tokens: null` 时隐藏旧占用，等下一次响应更新；Claude、TRAE 和 agy 取 ACP 的 `usage_update.used / size`。agy 的逐请求用量仍只读 transcript，ACP 轮次总量经 ledger 扣除已报请求，避免重复。前端只消费统一事件，不按 agent 分支；80% 提示只是界面阈值，不表示 agent 已触发自动压缩。
+- **压缩只认原生信号。** Codex / TRAE 的 `contextCompaction`、Claude ACP 的带标识工具事件或 `compaction_update`、Pi 新旧 compaction 事件、ZCode 保留在 `session.updated` 的原生压缩操作载荷，统一映射到 `context.compaction`。在工作记录中按发生顺序独立显示，不计入工具步数；重复通知只更新同一行，未收到成功通知不显示“已压缩”。手动 `/compact` 沿用现有操作行，不重复展示。刷新与翻页从事件日志回放；旧日志缺失的事件不倒推补造，agy 1.5.12 实测 `/compact` 只有 `usage_update` 和正常 `session/prompt` 结束，没有原生压缩通知；手动压缩走当前 ACP 会话并用 `trackCompaction` 记录成功／失败／取消，自动压缩不根据占用变化推断。
 - **原始事件接口按轮次分页（兼容）。** 文字和思考是一个片段存一条，长轮次有上万条。打开线程最多取最新 3 轮（`events?tail`），同时按 2,000 条事件预算确定边界；更早的从顶部一页页取（`events?before=<seq>`）。一页总是从某一轮的开头开始，单轮再长也整轮给。轮次起点有独立索引，避免扫描工具输出。数据库游标逐条读取并立即合并连续工具快照，避免把整页原始快照同时放进内存；随后把同一轮里连续的同类文字片段合并成首尾两条，原始存储不变。SSE 续传把游标之后的全部补完再接实时事件，不按页截断。
 - **一轮一个工作块。** 一轮里做的事（思考、工具调用、中途说的话）按发生顺序收在一个块里，运行中展开并显示“工作中 · 已用时长 · N 步”，计时按轮次开始时间每秒更新，不依赖新事件，刷新后继续；只刷新时间文字，不重绘 Markdown 和工具内容。停止或完成后计时固定，结束后折成"用时 X · N 步"；块后面的文字才是回答。思考只露最新几行，想完是一行。
 - **工作图标按操作统一。** 摘要和明细共用同一套图标：读取用展开的书页，编辑用铅笔，命令用带边框的终端，搜索用放大镜，网页用地球，其他工具用扳手。统一 18 px、圆头线条与文字间距，窄屏长命令不挤压图标；仍按统一事件里的操作类型呈现，不在前端按 agent 分支。
@@ -74,7 +74,7 @@ Plan 交互参考了 [Cline 的 Plan / Act](https://docs.cline.bot/core-workflow
 - **daemon 重启时收尾。** 启动时把还标着"运行中"的线程里没结束的那一轮记为 `turn.error`（`code: interrupted`）。
 - **同一个会话，两个入口。** 线程保存 agent 侧的会话 ID。网页和终端操作的是同一份会话；daemon 重启后用这个 ID 恢复。只有实际发送后才创建原生会话的 CLI，通过 `StartOptions.onSessionId` 在收到原生标识时立即保存，不用假 ID 或额外提示词预建会话。
 - **新对话预启动。** 新对话页的账号、目录、权限、模型、强度和速度稳定 400 毫秒后，通过 `POST /api/thread-warmups` 预备一个可取消的原生会话；不发提示词、不调用模型，也不创建 Calli 线程。首次创建线程时携带 `warmupId`，服务端再次核对完整配置和适配器实例，接用已就绪或仍在启动的同一进程；失效或失败则正常启动。临时目录使用预留线程 ID，接用时连同凭据一并归属真实线程。每台 daemon 最多保留两个未使用的预热会话，10 分钟过期，启动最多等待 30 秒；离开页面或改配置时取消，daemon 退出时清理。新 worktree、协作、写作及不支持预启动的适配器沿用发送时启动，示例模式不发预热请求。参考 [Persona 的备用进程](https://github.com/nwverse/persona/blob/main/server/internal/node/assistant_spare.go) 与 [Happy 的持续输入流](https://github.com/slopus/happy/blob/main/packages/happy-cli/src/claude/claudeRemote.ts)：提前做本机启动工作，已有线程继续复用，不额外调用模型保温。
-- **进程原因留痕。** `session.lifecycle` 记录启动、就绪、失败和关闭的原因及就绪耗时，不记录提示词、凭据或本机路径。原因区分新线程、恢复、预热接用／失败、模型／强度／速度变更或重置、启用协作、账号适配器变化、个人目录作用域变化、编辑消息、归档、删除、轮次异常和 daemon 退出；agy 内部重启与豆包每轮起进程也记录。事件可从线程原始事件接口读取；不把进程准备耗时当成上游首 token 延迟。
+- **进程原因留痕。** `session.lifecycle` 记录启动、就绪、失败和关闭的原因及就绪耗时，不记录提示词、凭据或本机路径。原因区分新线程、恢复、预热接用／失败、模型／强度／速度变更或重置、启用协作、账号适配器变化、个人目录作用域变化、编辑消息、归档、删除、轮次异常和 daemon 退出；豆包每轮起进程也记录。事件可从线程原始事件接口读取；不把进程准备耗时当成上游首 token 延迟。
 - **不在 agent 那边留痕迹。** 探测模型和命令用临时进程（pi 加 `--no-session`；Claude 不发消息就不会落盘）。
 - **设置按线程保存：** 权限、模型、思考强度。运行中修改会直接作用到会话上，做不到时重启会话并恢复。
   - **Claude 新会话的模型在启动前对齐。** 显式选择的模型同时作为 SDK 启动参数和该子进程的 `ANTHROPIC_MODEL`，避免 ACP 初始化时又按原生 `settings.model` 校验另一个模型，或把同一模型的别名当成切换，再发一次有超时限制的校验请求。只覆盖本次进程，不写原生配置；未指定模型仍使用原生默认值，恢复会话沿用原有加载与设置流程。ACP 错误保留 `data.details` 中的文字原因和原生错误码，不把任意结构化载荷拼进错误提示。
@@ -91,7 +91,7 @@ Plan 交互参考了 [Cline 的 Plan / Act](https://docs.cline.bot/core-workflow
 - **工作模式与权限分开。** `workMode: execute | plan` 按线程保存，前端只看 `capabilities.workModes`。运行中禁止切换，原生计划审批导致的模式变化由适配器回报；排队消息保留入队时的模式。进入计划不会改写用户的执行权限，回到执行继续使用原模型、强度、会话和权限。计划模式不能启动或恢复长期目标。
   - 输入框「＋」菜单合并附件与「计划模式」开关，开启时菜单打勾、底栏「＋」旁出现「计划」胶囊（列表图标 + 计划 + ×，点 × 退出），输入框提示先讨论方案，关闭即回到执行。手机模型仪表按钮及其容器保持固定正圆，停止和发送同时出现时也不压缩；手机上运行中的一轮遇到空输入框折叠为一行（＋、追加一条…、停止），点按输入行立即展开回两行。
   - Codex / TraeX 通过 `collaborationMode/list` 探测，再随 `turn/start` 传原生 `collaborationMode`；模型和强度取当前会话，不套用另一套默认值。旧版本不支持时明确报错。
-  - Claude 使用 ACP `session/set_mode`，`current_mode_update` 同步界面；原生 ExitPlanMode 审批按用户已选权限批准，不清空上下文。zcode 使用 `session/setMode` 的 plan/build，并读取原生模式事件。agy 通过 `--mode plan`，切换后恢复同一 conversation。pi 使用适配器内的简短提示词接入同一开关：计划时先讨论方案，切回执行或恢复执行会话时明确解除旧的讨论限制，不重启会话、不安装扩展、不改配置。此模式仅为对话约定，不提供工具只读拦截；斜杠命令保持原样交给 pi。
+  - Claude 使用 ACP `session/set_mode`，`current_mode_update` 同步界面；原生 ExitPlanMode 审批按用户已选权限批准，不清空上下文。zcode 使用 `session/setMode` 的 plan/build，并读取原生模式事件。agy 使用 ACP `session/set_mode` 的 default／accept-edits／auto／plan；模型和强度通过 `session/set_config_option` 的 model／thought_level 切换，不重启进程。旧 conversation ID 用 `session/resume` 接回，不重放历史。显式清除已选模型／强度仍沿用共享重启回退；原值已是默认时不重启。pi 使用适配器内的简短提示词接入同一开关：计划时先讨论方案，切回执行或恢复执行会话时明确解除旧的讨论限制，不重启会话、不安装扩展、不改配置。此模式仅为对话约定，不提供工具只读拦截；斜杠命令保持原样交给 pi。
   - Codex / TraeX 的 `requestUserInput`、Claude 的 form elicitation、zcode 的 `requestUserInput` 统一为问题卡。`POST /api/inputs/:id` 校验字段与选项、单选/多选和自由输入；停止、原生问题过期、轮次结束后释放等待，重复答复返回 404。浏览器重连从事件日志恢复；daemon 重启时原轮次标记中断，问题失效。
   - 原生计划审批直接回复当前请求，后续由 agent 继续。其他 agent 的计划一出（`plan.completed`），Hub 就把线程切回执行：之后说的话，无论是开工还是修改方案，都按正常模式发；想再规划就重新打开计划模式。方案是线程里的一张小卡片（左上列表图标和「计划」，右上下载与拷贝，正文只露开头、底部渐隐，点卡片整页阅读，Esc 或点背景关闭），原生计划审批的方案正文也画成同一张卡片。要不要执行、怎么改，统一在底部 sheet 里问（见下）。Codex / TraeX 用原生 plan 条目；pi 和 agy 没有自己的计划条目，适配器把计划模式下结束这一轮的那段回答作为方案上报，工具调用前的话照常作为消息，停止或出错时整段退回为消息。除 pi 的轻量提示词模式外，Hub 不额外编写规划提示词；不另建 agent 或计划文件。原生接入的只读约束由各 agent 的 Plan 行为负责，pi 不提供这一保证。
   - 需要用户拿主意的事都在一个底部 sheet 里问，暂时代替输入框（输入框只隐藏不卸载，草稿不丢）：hub 计划决策（「是否执行该方案？」：确认执行 / 填写拒绝并说明修改要求 / 跳过，跳过记在本机、刷新后不再问）、原生计划审批（同一问法，答案走 `POST /api/inputs/:id`）、agent 提问（一次一问，可回退，多选带勾选圈和「下一步/提交」，自由输入回车发送，跳过即取消；Claude 表单里选择字段自带的 `X_custom` 补充字段并进同一张卡：选题、可选补充、一次提交，补充算作该题回答但字段身份不变，真正独立的多问不合并）、工具权限审批（标题、命令或改动文件、「允许这一次」加重、始终允许的说明、拒绝）。确认执行发送「按我们讨论的计划开始执行。」；拒绝修改意见通过 `POST /api/threads/:id/turns` 带 `workMode: 'plan'` 发送，线程回到计划模式。已回答的提问、计划决策和审批在线程里留一行浅色痕迹（已回答/已跳过/已确认执行/已退回方案/已允许/已拒绝），不抢眼；hub 计划决策不留痕，后面直接是用户的话。
@@ -111,12 +111,12 @@ Plan 交互参考了 [Cline 的 Plan / Act](https://docs.cline.bot/core-workflow
 - **分叉：** agent 复制自己那边的会话，hub 复制事件日志和图片，新线程记下 `forkedFrom`。可以到某一轮为止：两边各有各的轮次编号，所以 hub 先读 agent 的历史（`loadHistory`，每轮带一个 `forkRef`），用和终端同步同一套办法按提问文字对齐，再把那一轮的 `forkRef` 交给 `forkSession`；事件日志只复制到下一轮开始之前。最后一轮等于整个线程，不读历史。
 - **斜杠命令分三层：** agent 报的照常列出；agent 只在终端界面里回答、但无界面下另有出路的，由适配器补上（agy 用单次 `agy -p /usage` 运行，pi 用 RPC 的 `compact`、`get_session_stats`，Claude 的 `/cost` 能答只是没列出）；实在没有的（Claude 的 `/status`、`/help`）由 hub 自己做，并把终端里的原名放进搜索关键词。
 - **消息编辑：** 用户改自己已发的消息时，先让 agent 复制到这条消息**之前**的会话（`forkBeforeRef`：pi 是这条用户消息的 entry，Codex/TRAE 是这一轮的 turn，Claude 用前一轮最后一条消息），再从修改后的内容发一轮。当前对话从这条消息重新开始，后面的旧轮次移出当前事件日志，原样存进 `edited_events`，原线程 ID、标题和原生会话路径都不变，也不新建可见线程。原始 `seq` 只增不减（`event_sequences` 记住已用过的最大值），`turn_text` 同步删除旧轮次，搜索和导出因此只看当前对话。前端收到 `thread.historyChanged` 后重新读取历史，不靠隐藏消息或前端过滤。文件不回滚。能力 `editMessage`，与 `fork`/`forkAt` 分开；请求带请求 ID 与来源版本，重复请求返回同一轮，历史已被替换时要求刷新。
-- **图片按 agent 的能力走：** 能直接收图的发图片本身；agy 只收文字，发文件路径让它自己打开；pi 的纯文本模型在装了 `pi-aux-vision` 后发路径，由它的 `describe_image` 工具交给视觉模型，没装就拦下并提示换模型。
+- **图片按 agent 的能力走：** 能直接收图的发图片本身；agy ACP 直接接收图片块；pi 的纯文本模型在装了 `pi-aux-vision` 后发路径，由它的 `describe_image` 工具交给视觉模型，没装就拦下并提示换模型。
 - **排队：** 运行中发的消息排队（内存里，最多 5 条），每轮结束后发下一条；"立即发送"打断当前这轮；按停止则不发，文字退回输入框。
 - **未读存在服务器上，** 所以手机上看过，电脑上也算已读。
 - **等待状态：** 线程接口保留 `waiting`，并返回 `waitingReason`（`question` / `plan` / `approval`，无待处理请求时为 `null`）。从当前未解决的原生请求推导，回答、取消和到期后清除；多请求时权限审批优先，其次取最早未回答的提问或计划确认。前端统一映射文案，不按 agent 名称判断；旧 daemon 缺少类型时使用「等待处理」。
 - **终端（第 10 节）：** 真终端要 PTY，首选 `node-pty`（退路 `script -qfc`）；传输沿用 HTTP + SSE（输出 SSE + base64，输入 POST），不引 WebSocket；终端是临时会话，不写 SQLite，daemon 重启即消失，空闲 30 分钟回收，最多 3 个；起始目录限白名单，之后 cd 不管。
-- **agent 做不到的事不假装：** 没有审批的 agent 不显示"请求批准"；agy 因为不能询问而拒绝操作时，`turn.error` 带 `code: permission_refused`，界面提示切到"完全访问"。
+- **agent 做不到的事不假装：** 没有审批的 agent 不显示"请求批准"；agy ACP 支持询问与自动编辑，默认仍为完全访问：native auto 模式仍可能请求审批，客户端只在执行且完全访问时选择原生 allow 选项。
 - **工作目录白名单：** 只能在 `CALLI_WORKDIRS` 列出的目录里建线程。
 - **回复引用的文件：** 图片与文本读取在原有目录校验外，允许当前线程已结束回复中以绝对路径明确引用的单个文件，位置不限（同仓库的其他 worktree、别的项目、系统临时目录）。用已有 `turn_text` 索引匹配完整路径，兼容旧记录与重启，不改 agent 会话、不复制文件。一般路径先解析符号链接（家目录常是链接）；系统临时目录是共享的，其内部符号链接一律拒绝。目录浏览与独立 HTML 预览仍限原有范围。文件不在返回 404，在但没被引用返回 403，图片接口里存在但不是可显示的图片返回 415，前端据此区分「文件不存在」和「无法预览」。
   - 回复图片不显示底部文件路径，仍可点击放大；加载失败保留错误提示。Playground 的页面和截图由 agent 直接生成到持久目录（见 `.agents/skills/ui-playground/SKILL.md`），不依赖系统临时目录，Calli 不另存图片副本。
@@ -224,3 +224,7 @@ Calli 扩展不进入 agent 的工具循环，不改用户消息、上下文或�
 - **格式：** 日期、数字、列表用 `Intl`，按 `localeTag()`（zh-CN、en-US、ja-JP）格式化。`<html lang>` 跟着设，字体按 `:lang()` 换：英文拉丁字体在前，日文日文字体在前，免得共用汉字显示成中文字形。
 - **不翻的：** hub 和 agent 之间按字面解析的协议文字（注释格式、协作消息头、接手标题后缀）保持中文；斜杠菜单的搜索关键词保留中文别名。单元测试会扫 `src/` 里组件中的中文，除了这些例外都要走字典。
 - **daemon：** 请求带 `Accept-Language`（用 hub 里选的语言，不是浏览器的），daemon 生成给人看的文字（错误、cron 描述、交接摘要）以后可以按它翻译；目前 daemon 仍输出中文。
+
+### agy ACP 协议核验（1.5.12）
+
+会话复用共享 `AcpAdapter`／`AcpSession`；原生可用命令优先，`/usage` 等查询保留一次性 print，登录、模型目录、导入和终端恢复继续使用实例隔离环境。参考 [Claude ACP](https://github.com/agentclientprotocol/claude-agent-acp) 的统一审批与命令通知，以及 [Gemini CLI ACP](https://github.com/google-gemini/gemini-cli/blob/main/packages/cli/src/acp/acpSession.ts) 的会话内模式／模型变更；复用协议层，差异留在 agy 适配器。

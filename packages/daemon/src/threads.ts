@@ -1942,7 +1942,7 @@ export class ThreadManager {
       if (updates.model === null) {
         // Back to the agent's own default: only a restart can do that.
         patch.model = null;
-        await this.restartForChange(thread, 'model');
+        if (thread.model !== null) await this.restartForChange(thread, 'model');
       } else {
         const model = await this.validateModel(thread.agent, updates.model);
         patch.model = model;
@@ -1954,7 +1954,7 @@ export class ThreadManager {
     if (updates.effort !== undefined) {
       if (updates.effort === null) {
         patch.effort = null;
-        await this.restartForChange(thread, 'effort');
+        if (thread.effort !== null) await this.restartForChange(thread, 'effort');
       } else {
         const effort = await this.validateEffort(thread.agent, nextModel, updates.effort);
         patch.effort = effort;
