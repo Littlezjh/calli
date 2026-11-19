@@ -135,7 +135,11 @@ test('a title the person set is never renamed, and the second pass only revises 
     await h.send(auto.id, '登录总是超时');
     await wait(() => h.manager.titleBy(auto.id) === 'auto');
     await h.send(auto.id, '第二轮'); await h.send(auto.id, '第三轮');
-    await wait(() => h.manager.listThreads({ archived: true }).length === 2);
+    await wait(() => {
+      const [asked] = h.manager.listThreads({ archived: true });
+      return Boolean(asked && h.store.listEventsOfType(asked.id, 'turn.started').length === 2);
+    });
+    assert.equal(h.manager.listThreads({ archived: true }).length, 1, 'reuses the single archived askOnce thread');
   } finally { await h.close(); }
 });
 
@@ -265,8 +269,12 @@ test('「重新取名」 does not overwrite a title the person set while the age
     await h.send(thread.id, '登录总是超时');
     const naming = h.api(`/api/threads/${thread.id}/autotitle`, 'POST');
     // The automatic naming from the send runs first; the manual one runs behind it. Wait for the
-    // manual one to be underway (a second background thread) before the person renames.
-    await wait(() => h.manager.listThreads({ archived: true }).length === 2 && h.manager.listThreads({ archived: true }).some(t => t.status === 'running'));
+    // manual one to be underway (a second background turn in the reused thread) before renaming.
+    await wait(() => {
+      const archived = h.manager.listThreads({ archived: true });
+      const turns = archived.reduce((sum, t) => sum + h.store.listEventsOfType(t.id, 'turn.started').length, 0);
+      return turns >= 2 && archived.some(t => t.status === 'running');
+    });
     await h.manager.updateThread(thread.id, { title: '我想叫这个' });
     assert.equal((await naming).status, 200);
     assert.equal(h.manager.threadView(thread.id).title, '我想叫这个', 'the person\u2019s title stands');

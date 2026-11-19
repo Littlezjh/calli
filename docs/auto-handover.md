@@ -41,6 +41,15 @@
 - 参考：Claude Code 的 `/compact` 是原 agent 自己压缩、LibreChat/Open WebUI 是同一对话里直接换模型；这里两者都给，因为原账号没额度时它自己写不了。
 - 验证：`auto-handover.test.ts` 新增一项覆盖参数校验与两种写法；`packages/e2e/takeover-shots.mjs` 用真实 daemon、假 agent 和无头 Chromium 拍菜单、弹窗（桌面/手机 × 亮/暗）并真实走完一次交接。未在实体手机上看过。
 
+### 交回老对话（2026-11-18）
+
+链上有更早的一段能接回时，自动交接的倒计时卡片、额度报错卡片、消息菜单「自动交接」和手动交接弹窗都会问「交接到老对话 / 交接到新对话」；自动交接无人在场，有可接回的老对话时默认选老对话，倒计时结束按当前选择执行。老对话接回的条件、存储形态（`threads.handback`）和阅读方式见 `docs/handover-mode.md`。
+
+- 调度：`AutoHandover.settled` 在选出目标后调用 `returnTargets`，有结果时视图带 `returnTo` 与 `choice: 'return'`；摘要照常准备（老对话和新对话都带摘要，不走 resume 复制）。倒计时结束再次校验后，选了老对话且仍可接回就 `executeReturnHandover`，否则回退到新对话。选择在摘要和倒计时阶段都可改（`PATCH /api/threads/:id/auto-handover { choice }`），开始移动后不能改。
+- 手动：`POST /api/threads/:id/takeover { returnTo }`，摘要写法沿用 `summary` 参数。
+- 测试：`packages/daemon/test/handover-return.test.ts`；假 agent `fake-agy.mjs` 的额度文件沿用，无需新增行为。
+- 参考：Claude Code `/compact`+fork（我们的新对话只带摘要）、LibreChat fork（各段独立）、OpenCode 父子会话（可回到父会话继续）。取舍：同一线程只记一次接回；老对话不可接回时静默退到新对话，不阻塞自动交接。
+
 ## 额度读数的三个来源
 
 参考 magpie（yetone/magpie）的三层方案，同名常量与解析对齐：

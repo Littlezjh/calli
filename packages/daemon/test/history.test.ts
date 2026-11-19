@@ -166,7 +166,7 @@ test('large work blocks and text details paginate with a stable version; file re
     f.store.transaction(() => {
       for (let i = 0; i < 205; i++) {
         f.add('a', 'tool.start', { id: String(i), title: `tool ${i}` });
-        f.add('a', 'tool.end', { id: String(i), status: 'completed', output: i === 0 ? 'abc'.repeat(40000) : 'small', content: i === 0 ? [{ type: 'diff', path: 'file.ts', oldText: null, newText: 'new' }] : undefined });
+        f.add('a', 'tool.end', { id: String(i), status: 'completed', ...(i === 0 ? { content: [{ type: 'text', text: 'abc'.repeat(40000) }, { type: 'diff', path: 'file.ts', oldText: null, newText: 'new' }] } : { output: 'small' }) });
       }
     });
     const page = await f.store.history.page('thread');
@@ -544,5 +544,32 @@ test('a page carries only the latest usage reading of each kind', async () => {
     assert.equal(used[0].data.used, 1049);
     assert.equal(page.events.filter(e => e.type === 'usage.sample').length, 1);
     assert.equal(page.events.filter(e => e.type === 'turn.started').length, 2);
+  } finally { f.close(); }
+});
+
+test('a resume handover folds only a turn sent by the handover itself, leaving ordinary follow-up turns visible', async () => {
+  const f = fixture();
+  try {
+    f.make('copied');
+    f.make('retried');
+    const db = (f.store as any).db;
+    db.prepare('UPDATE threads SET handover = ? WHERE id = ?').run(JSON.stringify({ sourceId: 'thread', title: 'thread', agent: 'claude', mode: 'continue', method: 'resume' }), 'copied');
+    db.prepare('UPDATE threads SET handover = ? WHERE id = ?').run(JSON.stringify({ sourceId: 'thread', title: 'thread', agent: 'claude', mode: 'continue', method: 'resume' }), 'retried');
+
+    // No resent turn: an ordinary question asked later stays visible in the chain view.
+    f.store.appendEvent('copied', 'u1', 'turn.started', { text: 'ordinary follow-up after copy' });
+    f.store.appendEvent('copied', 'u1', 'message.delta', { text: 'answer' });
+    f.store.appendEvent('copied', 'u1', 'turn.done', {});
+    assert.equal(f.store.history.handoverInfo('copied').size, 0);
+    const copiedPage = await f.store.history.page('copied', undefined, 0, true);
+    assert.equal(copiedPage.events.find(e => e.type === 'turn.started')?.data.text, 'ordinary follow-up after copy');
+
+    // A retried turn stamped with `coordination.handover === sourceId` folds into the handover card.
+    f.store.appendEvent('retried', 'r1', 'turn.started', { text: 'resent interrupted ask', coordination: { handover: 'thread', retry: 't0' } });
+    f.store.appendEvent('retried', 'r1', 'message.delta', { text: 'finished' });
+    f.store.appendEvent('retried', 'r1', 'turn.done', {});
+    assert.equal(f.store.history.handoverInfo('retried').size, 'resent interrupted ask'.length);
+    const retriedPage = await f.store.history.page('retried', undefined, 0, true);
+    assert.deepEqual(retriedPage.events.find(e => e.type === 'turn.started')?.data, { text: '', handoverCollapsed: true });
   } finally { f.close(); }
 });

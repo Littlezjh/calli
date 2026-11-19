@@ -121,6 +121,7 @@ test('a delivered message is split into who sent it, how it went and its text', 
   assert.deepEqual(coordinationNote('来自 w 的结果\n\n无法启动任务：x'), { note: { from: 'w', kind: 'result', failed: false }, text: '无法启动任务：x' });
   assert.deepEqual(coordinationNote('something else'), { note: { from: '', kind: 'result', failed: false }, text: 'something else' });
   assert.equal(deliveredPreview('## 结论\n\n- **没有**问题\n| a | b |\n|---|---|\n1. `x` 要改'), '结论 没有问题 x 要改');
+  assert.equal(deliveredPreview('已在 [api.test.ts:3426](/tmp/x/api.test.ts#L3426) 补上 ![图](a.png)'), '已在 api.test.ts:3426 补上 图');
 });
 
 test('user text and streamed assistant text are grouped per turn', () => {
@@ -1180,4 +1181,17 @@ test('single channels are one quiet line, and a batch that cannot say what it ho
   assert.equal(turnChannel({ kind: 'mixed', count: 2 }), null);
   assert.equal(turnChannel({ kind: 'mixed', count: 2, parts: [{ kind: 'nonsense' }] }), null);
   assert.deepEqual(turnChannel({ kind: 'mixed', count: 2, parts: [{ kind: 'nonsense' }, { kind: 'person', text: '话' }] })!.parts, [{ kind: 'person', text: '话' }]);
+});
+
+test("an agent program's own warning is a quiet line, not part of the answer", () => {
+  const timeline = buildTimeline([
+    ev('turn.started', { text: 'continue' }),
+    ev('agent.warning', { level: 'warning', text: 'Model "x" is restricted by your organization\'s settings.' }),
+    ev('message.delta', { text: 'answer' }),
+    ev('turn.done', {}),
+  ]);
+  const warning = timeline.items.find(item => item.kind === 'agent-warning');
+  assert.ok(warning?.kind === 'agent-warning' && warning.warning);
+  const answer = timeline.items.find(item => item.kind === 'assistant');
+  assert.ok(answer?.kind === 'assistant' && answer.text === 'answer');
 });

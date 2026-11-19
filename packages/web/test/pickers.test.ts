@@ -326,3 +326,24 @@ test('modelQuotaWindows filters quota windows to the selected model pool and sor
     [['5H', 0], ['7D', 1]],
   );
 });
+
+test('a loading or failed model catalog keeps a stable control and reports its state', async () => {
+  const { createElement } = await import('react');
+  const { renderToStaticMarkup } = await import('react-dom/server');
+  const { ModelPicker } = await import('../src/components/Pickers.js');
+  const props = { catalog: true, models: claude, model: null, efforts: [], effort: null, onModel: () => undefined, onEffort: () => undefined };
+  const loading = renderToStaticMarkup(createElement(ModelPicker, { ...props, catalogStatus: 'loading' }));
+  assert.match(loading, /class="tool-btn model-control-trigger"/);
+  assert.match(loading, /正在加载/);
+  const failed = renderToStaticMarkup(createElement(ModelPicker, { ...props, catalogStatus: 'error', onRetryCatalog: () => undefined }));
+  assert.match(failed, /模型列表读取失败/);
+});
+
+test('a legacy combined model-effort id resolves to its model family and effort', () => {
+  const models = [
+    { id: 'gemini-4-argon', label: 'Gemini 4 Argon', efforts: ['low', 'medium', 'high'], isDefault: true },
+    { id: 'gpt-oss-120b-medium', label: 'GPT-OSS 120B (Medium)', efforts: [] },
+  ];
+  assert.equal(modelName(models, 'gemini-4-argon-high'), 'Gemini 4 Argon');
+  assert.deepEqual(effortsForModel(models, 'gemini-4-argon-high', []), ['low', 'medium', 'high']);
+});

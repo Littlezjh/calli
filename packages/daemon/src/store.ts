@@ -1,5 +1,5 @@
 import { HttpError } from './errors.js';
-import { effectiveHandoverMode, handoverSourceMoved, type HandoverLink } from './handover-mode.js';
+import { effectiveHandoverMode, handoverFollowups, handoverSourceMoved, type HandbackLink, type HandoverLink } from './handover-mode.js';
 import { mkdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
@@ -66,6 +66,8 @@ export interface ThreadRecord {
   /** The thread this one was forked from. Kept even if that thread is later deleted. */
   forkedFrom: string | null;
   handover?: HandoverLink | null;
+  /** Set when the chain came back to this thread: see `HandbackLink`. */
+  handback?: HandbackLink | null;
   /** Set when the thread runs in a git worktree the hub made for it, or shares one with the thread it was forked from. */
   worktree: ThreadWorktree | null;
   /** A turn finished and nobody has looked at the result yet. */
@@ -373,6 +375,7 @@ interface ThreadRow {
   section_id: string | null;
   forked_from: string | null;
   handover: string | null;
+  handback: string | null;
   worktree: string | null;
   unread: number;
   hub_turn_at: string | null;
@@ -412,6 +415,7 @@ const toThread = (r: ThreadRow): ThreadRecord => ({
   sectionId: r.section_id,
   forkedFrom: r.forked_from,
   handover: r.handover ? JSON.parse(r.handover) : null,
+  handback: r.handback ? JSON.parse(r.handback) : null,
   worktree: r.worktree ? (JSON.parse(r.worktree) as ThreadWorktree) : null,
   unread: r.unread === 1,
   hubTurnAt: r.hub_turn_at,
@@ -549,6 +553,8 @@ export class Store {
     if (!cols.some((c) => c.name === 'writing')) this.db.exec('ALTER TABLE threads ADD COLUMN writing TEXT');
     // Migration: forks.
     if (!cols.some((c) => c.name === 'handover')) this.db.exec('ALTER TABLE threads ADD COLUMN handover TEXT');
+    // Migration: the chain came back to this thread (a handover to an older conversation), as JSON.
+    if (!cols.some((c) => c.name === 'handback')) this.db.exec('ALTER TABLE threads ADD COLUMN handback TEXT');
     if (!cols.some((c) => c.name === 'forked_from')) this.db.exec('ALTER TABLE threads ADD COLUMN forked_from TEXT');
     // Migration: the git worktree a forked thread stands in, as JSON.
     if (!cols.some((c) => c.name === 'worktree')) this.db.exec('ALTER TABLE threads ADD COLUMN worktree TEXT');
@@ -978,7 +984,18 @@ export class Store {
   }
 
   handoverMode(thread: ThreadRecord) {
-    return thread.handover ? effectiveHandoverMode(this.db, thread.handover, thread.createdAt) : null;
+    return thread.handover ? effectiveHandoverMode(thread.handover) : null;
+  }
+
+  /** Turns the source took on its own after this thread's handover; null without a handover. */
+  handoverFollowups(thread: ThreadRecord): number | null {
+    if (!thread.handover) return null;
+    const source = this.getThread(thread.handover.sourceId);
+    return handoverFollowups(this.db, thread.handover, thread.createdAt, source?.handback?.afterSeq);
+  }
+
+  setHandback(id: string, link: HandbackLink | null): void {
+    this.db.prepare('UPDATE threads SET handback = ? WHERE id = ?').run(link ? JSON.stringify(link) : null, id);
   }
 
   /** Whether the source of this thread's handover has had a turn since; null without a handover. */

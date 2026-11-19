@@ -230,21 +230,32 @@ export class Scheduler {
     if (!expected) return;
     this.reviewing = true;
     let threadId: string | undefined;
+    let created = false;
     try {
       const settings = await this.manager.personal.resolvedSettings();
       const adapter = settings.agent ? this.adapters.get(settings.agent) : undefined;
       if (!adapter || !settings.agent) throw new HttpError(503, 'personal agent unavailable');
-      const thread = await this.manager.createThread({ agent: settings.agent, cwd: settings.directory,
-        title: `盘点 · ${localDate(new Date())}`, permissionMode: adapter.capabilities.defaultPermissionMode,
-        ...(settings.model ? { model: settings.model } : {}) });
-      threadId = thread.id;
-      await this.manager.startTurn(thread.id, { text: review.prompt(), scheduled: true, review: true }, undefined, false, undefined, turnId => {
+      const title = `盘点 · ${localDate(new Date())}`;
+      const prevId = review.status().lastThreadId;
+      const prev = prevId ? this.store.getThread(prevId) : null;
+      const humanReplied = prev ? this.store.listEventsOfType(prev.id, 'turn.started').some(ev => !ev.data.scheduled) : false;
+      if (prev && !prev.archivedAt && !humanReplied && prev.status !== 'running' && prev.agent === settings.agent && prev.cwd === settings.directory && prev.model === (settings.model ?? null)) {
+        if (prev.title !== title) await this.manager.updateThread(prev.id, { title });
+        threadId = prev.id;
+      } else {
+        const thread = await this.manager.createThread({ agent: settings.agent, cwd: settings.directory,
+          title, permissionMode: adapter.capabilities.defaultPermissionMode,
+          ...(settings.model ? { model: settings.model } : {}) });
+        threadId = thread.id;
+        created = true;
+      }
+      await this.manager.startTurn(threadId, { text: review.prompt(), scheduled: true, review: true }, undefined, false, undefined, turnId => {
         if (this.stopped) throw new HttpError(409, 'scheduler stopped');
-        review.started(expected, thread.id, turnId);
+        review.started(expected, threadId!, turnId);
       });
       this.reviewFailure = null;
     } catch (error) {
-      if (threadId && this.store.getThread(threadId)?.status !== 'running' && !this.store.listEventsOfType(threadId, 'turn.started').length) await this.manager.deleteThread(threadId).catch(() => undefined);
+      if (created && threadId && this.store.getThread(threadId)?.status !== 'running' && !this.store.listEventsOfType(threadId, 'turn.started').length) await this.manager.deleteThread(threadId).catch(() => undefined);
       if (this.stopped || error instanceof HttpError && error.status === 409) return;
       const attempts = (this.reviewFailure?.attempts ?? 0) + 1;
       this.reviewFailure = { attempts, retryAt: Date.now() + FOLLOW_UP_BACKOFF_MS[Math.min(attempts - 1, FOLLOW_UP_BACKOFF_MS.length - 1)] };
@@ -277,6 +288,7 @@ export class Scheduler {
         if (failure && Date.now() < failure.retryAt) continue;
         let threadId: string | undefined;
         let created = false;
+        let releaseEmpty: (() => Promise<void>) | undefined;
         try {
           const linked = this.store.todoThreadIds(todo.id).map(id => this.store.getThread(id)).find(t => t && this.manager.personal.allowed(t.id));
           if (linked?.status === 'running') continue;
@@ -285,10 +297,14 @@ export class Scheduler {
             const settings = await this.manager.personal.resolvedSettings();
             const agent = settings.agent;
             if (!agent || !this.adapters.has(agent)) throw new HttpError(503, 'personal agent unavailable');
-            const thread = await this.manager.createThread({ agent, cwd: settings.directory, title: todo.text,
-              permissionMode: this.adapters.get(agent)?.capabilities.defaultPermissionMode,
-              ...(settings.model ? { model: settings.model } : {}) });
-            threadId = thread.id; created = true;
+            const acquired = await this.manager.personal.acquireWorkThread({
+              agent, cwd: settings.directory, permissionMode: this.adapters.get(agent)?.capabilities.defaultPermissionMode,
+              model: settings.model,
+            });
+            if (acquired.thread.status === 'running') continue;
+            threadId = acquired.thread.id;
+            created = acquired.created;
+            releaseEmpty = acquired.releaseEmpty;
           }
           const note = this.store.todoNote(todo.id);
           const text = `由 Calli 发起的事项跟进。\n事项：${todo.text}\nID：${todo.id}；状态：${todo.state}；归属：${todo.owner}\n${todo.waitingOn ? `等待：${todo.waitingOn}\n` : ''}接续说明（${note.updatedAt ?? '尚未写入'}）：\n${note.text}\n\n处理完更新说明；没有进展就设下次跟进时间并 calli quiet。事项操作见 calli todo --help。`;
@@ -305,7 +321,8 @@ export class Scheduler {
           this.manager.broadcastTodo();
         } catch (e) {
           // Only discard threads that never began a turn; keep all actual conversation history.
-          if (created && threadId && this.store.getThread(threadId)?.status !== 'running' &&
+          if (releaseEmpty) await releaseEmpty().catch(() => undefined);
+          else if (created && threadId && this.store.getThread(threadId)?.status !== 'running' &&
               this.store.listEventsOfType(threadId, 'turn.started').length === 0) {
             await this.manager.deleteThread(threadId).catch(() => undefined);
           }

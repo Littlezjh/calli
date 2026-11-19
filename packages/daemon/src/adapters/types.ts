@@ -113,6 +113,8 @@ export interface AgentSession {
   goalState?(): Promise<GoalSnapshot | null>;
   /** Hooks for agent-initiated turns (voice). Set once per session; present only where the adapter implements them. */
   setSessionHooks?(hooks: SessionHooks): void;
+  /** Syncs a human-readable conversation title to the native session store when supported. */
+  setTitle?(title: string): Promise<void>;
   /**
    * A one-use native voice channel on this session's own connection. Null when the session's
    * process is gone: the caller refuses instead of respawning it silently.
@@ -258,6 +260,9 @@ export interface SystemPrompt {
   source: string;
 }
 
+/** A past turn as far as forking needs it: what was asked, and where a copy ending with it stops. */
+export type ForkPoint = Pick<HistoryTurn, 'text' | 'forkRef'>;
+
 /** One past exchange, in the shape a live turn would have produced. */
 export interface HistoryTurn {
   text: string;
@@ -292,6 +297,10 @@ export interface StartOptions {
   signal?: AbortSignal;
   /** Internal metadata probes must not take the shortcuts used to create a real conversation. */
   probe?: boolean;
+  /** A one-off background run that must not persist a native session on disk. */
+  ephemeral?: boolean;
+  /** Human-readable conversation title to sync to native sessions when created. */
+  title?: string;
   /** Native capability requested for an isolated Calli tool job, absent on ordinary threads. */
   borrowedTool?: string;
   workMode?: WorkMode;
@@ -434,8 +443,6 @@ export interface AgentAdapter {
    * so the hub can offer another agent to take over. Agents word this differently; each says its own.
    */
   planExhausted?(message: string): boolean;
-  /** Whether the native session explicitly refused another writer. */
-  sessionInUse?(message: string): boolean;
   /**
    * Whether two models on this instance bill from independent quota pools, judging by their ids
    * alone — a gateway whose plan models and routed providers bill separately, say. Switching a
@@ -450,6 +457,8 @@ export interface AgentAdapter {
    * default order from moving work between a subscription and a gateway.
    */
   routesThroughGateway?(): boolean;
+  /** Whether the native session explicitly refused another writer. */
+  sessionInUse?(message: string): boolean;
   /** Read-only location of this instance's native session, without starting an agent. */
   sessionLocation?(agentSessionId: string | null, cwd: string): Promise<{
     configDir: string;
@@ -464,6 +473,12 @@ export interface AgentAdapter {
    * another account wrote leave this out.
    */
   importSession?(sourcePath: string): Promise<string>;
+  /**
+   * Writes conversation titles to the agent's own session store, the way its own rename does, so
+   * its session list shows them too. Works whether or not the session is running. Sessions it
+   * cannot find are skipped.
+   */
+  renameSessions?(entries: Array<{ agentSessionId: string; cwd: string; title: string }>): Promise<void>;
   /** Removes the agent's own record of a session. Present only when capabilities.deleteSession is true. */
   deleteSession?(agentSessionId: string, cwd: string): Promise<void>;
   /**
@@ -478,6 +493,13 @@ export interface AgentAdapter {
   getSession?(agentSessionId: string): Promise<AgentSessionSummary | null>;
   /** The past turns of a conversation. Reading must not change the conversation. With capabilities.history. */
   loadHistory?(agentSessionId: string, cwd: string): Promise<HistoryTurn[]>;
+  /**
+   * Every turn of the conversation with the place a copy stops at its end, for an agent whose
+   * loadHistory shows only part of it (Claude's replay starts at the last compaction). Used to
+   * line the hub's turns up with the agent's before forking. Null when it cannot be read; then
+   * loadHistory is used, as it is for an agent without this.
+   */
+  forkPoints?(agentSessionId: string, cwd: string): Promise<ForkPoint[] | null>;
   /**
    * Folders outside the thread's directory where the agent keeps files it made for this session.
    * Images in them may be shown in the thread, like images in the thread's own directory.
@@ -533,6 +555,7 @@ export interface AgentAdapter {
 export interface LoginState {
   status: 'starting' | 'waiting' | 'submitting' | 'success' | 'error' | 'cancelled';
   url?: string;
+  input?: 'code-or-url';
   error?: 'failed' | 'expired' | 'unavailable' | 'verification';
 }
 

@@ -244,12 +244,17 @@ export interface AdvanceView { reason: 'wait' | 'continue'; attempts: number; ma
 /** The auto-advance switch: off by default; a thread may override the global value. */
 export interface AdvanceSettings { enabled: boolean }
 export interface AdvanceState { enabled: boolean; source: 'thread' | 'global'; override: boolean | null }
+/** An earlier conversation of the chain that can take the work back. */
+export interface ReturnTarget { threadId: string; title: string; agent: string }
 export interface AutoHandoverView {
   enabled: boolean; source: 'thread' | 'collaboration' | 'global'; override: boolean | null;
   state?: 'checking' | 'preparing' | 'countdown' | 'stopped' | 'failed';
   target?: HandoverTarget; deadline?: string; reason?: 'near' | 'exhausted'; error?: string;
   /** Where a preparing handover is; all but `summary` are past the point of calling it off. */
   step?: 'summary' | 'switch' | 'copy' | 'handover';
+  /** An older conversation of the chain offered beside a new one, and which of the two the countdown carries out. */
+  returnTo?: ReturnTarget;
+  choice?: 'return' | 'new';
   /** Present when this thread waits for its quota to come back; absent on older daemons. */
   resume?: ResumeView | null;
 }
@@ -289,7 +294,9 @@ export interface Thread {
   sectionId: string | null;
   /** The thread this one was forked from, if it is a fork. */
   forkedFrom: string | null;
-  handover?: { sourceId: string; title: string; agent: string; mode?: 'continue' | 'branch'; automatic?: boolean; detached?: boolean; method?: 'resume' | 'summary'; sourceMoved?: boolean } | null;
+  handover?: { sourceId: string; title: string; agent: string; mode?: 'continue' | 'branch'; automatic?: boolean; detached?: boolean; method?: 'resume' | 'summary'; sourceMoved?: boolean; sourceSeq?: number; /** Turns the source took on its own after the handover. */ followups?: number } | null;
+  /** Set when the chain came back to this thread: `afterSeq` ends its earlier part, `sourceSeq` ends what the handing-over thread contributed. */
+  handback?: { sourceId: string; afterSeq: number; sourceSeq: number; at: string } | null;
   /**
    * The git worktree the thread runs in, when a fork was given one. `of` is the directory it would
    * be in otherwise, which is the project it is listed under; `ofReal` is that with symlinks
@@ -864,6 +871,7 @@ export interface AgentLogin {
   id: string;
   status: 'starting' | 'waiting' | 'submitting' | 'success' | 'error' | 'cancelled';
   url?: string;
+  input?: 'code-or-url';
   error?: 'failed' | 'expired' | 'unavailable' | 'verification';
 }
 
@@ -881,6 +889,8 @@ export interface QuotaWindow {
   label: string;
   /** What the window covers, when the agent splits by model group. */
   scope?: string;
+  /** Exact model IDs covered by this scoped window; absent means the scope is unmapped. */
+  modelIds?: string[];
   /** How much of the window is used, 0 to 100. */
   usedPercent: number;
   /** When the window resets, if the agent said so. ISO. */
@@ -1421,8 +1431,9 @@ export class Api {
   }
 
   /** `forward` reads the eight turns after `after`, from the conversation's beginning on; otherwise the newest eight before `before`. */
-  historyPage(id: string, before?: number, after?: number, chain = false, signal?: AbortSignal, forward = false): Promise<HistoryPage> {
+  historyPage(id: string, before?: number, after?: number, chain = false, signal?: AbortSignal, forward = false, part?: 'before'): Promise<HistoryPage> {
     const params = new URLSearchParams();
+    if (part) params.set('part', part);
     if (before) params.set('before', String(before));
     if (after) params.set('after', String(after));
     if (chain) params.set('chain', '1');
@@ -1430,8 +1441,11 @@ export class Api {
     return this.request('GET', `/api/threads/${id}/history${params.size ? `?${params}` : ''}`, undefined, { signal });
   }
 
-  historyHandover(id: string, full = false): Promise<{ source: { sourceId: string; agent: string; title: string }; method: 'resume' | 'summary' | null; turnId: string | null; reason: string | null; size: number; preview: string; text?: string }> {
-    return this.request('GET', `/api/threads/${id}/history/handover${full ? '?text=1' : ''}`);
+  historyHandover(id: string, full = false, part?: 'before'): Promise<{ source: { sourceId: string; agent: string; title: string }; method: 'resume' | 'summary' | 'return' | null; turnId: string | null; reason: string | null; size: number; preview: string; text?: string }> {
+    const params = new URLSearchParams();
+    if (full) params.set('text', '1');
+    if (part) params.set('part', part);
+    return this.request('GET', `/api/threads/${id}/history/handover${params.size ? `?${params}` : ''}`);
   }
 
   historySummary(id: string, turn: string, cursor?: number, version?: number): Promise<{ prompt: string; text: string; snapshotSeq: number; nextOffset: number | null }> {
@@ -1494,6 +1508,8 @@ export class Api {
     worktree?: boolean;
     /** In no project: the hub gives the thread a scratch folder of its own; `cwd` is ignored. */
     scratch?: boolean;
+    /** A fresh conversation where this thread works: its directory, sharing its worktree. */
+    besideThread?: string;
   }): Promise<Thread> {
     return this.request('POST', '/api/threads', input);
   }
@@ -1842,10 +1858,12 @@ export class Api {
   saveHandoverSettings(value: HandoverSettings): Promise<HandoverSettings> { return this.request('PUT', '/api/handover-settings', value); }
   autoCompactSettings(): Promise<{ settings: AutoCompactSettings; status: AutoCompactStatus }> { return this.request('GET', '/api/autocompact-settings'); }
   saveAutoCompactSettings(value: AutoCompactSettings): Promise<AutoCompactSettings> { return this.request('PUT', '/api/autocompact-settings', value); }
-  autoHandover(id: string): Promise<AutoHandoverView & { targets: HandoverTarget[] }> { return this.request('GET', `/api/threads/${id}/auto-handover`); }
+  autoHandover(id: string): Promise<AutoHandoverView & { targets: HandoverTarget[]; returns?: ReturnTarget[] }> { return this.request('GET', `/api/threads/${id}/auto-handover`); }
   /** The thread's native goal, for the goal card above the input. */
   threadGoal(id: string): Promise<{ goal: GoalView | null }> { return this.request('GET', `/api/threads/${id}/goal`); }
   setAutoHandover(id: string, enabled: boolean | null): Promise<AutoHandoverView> { return this.request('PATCH', `/api/threads/${id}/auto-handover`, { enabled }); }
+  /** Which of an older conversation and a new one the countdown carries out. */
+  setHandoverChoice(id: string, choice: 'return' | 'new'): Promise<AutoHandoverView> { return this.request('PATCH', `/api/threads/${id}/auto-handover`, { choice }); }
   setResume(id: string, armed: boolean): Promise<AutoHandoverView> { return this.request('PATCH', `/api/threads/${id}/auto-handover`, { resume: armed }); }
   /** Cancels the daemon's automatic retry of a transient failure; arming itself is automatic. */
   cancelAutoRetry(id: string): Promise<Thread> { return this.request('PATCH', `/api/threads/${id}/auto-retry`, { enabled: false }); }
@@ -1862,8 +1880,10 @@ export class Api {
     return this.request('POST', `/api/threads/${threadId}/handover-thread`, { agent, model, mode, ...(takeTeam === false ? { takeTeam: false } : {}) });
   }
   /** Hands the thread to `target` now: its conversation, queue and any collaboration lead. */
-  takeOver(threadId: string, target: string | HandoverTarget, note?: string, summary?: 'source' | HandoverTarget): Promise<Thread> {
-    const body: HandoverTarget & { note?: string; summary?: 'source' | HandoverTarget } = typeof target === 'string' ? { agent: target } : { ...target };
+  takeOver(threadId: string, target: string | HandoverTarget, note?: string, summary?: 'source' | HandoverTarget, returnTo?: string): Promise<Thread> {
+    const body: HandoverTarget & { note?: string; summary?: 'source' | HandoverTarget; returnTo?: string } = typeof target === 'string' ? { agent: target } : { ...target };
+    // An older conversation of the chain takes the work back instead of a new one starting.
+    if (returnTo) body.returnTo = returnTo;
     if (note !== undefined) body.note = note;
     // Who writes the brief, when the person chose: the thread's own agent, or another reading the record.
     if (summary !== undefined) body.summary = summary;

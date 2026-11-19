@@ -15,7 +15,7 @@ import { Menu } from './Menu';
 import { PetBustImage, type PetBust } from './Pet';
 import type { HostIconName } from '@calli/extension-api';
 import { HostIcon } from '../extensions/ui';
-import { AgentMark, IconBell, IconChevron, IconClock, IconClose, IconDesktop, IconEdit, IconFolder, IconList, IconMore, IconPin, IconPlus, IconSearch, IconSettings, IconSidebar, IconSparkle, IconServer } from './icons';
+import { AgentMark, IconAgents, IconBell, IconChevron, IconClock, IconClose, IconDesktop, IconEdit, IconHandover, IconFolder, IconList, IconMore, IconPin, IconPlus, IconSearch, IconSettings, IconSidebar, IconSparkle, IconServer } from './icons';
 import { t } from '../i18n';
 
 export { folderName } from '../paths';
@@ -407,49 +407,56 @@ export function Sidebar({
     );
   };
 
-  // Like Orca's agents under a task: the lead's row, then one line per member saying what it is doing.
-  const entry = (thread: Thread, on?: Elsewhere) => {
-    if (thread.external) return externalRow(thread);
-    const team = members?.get(thread.id);
-    if (!team?.length || on?.open) return row(thread, thread.title, thread.preview, undefined, on);
+  const teamOf = (thread: Thread) => members?.get(thread.id);
+  const teamOpenFor = (thread: Thread, team: Thread[]) => Boolean(search.trim()) || (teamOpen.get(thread.id) ?? team.some((m) => busy(m) > 0 || m.id === selectedId));
+  /** A lead's team: a toggle with who is on it (`inline` for the chain card's shared row), then one line per member. */
+  const teamToggle = (thread: Thread, team: Thread[], inline = false, onOpen?: () => void) => {
     const sorted = [...team].sort(teamOrder);
-    const auto = sorted.some((m) => busy(m) > 0 || m.id === selectedId);
-    const open = Boolean(search.trim()) || (teamOpen.get(thread.id) ?? auto);
+    const open = teamOpenFor(thread, team);
     const working = sorted.filter((m) => m.status === 'running').length;
     const waiting = sorted.filter((m) => m.waiting).length;
     const stack = stackLine(sorted);
-    const current = thread.id === selectedId || sorted.some((m) => m.id === selectedId);
-    return <div key={thread.id} className={`handover-group team-group${open ? ' open' : ''}${current ? ' selected' : ''}`}>
+    return <button className={`handover-toggle${inline ? ' inline' : ''}`} aria-expanded={open} onClick={() => { if (!open) onOpen?.(); setTeamOpen((old) => new Map(old).set(thread.id, !open)); }}
+      aria-label={[t('sidebar.agents', sorted.length), waiting ? t('sidebar.waitingCount', waiting) : working ? t('team.running', working) : null, open ? t('sidebar.collapseTeam', thread.title) : t('sidebar.expandTeam', thread.title)].filter(Boolean).join(' · ')}>
+      {inline && <span className="handover-toggle-kind"><IconAgents size={13} /></span>}
+      {stack ? <>
+        {runDot(sorted)}
+        {stack}
+      </> : <>
+        <span>{t('sidebar.agents', sorted.length)}</span>
+        {(waiting || working) > 0 && <span className="team-note">{waiting ? t('sidebar.waitingCount', waiting) : t('team.running', working)}</span>}
+      </>}
+      {!inline && <IconChevron size={13} open={open} />}
+    </button>;
+  };
+  const teamList = (thread: Thread, team: Thread[]) => teamOpenFor(thread, team) && <div className="handover-members">{[...team].sort(teamOrder).map((m) => {
+    const agent = agentById.get(m.agent);
+    const mark = threadMark(m, m.id === selectedId);
+    return <button
+      key={m.id}
+      className={`handover-member${m.id === selectedId ? ' active' : ''}`}
+      aria-current={m.id === selectedId ? 'true' : undefined}
+      title={m.title}
+      onClick={() => onSelect(m.id)}
+      onContextMenu={(e) => { e.preventDefault(); onThreadMenu(m, e.clientX, e.clientY); }}
+      {...longPress(m)}
+    >
+      <span className={`dot ${mark ?? 'idle'}`} role="img" aria-label={mark === 'waiting' ? waitingLabel(m) : mark ? MARK_LABELS[mark] : t('status.idle')} />
+      {agent?.icon ? <span className="agent-mark" role="img" aria-label={agent.label}><AgentMark path={agent.icon} size={compact ? 14 : 13} /></span> : null}
+      <span className="handover-member-name team-member-text">{deliveredPreview(m.coordination?.doing ?? '') || m.title}</span>
+      <time className="handover-member-time" dateTime={m.updatedAt}>{timeAgo(m.updatedAt, now)}</time>
+    </button>;
+  })}</div>;
+  // Like Orca's agents under a task: the lead's row, then one line per member saying what it is doing.
+  const entry = (thread: Thread, on?: Elsewhere) => {
+    if (thread.external) return externalRow(thread);
+    const team = teamOf(thread);
+    if (!team?.length || on?.open) return row(thread, thread.title, thread.preview, undefined, on);
+    const current = thread.id === selectedId || team.some((m) => m.id === selectedId);
+    return <div key={thread.id} className={`handover-group team-group${teamOpenFor(thread, team) ? ' open' : ''}${current ? ' selected' : ''}`}>
       {row(thread, thread.title, thread.preview, undefined, on)}
-      <button className="handover-toggle" aria-expanded={open} onClick={() => setTeamOpen((old) => new Map(old).set(thread.id, !open))}
-        aria-label={[t('sidebar.agents', sorted.length), waiting ? t('sidebar.waitingCount', waiting) : working ? t('team.running', working) : null, open ? t('sidebar.collapseTeam', thread.title) : t('sidebar.expandTeam', thread.title)].filter(Boolean).join(' · ')}>
-        {stack ? <>
-          {runDot(sorted)}
-          {stack}
-        </> : <>
-          <span>{t('sidebar.agents', sorted.length)}</span>
-          {(waiting || working) > 0 && <span className="team-note">{waiting ? t('sidebar.waitingCount', waiting) : t('team.running', working)}</span>}
-        </>}
-        <IconChevron size={13} open={open} />
-      </button>
-      {open && <div className="handover-members">{sorted.map((m) => {
-        const agent = agentById.get(m.agent);
-        const mark = threadMark(m, m.id === selectedId);
-        return <button
-          key={m.id}
-          className={`handover-member${m.id === selectedId ? ' active' : ''}`}
-          aria-current={m.id === selectedId ? 'true' : undefined}
-          title={m.title}
-          onClick={() => onSelect(m.id)}
-          onContextMenu={(e) => { e.preventDefault(); onThreadMenu(m, e.clientX, e.clientY); }}
-          {...longPress(m)}
-        >
-          <span className={`dot ${mark ?? 'idle'}`} role="img" aria-label={mark === 'waiting' ? waitingLabel(m) : mark ? MARK_LABELS[mark] : t('status.idle')} />
-          {agent?.icon ? <span className="agent-mark" role="img" aria-label={agent.label}><AgentMark path={agent.icon} size={compact ? 14 : 13} /></span> : null}
-          <span className="handover-member-name team-member-text">{deliveredPreview(m.coordination?.doing ?? '') || m.title}</span>
-          <time className="handover-member-time" dateTime={m.updatedAt}>{timeAgo(m.updatedAt, now)}</time>
-        </button>;
-      })}</div>}
+      {teamToggle(thread, team)}
+      {teamList(thread, team)}
     </div>;
   };
 
@@ -460,22 +467,40 @@ export function Sidebar({
     const marks = [...new Set(members.filter((thread) => thread.id !== latest.id).map((thread) => threadMark(thread, thread.id === selectedId)).filter(Boolean))] as ThreadMark[];
     const chainStack = stackLine(members, false);
     const chainDot = (['waiting', 'error', 'unread', 'running'] as const).find((m) => marks.includes(m));
-    const current = members.some((thread) => thread.id === selectedId);
+    // The team moves along with a handover, so one segment leads it, not always the one on the card.
+    const lead = members.find((thread) => teamOf(thread)?.length);
+    const team = lead && teamOf(lead);
+    const current = members.some((thread) => thread.id === selectedId) || Boolean(team?.some((m) => m.id === selectedId));
     // Like Orca's agents under a task: one card, the latest conversation on top, the chain folded below it.
     return <div key={key} className={`handover-group${expanded ? ' open' : ''}${current ? ' selected' : ''}`}>
       {row(latest, latest.title.replace(/(?:（接手）)+$/, ''), latest.preview, members)}
-      <button className="handover-toggle" aria-expanded={expanded} onClick={() => setExpandedHandovers((old) => {
-        const next = new Set(old);
-        if (next.has(storageKey)) next.delete(storageKey); else next.add(storageKey);
-        return next;
-      })}
-        aria-label={[t('sidebar.sessions', members.length), expanded ? t('sidebar.collapseHandover', latest.title) : t('sidebar.expandHandover', latest.title)].join(' · ')}>
-        {chainStack ? <>
-          {chainDot && <span className={`dot ${chainDot}`} role="img" aria-label={t('sidebar.otherHandover', MARK_LABELS[chainDot])} title={t('sidebar.otherHandover', MARK_LABELS[chainDot])} />}
-          {chainStack}
-        </> : <span>{t('sidebar.sessions', members.length)}</span>}
-        <IconChevron size={13} open={expanded} />
-      </button>
+      {(() => {
+        const toggleChain = () => {
+          if (!expanded && lead && team) setTeamOpen((old) => new Map(old).set(lead.id, false));
+          setExpandedHandovers((old) => {
+            const next = new Set(old);
+            if (next.has(storageKey)) next.delete(storageKey); else next.add(storageKey);
+            return next;
+          });
+        };
+        const chainButton = <button className={`handover-toggle${team ? ' inline' : ''}`} aria-expanded={expanded} onClick={toggleChain}
+          aria-label={[t('sidebar.sessions', members.length), expanded ? t('sidebar.collapseHandover', latest.title) : t('sidebar.expandHandover', latest.title)].join(' · ')}>
+          {team && <span className="handover-toggle-kind"><IconHandover size={13} /></span>}
+          {chainStack ? <>
+            {chainDot && <span className={`dot ${chainDot}`} role="img" aria-label={t('sidebar.otherHandover', MARK_LABELS[chainDot])} title={t('sidebar.otherHandover', MARK_LABELS[chainDot])} />}
+            {chainStack}
+          </> : <span>{t('sidebar.sessions', members.length)}</span>}
+          {!team && <IconChevron size={13} open={expanded} />}
+        </button>;
+        if (!lead || !team) return chainButton;
+        // Chain and team share one row: each side opens its own list, one at a time.
+        const closeChain = () => setExpandedHandovers((old) => { const next = new Set(old); next.delete(storageKey); return next; });
+        return <div className="handover-toggles">
+          {chainButton}
+          {teamToggle(lead, team, true, closeChain)}
+          <span className="handover-toggles-chevron" aria-hidden="true"><IconChevron size={13} open={expanded || teamOpenFor(lead, team)} /></span>
+        </div>;
+      })()}
       {expanded && <div className="handover-members handover-chain">{members.map((thread) => {
         const agent = agentById.get(thread.agent);
         const mark = threadMark(thread, thread.id === selectedId);
@@ -483,17 +508,20 @@ export function Sidebar({
           key={thread.id}
           className={`handover-member${thread.id === selectedId ? ' active' : ''}`}
           aria-current={thread.id === selectedId ? 'true' : undefined}
+          title={`${thread.title} · ${agent?.label ?? thread.agent}`}
           onClick={() => onSelect(thread.id)}
           onContextMenu={(e) => { e.preventDefault(); onThreadMenu(thread, e.clientX, e.clientY); }}
           {...longPress(thread)}
         >
           <span className={`dot ${mark ?? 'idle'}`} role="img" aria-label={mark === 'waiting' ? waitingLabel(thread) : mark ? MARK_LABELS[mark] : t('status.idle')} />
-          {agent?.icon ? <span className="agent-mark"><AgentMark path={agent.icon} size={compact ? 14 : 13} /></span> : null}
-          <span className="handover-member-name">{agent?.label ?? thread.agent}</span>
+          {agent?.icon ? <span className="agent-mark" role="img" aria-label={agent.label}><AgentMark path={agent.icon} size={compact ? 14 : 13} /></span> : null}
+          {/* Each segment by its own name, so one renamed later reads as renamed; the agent is its mark. */}
+          <span className="handover-member-name">{thread.title.replace(/(?:（接手）)+$/, '') || agent?.label || thread.agent}</span>
           <span className="handover-member-role">{thread.handover ? t('sidebar.successor') : t('sidebar.original')}</span>
           <time className="handover-member-time" dateTime={thread.updatedAt}>{timeAgo(thread.updatedAt, now)}</time>
         </button>;
       })}</div>}
+      {lead && team ? teamList(lead, team) : null}
     </div>;
   });
 
@@ -526,16 +554,17 @@ export function Sidebar({
     return sameDay ? hm : `${d.getMonth() + 1}/${d.getDate()} ${hm}`;
   };
   const labelOf = new Map((merged ?? []).map((s) => [s.hostId, s.label]));
-  const offlineOf = new Map((merged ?? []).filter(s => s.state === 'offline').map(s => [s.hostId, t('sidebar.merged.offline', s.label, clock(s.at))]));
+  const unavailableOf = new Map((merged ?? []).filter(s => s.state === 'offline' || s.state === 'failed')
+    .map(s => [s.hostId, s.state === 'offline' ? t('sidebar.merged.offline', s.label, clock(s.at)) : t('sidebar.merged.failed', s.label, clock(s.at))]));
   const agentsOf = new Map((merged ?? []).map((s) => [s.hostId, s.agents ? new Map(s.agents.map((a) => [a.id, a])) : null]));
   const groups = mergedModel ? (
     <nav className="thread-groups activity merged" aria-label={t('sidebar.merged.label')}>
-      {mergedModel.notes.filter(n => n.state !== 'offline').map((n) => (
+      {mergedModel.notes.filter(n => n.state === 'loading').map((n) => (
         <p key={n.hostId ?? ''} className={`merged-note ${n.state}`} role={n.state === 'loading' ? 'status' : undefined}>
-          {n.state === 'loading' ? t('sidebar.merged.loading', n.label) : t('sidebar.merged.failed', n.label, clock(n.at))}
+          {t('sidebar.merged.loading', n.label)}
         </p>
       ))}
-      {mergedModel.count === 0 && !mergedModel.notes.some((n) => n.state === 'loading') && (offlineOf.size ? <p className="group-empty">{t('sidebar.hostDown')}</p> : empty)}
+      {mergedModel.count === 0 && !mergedModel.notes.some((n) => n.state === 'loading') && (unavailableOf.size ? [...unavailableOf].map(([id, message]) => <p key={id ?? ''} className="group-empty">{message}</p>) : empty)}
       {mergedModel.groups.map((g) => (
         <section key={g.key} className="thread-group" aria-label={g.label}>
           <div className="group-label">{g.label}</div>
@@ -544,7 +573,7 @@ export function Sidebar({
               {entry(thread, {
                 // The hub's own machine is the usual one; only threads elsewhere are named.
                 label: on === null ? undefined : labelOf.get(on),
-                offline: offlineOf.get(on),
+                offline: unavailableOf.get(on),
                 open: on === hostId ? undefined : () => onOpenElsewhere?.(on, thread.id),
                 agents: on === hostId ? undefined : agentsOf.get(on) ?? null,
               })}

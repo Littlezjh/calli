@@ -185,28 +185,6 @@ test('the phone edges wash only where text scrolls out, and the read-only handov
     assert.ok(!/rgba\(0, 0, 0, 0\.\d*[1-9]/.test(plain.washTint), 'the bottom wash is the page colour, not a grey scrim');
     assert.notEqual(plain.blurFilter, 'none', 'the fade above the composer is blurred');
     assert.ok(Math.abs(plain.barWashHeight - (plain.bar + 30)) <= 1, 'the top wash eases out 30px below the bar');
-    // Open the earlier segment: its note joins the slot, but the wash still follows the composer alone.
-    await page.getByLabel('这个线程的更多操作').click();
-    await page.getByRole('menuitem', { name: '分叉与交接' }).click();
-    await page.getByRole('menuitem', { name: '交接记录', exact: true }).click();
-    await page.getByRole('dialog', { name: '交接记录', exact: true }).waitFor();
-    await page.getByRole('menuitem').filter({ hasText: '原始会话' }).click();
-    await page.locator('.handover-readonly').waitFor();
-    const note = await page.locator('.handover-readonly').evaluate(el => {
-      const box = el.getBoundingClientRect(), style = getComputedStyle(el), composer = document.querySelector('.composer-slot > .composer').getBoundingClientRect();
-      return { width: box.width, height: box.height, bottom: box.bottom, gap: composer.top - box.bottom, filter: style.backdropFilter, z: style.zIndex, radius: style.borderTopLeftRadius };
-    });
-    assert.notEqual(note.filter, 'none', 'the note is a glass chip, not bare text over the thread');
-    assert.equal(note.z, '1', 'the chip sits above the wash like the rest of the slot, and the box keeps its menus on top of it');
-    assert.ok(note.height < 90 && note.gap >= 4 && note.gap <= 16, 'a small chip just above the box, not a block');
-    assert.ok(note.width <= 390 - 32, 'the chip stays inside the page margins');
-    const withNote = await edges();
-    assert.ok(withNote.slot > withNote.composer + 60, 'the slot now holds the note as well as the box');
-    assert.ok(Math.abs(withNote.washHeight - (withNote.composer + 40)) <= 1, 'the wash does not grow with the note stacked above the box');
-    mkdirSync('/tmp/calli-glass-surfaces', { recursive: true });
-    await page.screenshot({ path: '/tmp/calli-glass-surfaces/handover-phone.png' });
-    await cdp.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-transparency', value: 'reduce' }] });
-    assert.equal(await page.locator('.handover-readonly').evaluate(el => getComputedStyle(el).backdropFilter), 'none', 'reduced transparency draws the chip solid');
     await context.close();
   } finally { await browser.close(); await daemon.stop(); }
 });

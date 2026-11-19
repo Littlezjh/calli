@@ -3,7 +3,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { startDaemon, openUi, launchBrowser } from '../harness.mjs';
+import { startDaemon, openUi, launchBrowser, api } from '../harness.mjs';
 
 let daemon;
 let browser;
@@ -112,6 +112,14 @@ test('asking in the side chat opens a thread of its own', async () => {
   assert.equal(await page.locator('.side-chat-passage').innerText(), 'hi ther');
   assert.equal(await page.locator('.sidebar .thread-row').count(), 1);
 
+  // The side chat starts on the source model but can choose its own before the first question.
+  const sideModel = page.locator('.side-chat .model-control-trigger');
+  await sideModel.filter({ hasText: 'Think' }).waitFor({ timeout: 10_000 });
+  await sideModel.click();
+  await page.locator('.model-control-panel .effort-model').click();
+  await page.getByRole('menuitemradio', { name: /^Plain\b/ }).click();
+  await page.keyboard.press('Escape');
+
   await page.locator('.side-chat textarea').click();
   await page.keyboard.type('go on');
   await page.keyboard.press('Enter');
@@ -133,6 +141,18 @@ test('asking in the side chat opens a thread of its own', async () => {
   assert.match(titles.join('\n'), /^追问：hi ther$/m);
   assert.equal(await page.locator('.sidebar .thread-fork').count(), 0);
   assert.match(await page.locator('.sidebar .thread-item').filter({ hasText: '追问：hi ther' }).getAttribute('title'), /分叉/);
+  const sideThread = (await (await api(daemon, '/api/threads')).json()).find(thread => thread.title === '追问：hi ther');
+  assert.equal(sideThread.model, 'fake/plain');
+
+  // After the thread exists, changing the model applies to the same thread rather than a new one.
+  const patched = page.waitForResponse(response => response.request().method() === 'PATCH'
+    && new URL(response.url()).pathname === `/api/threads/${sideThread.id}`);
+  await sideModel.click();
+  await page.getByRole('menuitemradio', { name: /^Think\b/ }).click();
+  assert.equal((await (await patched).json()).model, 'fake/think');
+  assert.equal((await (await api(daemon, '/api/threads')).json()).filter(thread => thread.title === '追问：hi ther').length, 1);
+  await page.locator('.side-chat-title').click();
+  await page.locator('.model-control-panel').waitFor({ state: 'detached' });
 
   // The conversation it came from is untouched underneath.
   assert.equal(await page.locator('.main .thread .markdown').first().innerText(), originalAnswer);

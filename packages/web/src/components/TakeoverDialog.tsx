@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import type { AgentInfo, Api, HandoverTarget, Thread } from '../api';
+import type { AgentInfo, Api, HandoverTarget, ReturnTarget, Thread } from '../api';
+import { ReturnChoice } from './AutoHandover';
 import { AgentPicker } from './Pickers';
 import { IconHand } from './icons';
 import { t } from '../i18n';
@@ -9,7 +10,7 @@ interface Props {
   thread: Thread;
   agents: AgentInfo[];
   /** Hands the thread over; resolves once the successor is open. */
-  onTakeOver: (target: HandoverTarget, summary: 'source' | HandoverTarget) => Promise<void>;
+  onTakeOver: (target: HandoverTarget, summary: 'source' | HandoverTarget, returnTo?: string) => Promise<void>;
   onClose: () => void;
 }
 
@@ -25,6 +26,9 @@ export function TakeoverDialog({ api, thread, agents, onTakeOver, onClose }: Pro
   // A thread that stopped on an error most likely ran out of plan: its own agent cannot write.
   const [writer, setWriter] = useState<Writer>(thread.status === 'error' ? 'other' : 'source');
   const [compressor, setCompressor] = useState<HandoverTarget | null>(null);
+  // An earlier conversation of the chain that could take the work back, offered beside a new one.
+  const [returns, setReturns] = useState<ReturnTarget[]>([]);
+  const [choice, setChoice] = useState<'return' | 'new'>('return');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const busyRef = useRef(false);
@@ -32,7 +36,7 @@ export function TakeoverDialog({ api, thread, agents, onTakeOver, onClose }: Pro
   useEffect(() => {
     if (api.demo) return;
     let active = true;
-    void api.autoHandover(thread.id).then(v => { if (active && v.targets[0]) setTarget(v.targets[0]); }).catch(() => undefined);
+    void api.autoHandover(thread.id).then(v => { if (!active) return; if (v.targets[0]) setTarget(v.targets[0]); setReturns(v.returns ?? []); }).catch(() => undefined);
     void api.autoCompactSettings().then(v => { if (active && v.settings.agents[0]) setCompressor(c => c ?? v.settings.agents[0]); }).catch(() => undefined);
     return () => { active = false; };
   }, [api, thread.id]);
@@ -46,7 +50,8 @@ export function TakeoverDialog({ api, thread, agents, onTakeOver, onClose }: Pro
   // Without a compression agent set up, the successor writes the summary of its own takeover.
   const other = compressor ?? (target.agent ? { agent: target.agent } : null);
   const label = (id: string) => agents.find(a => a.id === id)?.label ?? id;
-  const ready = usable(target.agent) && (target.agent !== thread.agent || !!target.model)
+  const toOld = choice === 'return' && returns.length > 0;
+  const ready = (toOld ? true : usable(target.agent) && (target.agent !== thread.agent || !!target.model))
     && (writer === 'source' || !!other && usable(other.agent));
 
   const start = async () => {
@@ -55,7 +60,7 @@ export function TakeoverDialog({ api, thread, agents, onTakeOver, onClose }: Pro
     setBusy(true);
     setError('');
     try {
-      await onTakeOver(target, writer === 'source' ? 'source' : other!);
+      await onTakeOver(toOld ? { agent: returns[0].agent } : target, writer === 'source' ? 'source' : other!, toOld ? returns[0].threadId : undefined);
       onClose();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -71,10 +76,11 @@ export function TakeoverDialog({ api, thread, agents, onTakeOver, onClose }: Pro
         <h2 id="takeover-title" className="dialog-title">{t('takeover.title')}</h2>
         <p className="dialog-message">{t('takeover.message')}</p>
         <fieldset className="takeover-fields" disabled={busy}>
-          <div className="handover-successor">
+          {returns.length > 0 && <ReturnChoice form returns={returns} value={choice} onChange={setChoice} disabled={busy} />}
+          {!toOld && <div className="handover-successor">
             <span>{t('handover.successor')}</span>
             <AgentPicker api={api} agents={agents} value={target.agent} onChange={id => setTarget({ agent: id })} />
-          </div>
+          </div>}
           <div className="handover-successor">
             <span id="takeover-writer">{t('takeover.writer')}</span>
             <div className="chip-row" role="radiogroup" aria-labelledby="takeover-writer">

@@ -5,6 +5,8 @@ import type { ResumeView } from './quota-resume.js';
 import { HttpError } from './errors.js';
 
 export interface HandoverTarget { agent: string; model?: string }
+/** An earlier conversation of the chain that could take the work back. */
+export interface ReturnTarget { threadId: string; title: string; agent: string }
 /**
  * How the work moves to another account of the same agent: `resume` copies the conversation over and
  * goes on in it, `summary` starts afresh from a brief. A different agent always gets a brief.
@@ -20,6 +22,10 @@ export interface AutoHandoverView {
    * are the move itself, past the point where it can be called off.
    */
   step?: 'summary' | 'switch' | 'copy' | 'handover';
+  /** An older conversation of the chain that can take the work back, offered beside a new one. */
+  returnTo?: ReturnTarget;
+  /** Which of the two the countdown will carry out; `return` while an older conversation is offered. */
+  choice?: 'return' | 'new';
   /** The thread's quota-reset watch, added where the thread view is composed. */
   resume?: ResumeView | null;
 }
@@ -225,6 +231,48 @@ export class AutoHandover {
     }
     return out;
   }
+  /**
+   * The earlier conversations of this thread's chain that could take the work back, nearest first.
+   * Each has to be one the hub can go on in without surprising anyone: its agent connected, not
+   * taken out of rotation, with a fresh quota reading under the threshold, and able to run at the
+   * permission level the work has now; it needs a native session of its own and must be idle.
+   */
+  async returnTargets(id: string): Promise<ReturnTarget[]> {
+    const thread = this.manager.getThread(id);
+    const agents = await this.manager.listAgents();
+    const seen = new Set<string>([id]);
+    const out: ReturnTarget[] = [];
+    for (const segment of [...this.manager.handoverChain(thread)].reverse()) {
+      if (seen.has(segment.id)) continue;
+      seen.add(segment.id);
+      let old;
+      try { old = this.manager.getThread(segment.id); } catch { continue; }
+      // A thread is handed back to once: its record holds a single return.
+      if (old.archivedAt || old.handback || !old.agentSessionId || old.agent === thread.agent || old.status === 'running' || this.manager.threadView(old.id).waiting) continue;
+      const agent = agents.find(a => a.id === old.agent && a.available && !a.hidden);
+      if (!agent) continue;
+      if (thread.permissionMode !== 'full_access' && !agent.capabilities.permissionModes.includes(thread.permissionMode as 'ask' | 'auto_edit')) continue;
+      const model = await this.manager.handoverModel(old.agent, old.model);
+      const concrete = { agent: old.agent, ...(model ? { model } : {}) };
+      const { quota, fresh } = await this.candidateQuota(old.agent);
+      if (!quota || !fresh) continue;
+      this.recover(concrete, quota);
+      if (this.isBlocked(concrete)) continue;
+      const windows = instanceWindows(quota, model);
+      if (!windows.length || windows.some(w => w.usedPercent >= this.settings().threshold)) continue;
+      out.push({ threadId: old.id, title: old.title, agent: old.agent });
+    }
+    return out;
+  }
+  /** Picks what a countdown will do: an older conversation or a new one. Only while one is offered. */
+  setChoice(id: string, choice: unknown): AutoHandoverView {
+    if (choice !== 'return' && choice !== 'new') throw new HttpError(400, 'choice must be return or new');
+    const attempt = this.attempts.get(id);
+    if (!attempt?.view.returnTo || attempt.view.step && attempt.view.step !== 'summary') throw new HttpError(409, 'there is nothing to choose now');
+    attempt.view = { ...attempt.view, choice };
+    this.manager.notifyHandover(id);
+    return this.view(id);
+  }
   async settled(id: string, turnId: string): Promise<SettledOutcome> {
     const attempt = this.attempts.get(id);
     if (!attempt || attempt.turnId !== turnId) return 'none';
@@ -255,26 +303,36 @@ export class AutoHandover {
       const poolKnown = Boolean(model) && (quota?.windows.some(w => w.modelIds?.includes(model!)) || this.manager.handoverSeparatesPools(thread.agent));
       this.block(poolKnown ? source : { agent: thread.agent }, quota);
       if (attempt.cancelled || !this.view(id).enabled || this.closed) return 'parked';
-      const target = (await this.targets(id))[0];
+      const listed = (await this.targets(id))[0];
+      // An older conversation of the chain that could take the work back is offered beside a new one;
+      // the person is not there, so it is the default: fewer segments to read.
+      const returns = listed && listed.agent === thread.agent ? [] : await this.returnTargets(id);
+      const back = returns.find(r => r.agent === listed?.agent) ?? returns[0];
+      const target = listed ?? (back ? { agent: back.agent } : undefined);
       if (!target) { this.notices.set(id, { state: 'stopped', reason: exhausted ? 'exhausted' : 'near' }); return 'parked'; }
-      attempt.view = { state: 'preparing', target, reason: exhausted ? 'exhausted' : 'near' };
+      attempt.view = { state: 'preparing', target, reason: exhausted ? 'exhausted' : 'near', ...(back ? { returnTo: back, choice: 'return' as const } : {}) };
       this.manager.notifyHandover(id);
       const switchModel = target.agent === thread.agent && !!target.model && this.manager.canSwitchHandoverModel(thread.agent);
       const failedTurn = exhausted ? turnId : null;
-      // Another account of the same agent goes on in a copy of the conversation and needs no brief.
-      const resume = !switchModel && this.settings().method === 'resume' && await this.manager.canResumeHandover(id, target.agent, failedTurn);
+      // Another account of the same agent goes on in a copy of the conversation and needs no brief;
+      // with an older conversation on offer both ways go over as a brief, never as a copy.
+      const resume = !switchModel && !back && this.settings().method === 'resume' && await this.manager.canResumeHandover(id, target.agent, failedTurn);
       if (!switchModel && !resume) { attempt.view = { ...attempt.view, step: 'summary' }; this.manager.notifyHandover(id); }
       let summary = switchModel || resume ? null : await this.manager.autoHandoverSummary(id, target.agent, exhausted);
       if (attempt.cancelled || !this.view(id).enabled || this.closed) return 'parked';
-      attempt.view = { state: 'countdown', target, reason: attempt.view.reason, deadline: new Date(Date.now() + this.delayMs).toISOString() };
+      const { step: _step, ...ready } = attempt.view;
+      attempt.view = { ...ready, state: 'countdown', deadline: new Date(Date.now() + this.delayMs).toISOString() };
       this.manager.notifyHandover(id);
       await new Promise<void>(resolve => {
         const timer = setTimeout(resolve, this.delayMs);
         attempt.wake = () => { clearTimeout(timer); resolve(); };
       });
       if (attempt.cancelled || !this.view(id).enabled || this.closed || this.manager.threadView(id).waiting || this.manager.getThread(id).archivedAt) return 'parked';
-      // Availability and quota may have changed while the summary was being written.
-      if (!(await this.targets(id)).some(t => t.agent === target.agent && t.model === target.model)) {
+      // Availability and quota may have changed while the summary was being written. The choice is
+      // read now: it may have been changed during the countdown, and an older conversation that
+      // can no longer take the work back leaves the new one, if that is still possible.
+      let toOld = attempt.view.choice === 'return' && !!back && (await this.returnTargets(id)).some(r => r.threadId === back.threadId);
+      if (!toOld && !(await this.targets(id)).some(t => t.agent === target.agent && t.model === target.model)) {
         // The chosen target is named: the brief already said it would take over.
         this.notices.set(id, { state: 'stopped', reason: attempt.view.reason, target }); return 'parked';
       }
@@ -288,7 +346,10 @@ export class AutoHandover {
         retry = exhausted;
       } else {
         const sessionId = resume ? await this.manager.importHandoverSession(id, target.agent) : null;
-        if (sessionId) await this.manager.executeResumeHandover(id, target, sessionId, failedTurn);
+        if (toOld) {
+          summary ??= await this.manager.autoHandoverSummary(id, back!.agent, true);
+          await this.manager.executeReturnHandover(id, back!.threadId, this.manager.returnBrief(summary), failedTurn);
+        } else if (sessionId) await this.manager.executeResumeHandover(id, target, sessionId, failedTurn);
         else {
           // A conversation that could not be copied goes over as a brief, written from the log.
           summary ??= await this.manager.autoHandoverSummary(id, target.agent, true);

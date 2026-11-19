@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { ExternalSession, Section, Thread } from '../src/api.js';
-import { boardStage, buildActivity, buildMerged, buildSidebar, clampSidebarWidth, externalThreadRow, handoverGroups, markTerms, navOverflow, defaultSidebarWidth, savedSidebarWidth, searchTerms, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH, taggedAgents, threadAttention, withExternalSessions, type HostSource } from '../src/sidebar.js';
+import { boardStage, buildActivity, buildMerged, buildSidebar, clampSidebarWidth, externalThreadRow, handoverGroups, markTerms, ownRows, navOverflow, defaultSidebarWidth, savedSidebarWidth, searchTerms, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH, taggedAgents, threadAttention, withExternalSessions, type HostSource } from '../src/sidebar.js';
 import { threadMark } from '../src/notices.js';
 
 let clock = 0;
@@ -359,4 +359,19 @@ test('the row menu places a thread in the board column the board would', () => {
   assert.equal(boardStage(thread('later-run', { status: 'running', report: { stage: 'backlog', note: '', at, by: 'user' } })), 'doing');
   assert.equal(boardStage(thread('later-wait', { waiting: true, report: { stage: 'backlog', note: '', at, by: 'user' } })), 'blocked');
   assert.equal(boardStage(thread('later-done', { doneAt: at, report: { stage: 'backlog', note: '', at, by: 'user' } })), 'done');
+});
+
+test('a lead handed over keeps its earlier segments in the list; its members stay under it', () => {
+  const coord = (rootId: string, retired = false) => ({ rootId, children: 1, paused: false, ...(retired ? { retired: true } : {}) });
+  const a = thread('lead-a', { coordination: coord('lead-c', true) });
+  const b = thread('lead-b', { coordination: coord('lead-c', true), handover: { sourceId: a.id, title: a.title, agent: a.agent, mode: 'continue' } });
+  const c = thread('lead-c', { coordination: coord('lead-c'), handover: { sourceId: b.id, title: b.title, agent: b.agent, mode: 'branch' } });
+  const member = thread('member', { coordination: coord('lead-c') });
+  // A member handed over inside the team is retired too, but it is not the lead's own conversation.
+  const oldMember = thread('old-member', { coordination: coord('lead-c', true) });
+  const rows = ownRows([a, b, c, member, oldMember]);
+  assert.deepEqual(new Set(ids(rows)), new Set([a.id, b.id, c.id]));
+  assert.deepEqual(new Set(ids(handoverGroups(rows)[0].members)), new Set([a.id, b.id, c.id]));
+  const merged = buildMerged([{ hostId: null, threads: [a, b, c, member, oldMember] } as HostSource], '', new Date('2030-01-02'), null);
+  assert.deepEqual(new Set(merged.groups.flatMap((g) => g.items.map((i) => i.thread.id))), new Set([a.id, b.id, c.id]));
 });
