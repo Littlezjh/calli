@@ -12870,16 +12870,10 @@ button.trace-step-head:hover { background: var(--hover); }
 @media (hover: hover) { .chain-line-latest:hover { background: var(--hover); color: var(--text); } }
 .row.chain-followups { display: block; color: var(--faint); font-size: 12px; text-align: center; padding: 6px 0 2px; }
 .chain-followups .text-btn { display: inline; width: auto; min-height: 0; padding: 0; background: none; font-size: 12px; text-decoration: underline; text-underline-offset: 3px; }
-/* One segment to a page: short ones leave room below, the end is a quiet line, and the pull past it is a pill. */
+/* One segment to a page: short ones leave room below, and dragging past an edge shows a pill. */
 .merged-history.paged { position: relative; }
 .chain-page { display: flex; flex-direction: column; min-height: var(--chain-min, 0); transition: transform 0.2s ease, opacity 0.2s ease; }
 .chain-page.chain-settling { opacity: 0; }
-.chain-end { display: flex; align-items: center; gap: 10px; margin-top: auto; padding: 28px 0 10px; color: var(--faint); font-size: 12px; }
-.chain-end::before, .chain-end::after { content: ''; flex: 1; height: 1px; background: var(--border); }
-.chain-end-sep { color: var(--faint); }
-.chain-end-next { padding: 0; border: 0; background: none; color: var(--muted); font: inherit; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
-.chain-end-next:hover { color: var(--text); }
-.chain-end-next:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: var(--radius-sm); }
 .chain-status { padding: 16px 0; text-align: center; }
 .chain-older { display: flex; justify-content: center; min-height: 28px; }
 .chain-enter-next { animation: chain-in-next 0.24s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
@@ -12903,15 +12897,6 @@ button.trace-step-head:hover { background: var(--hover); }
 .chain-pill-ring .bg { stroke: var(--border); }
 .chain-pill-ring .fg { stroke: var(--muted); stroke-linecap: round; }
 .chain-pill.ready .chain-pill-ring .fg { stroke: var(--text); }
-/* Desktop only: a column of dots at the reading's side, one a segment; the current one is a short bar. */
-.chain-rail { position: sticky; top: 45%; z-index: 3; height: 0; pointer-events: none; }
-.chain-rail-dots { position: absolute; right: -14px; top: 0; display: flex; flex-direction: column; align-items: center; gap: 4px; transform: translateY(-50%); pointer-events: auto; }
-.chain-rail-dot { position: relative; width: 8px; height: 8px; padding: 0; border: 0; border-radius: var(--radius-pill); background: var(--border-strong); cursor: pointer; }
-.chain-rail-dot::after { content: ''; position: absolute; inset: -5px -6px; }
-.chain-rail-dot[aria-current="true"] { height: 20px; border-radius: 4px; background: var(--text); }
-.chain-rail-dot:hover { background: var(--muted); }
-.chain-rail-dot:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-@media (hover: none), (pointer: coarse) { .chain-rail, .chain-end-next, .chain-end-sep { display: none; } }
 @media (prefers-reduced-motion: reduce) {
   .chain-page { transition: none; }
   .chain-enter-next, .chain-enter-prev { animation: none; }

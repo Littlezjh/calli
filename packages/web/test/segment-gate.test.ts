@@ -1,33 +1,31 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { addPull, gateDirection, gateNeed, noPull, pullProgress, pullReady, segmentPosition, touchPull, TOUCH_NEED, WHEEL_NEED } from '../src/segmentGate';
+import { blankPress, dragPull, gateDirection, gateNeed, MOUSE_NEED, noPull, pageShift, pullProgress, pullReady, TOUCH_NEED } from '../src/segmentGate';
 import { readingPath } from '../src/handover';
 import type { Thread } from '../src/api';
 
 const seg = (id: string, parent?: string) => ({ id, createdAt: id, handover: parent ? { sourceId: parent, mode: 'continue' } : null }) as Thread;
 
-test('a pull fills toward the threshold and turns the page only when full', () => {
-  let pull = addPull(noPull, 1, 100);
-  assert.equal(pullReady(pull, 'wheel'), false);
-  assert.ok(Math.abs(pullProgress(pull, 'wheel') - 100 / WHEEL_NEED) < 1e-9);
-  pull = addPull(pull, 1, 200);
-  assert.equal(pullReady(pull, 'wheel'), true);
-  assert.equal(pullProgress(pull, 'wheel'), 1);
+test('a drag past an edge counts damped and fills toward the threshold; only a full one turns the page', () => {
+  assert.equal(dragPull(500, 200, 1), 150, 'a finger dragged up 300px is 150 of pull');
+  assert.equal(pullReady({ dir: 1, amount: dragPull(500, 200, 1) }, 'touch'), true);
+  assert.equal(pullReady({ dir: 1, amount: dragPull(500, 300, 1) }, 'touch'), false, '200px of finger is not enough');
   assert.equal(gateNeed('touch'), TOUCH_NEED);
-  assert.equal(pullReady({ dir: 1, amount: 100 }, 'touch'), false, 'a finger needs less than a wheel, but not this little');
-  assert.equal(pullReady({ dir: 1, amount: 110 }, 'touch'), true);
+  assert.equal(gateNeed('mouse'), MOUSE_NEED);
+  assert.equal(pullReady({ dir: -1, amount: 169 }, 'mouse'), false);
+  assert.equal(pullReady({ dir: -1, amount: 170 }, 'mouse'), true);
+  assert.equal(pullProgress({ dir: 1, amount: 75 }, 'touch'), 0.5);
+  assert.equal(pullProgress({ dir: 1, amount: 900 }, 'touch'), 1);
+  assert.equal(pullProgress(noPull, 'touch'), 0);
 });
 
-test('pulling the other way starts over, and sign does not matter', () => {
-  const down = addPull(noPull, 1, 200);
-  assert.deepEqual(addPull(down, -1, -50), { dir: -1, amount: 50 });
-  assert.deepEqual(addPull(noPull, 1, -30), { dir: 1, amount: 30 });
-});
-
-test('a finger past an edge counts damped and only in the direction of the turn', () => {
-  assert.equal(touchPull(500, 300, 1), 120, 'dragging up 200px is 120 of pull toward the next segment');
-  assert.equal(touchPull(300, 500, -1), 120);
-  assert.equal(touchPull(300, 500, 1), 0, 'going back the other way gives back what was pulled');
+test('dragging back gives back what was pulled, and the page follows with a cap', () => {
+  assert.equal(dragPull(300, 500, 1), 0, 'the other way is no pull');
+  assert.equal(dragPull(300, 500, -1), 100);
+  assert.equal(pageShift({ dir: 1, amount: 100 }, 'touch'), -35);
+  assert.equal(pageShift({ dir: -1, amount: 100 }, 'touch'), 35);
+  assert.equal(pageShift({ dir: 1, amount: 1000 }, 'touch'), -TOUCH_NEED * 0.35, 'capped at the threshold');
+  assert.equal(pageShift(noPull, 'mouse'), 0);
 });
 
 test('only an edge with a segment beyond it turns the page', () => {
@@ -41,9 +39,14 @@ test('only an edge with a segment beyond it turns the page', () => {
   assert.equal(gateDirection(0, all), 0);
 });
 
-test('position in the chain is one-based and unknown outside it', () => {
-  assert.deepEqual(segmentPosition(['a:after', 'b:after', 'c:after'], 'b:after'), { index: 2, total: 3 });
-  assert.equal(segmentPosition(['a:after'], 'z:after'), null);
+const node = (text: string | null, textual = false) => ({ closest: () => textual ? {} : null, childNodes: text === null ? [] : [{ nodeType: 3, textContent: text }] });
+test('a mouse drag starts only on empty space, never on words or while text is selected', () => {
+  assert.equal(blankPress(node(null), true), true, 'the margin beside the text, the room under a short segment');
+  assert.equal(blankPress(node('  \n '), true), true, 'whitespace between elements is not text');
+  assert.equal(blankPress(node('hello'), true), false, 'on words: selecting');
+  assert.equal(blankPress(node(null, true), true), false, 'on code, buttons, links, fields');
+  assert.equal(blankPress(node(null), false), false, 'something is selected: the drag belongs to it');
+  assert.equal(blankPress(null, true), false);
 });
 
 test('the pages of a chain run from the earliest known segment through what reading on goes into', () => {

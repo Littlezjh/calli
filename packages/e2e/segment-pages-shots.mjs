@@ -1,5 +1,6 @@
-// Screenshots of a chain read one segment to a page: the pill while the end of a page is pulled past,
-// the page that follows, a short segment with room under it, and the dots at the side. Desktop 1440
+// Screenshots of a chain read one segment to a page: the pill while an edge is dragged past (a finger,
+// or a mouse pressed on empty space), the page that follows, a short segment with room under it. Also
+// checks that a wheel at an edge and a drag that starts on text never turn the page. Desktop 1440
 // and phone 390, light and dark, with a real daemon and fake agents. Run after `npm run build`:
 //   node packages/e2e/segment-pages-shots.mjs [outdir]
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
@@ -77,73 +78,81 @@ try {
     line: document.querySelector('.chain-page [data-chain-line]')?.textContent, end: document.querySelector('[data-chain-end]')?.textContent,
     dots: document.querySelectorAll('.chain-rail-dot').length, mark: document.querySelector('.send-target')?.textContent,
   }));
-  // Pull past an edge by `amount` and hold: a finger stays down, a wheel is still moving.
-  const pull = async (view, dir, amount, hold = false) => {
-    if (!view.phone) {
-      await view.page.mouse.move(700, 450);
-      const step = 20;
-      for (let done = 0; done < amount; done += step) { await view.page.mouse.wheel(0, dir * step); await view.page.waitForTimeout(16); }
-      return;
-    }
-    const x = 200, y0 = dir > 0 ? 600 : 300;
-    await view.cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y: y0 }] });
-    for (let i = 1; i <= 12; i++) { await view.cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y: y0 - dir * (amount / 0.6) * i / 12 }] }); await view.page.waitForTimeout(16); }
-    if (!hold) await view.cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  // Drag past an edge by `px` of finger or mouse movement and hold. Dragging up goes to the next segment, down to the earlier.
+  const drag = async (view, dir, px, hold = false, from) => {
+    const x = view.phone ? 200 : 380, y0 = from ?? (dir > 0 ? 600 : 300);
+    const move = async y => view.phone
+      ? view.cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y }] })
+      : view.page.mouse.move(x, y);
+    if (view.phone) await view.cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y: y0 }] });
+    else { await view.page.mouse.move(x, y0); await view.page.mouse.down(); }
+    for (let i = 1; i <= 14; i++) { await move(y0 - dir * px * i / 14); await view.page.waitForTimeout(16); }
+    if (!hold) await letGo(view);
   };
   const letGo = async view => {
     if (view.phone) await view.cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    else await view.page.mouse.up();
     await view.page.waitForTimeout(700);
   };
+  // Which segment is on screen: the top bar names it (a segment's own line may load in later).
+  const lineOf = view => view.page.evaluate(() => `${document.querySelector('.topbar-title')?.textContent}|${[...document.querySelectorAll('.topbar-sub')].map(e => e.textContent).join()}`);
+  const check = (ok, what) => { if (!ok) throw new Error(`FAILED: ${what}`); console.log('ok:', what); };
 
   for (const combo of combos) pages.push(await open(combo, c.id));
   for (const view of pages) {
     const n = view.name;
+    const latestLine = await lineOf(view);
     console.log(n, 'latest', JSON.stringify(await info(view)));
+    // The page has no mark of its own at the end: no end line, no next button, no dots.
+    check(await view.page.locator('[data-chain-end], .chain-end-next, .chain-rail').count() === 0, `${n}: no end line, next button or dots`);
     await toEdge(view, 'bottom');
     await shot(view, '1-latest-end');
-    // Up to the top of the latest segment (its paging up reaches the true start first), then a short pull: it springs back.
     for (let i = 0; i < 12 && await view.page.locator('.older-messages').count(); i++) { await toEdge(view, 'top'); await view.page.locator('.older-messages').first().click().catch(() => undefined); await view.page.waitForTimeout(500); }
     await toEdge(view, 'top');
-    await view.page.waitForTimeout(400);
     await shot(view, '2-latest-top');
-    await pull(view, -1, view.phone ? 50 : 120, true);
-    await shot(view, '3-pull-back-partial');
-    await letGo(view);
-    console.log(n, 'after short pull', JSON.stringify(await info(view)));
-    await pull(view, -1, view.phone ? 130 : 300, true);
-    await shot(view, '4-pull-back-full');
-    await letGo(view);
-    console.log(n, 'after full pull', JSON.stringify(await info(view)));
-    await shot(view, '5-previous-segment-end');
-    // The end of a middle segment pulled: toward the next one.
-    await pull(view, 1, view.phone ? 50 : 120, true);
-    await shot(view, '6-pull-next-partial');
-    await letGo(view);
-    await pull(view, 1, view.phone ? 130 : 300, true);
-    await shot(view, '7-pull-next-full');
-    await letGo(view);
-    console.log(n, 'after pull next', JSON.stringify(await info(view)));
-    await shot(view, '8-next-segment-start');
+    // A wheel at the edge only stops there.
+    await view.page.mouse.move(700, 450);
+    if (!view.phone) { for (let i = 0; i < 40; i++) { await view.page.mouse.wheel(0, -120); await view.page.waitForTimeout(16); } await view.page.waitForTimeout(600); check(await lineOf(view) === latestLine, `${n}: a wheel past the top does not change segment`); await shot(view, '3-wheel-stays-at-top'); }
+    // A mouse that starts on words selects them instead.
     if (!view.phone) {
-      // The dots jump straight to the first segment: a long one, then the middle one is the short one.
-      await view.page.locator('.chain-rail-dot').first().click();
-      await view.page.waitForTimeout(700);
-      console.log(n, 'rail first', JSON.stringify(await info(view)));
-      await shot(view, '9-rail-first');
-      await view.page.locator('.chain-rail-dot').nth(1).click();
-      await view.page.waitForTimeout(700);
-      await shot(view, '10-short-segment');
-      await view.page.locator('.chain-end-next').focus();
-      await shot(view, '11-next-button-focus');
-      await view.page.locator('.chain-end-next').click();
-      await view.page.waitForTimeout(700);
-      console.log(n, 'next button', JSON.stringify(await info(view)));
-    } else {
-      // The short segment alone on a phone: back one page.
-      await pull(view, -1, 130);
-      await view.page.waitForTimeout(700);
-      await shot(view, '10-short-segment');
+      const box = await view.page.locator('.chain-page p').first().boundingBox();
+      await view.page.mouse.move(box.x + 20, box.y + box.height / 2);
+      await view.page.mouse.down();
+      for (let i = 1; i <= 20; i++) { await view.page.mouse.move(box.x + 20 + i * 10, box.y + box.height / 2 + i * 20); await view.page.waitForTimeout(16); }
+      check(await view.page.locator('.chain-pill.on').count() === 0, `${n}: a drag from text shows no pill`);
+      await view.page.mouse.up();
+      check(await lineOf(view) === latestLine, `${n}: a drag from text does not change segment`);
+      await view.page.evaluate(() => getSelection()?.removeAllRanges());
     }
+    // An unfinished drag springs back.
+    await toEdge(view, 'top');
+    await drag(view, -1, view.phone ? 160 : 170, true);
+    await shot(view, '4-drag-back-partial');
+    await letGo(view);
+    check(await lineOf(view) === latestLine, `${n}: a short drag springs back`);
+    // A full one, held: the pill says what lets go does.
+    await drag(view, -1, view.phone ? 340 : 400, true);
+    await shot(view, '5-drag-back-full');
+    console.log(n, 'pill', JSON.stringify(await view.page.locator('.chain-pill.on').allInnerTexts()));
+    await letGo(view);
+    const earlier = await lineOf(view);
+    check(earlier !== latestLine, `${n}: a full drag goes back a segment`);
+    console.log(n, 'after full drag', JSON.stringify(await info(view)));
+    await shot(view, '6-earlier-segment-end');
+    if (!view.phone) {
+      await view.page.mouse.move(700, 450);
+      for (let i = 0; i < 40; i++) { await view.page.mouse.wheel(0, 120); await view.page.waitForTimeout(16); }
+      await view.page.waitForTimeout(600);
+      check(await lineOf(view) === earlier, `${n}: a wheel past the bottom does not change segment`);
+    }
+    await drag(view, 1, view.phone ? 160 : 170, true);
+    await shot(view, '7-drag-next-partial');
+    await letGo(view);
+    await drag(view, 1, view.phone ? 340 : 400, true);
+    await shot(view, '8-drag-next-full');
+    await letGo(view);
+    check(await lineOf(view) === latestLine, `${n}: a full drag the other way goes on to the next segment`);
+    await shot(view, '9-next-segment-start');
   }
   for (const view of pages) { await view.page.close(); }
   pages.length = 0;
@@ -152,7 +161,7 @@ try {
     pages.push(view);
     await toEdge(view, 'bottom');
     console.log(view.name, 'short', JSON.stringify(await info(view)));
-    await shot(view, '12-short-segment-whitespace');
+    await shot(view, '10-short-segment-whitespace');
   }
   console.log(`shots in ${out}`);
 } finally {
