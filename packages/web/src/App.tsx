@@ -126,7 +126,7 @@ import { ConnectDialog, DemoBar } from './components/ConnectDialog';
 import { DemoApi, DemoError } from './demo/DemoApi';
 import { EMPTY_MODEL_PREFERENCE, type DraftModelPreference } from '../../daemon/src/model-preferences';
 import { QUICK_SWITCH_HIDDEN_KEY, clampQuickSwitchBottom, savedQuickSwitchBottom, saveQuickSwitchBottom } from './quick-switch';
-import { IconDesktop, IconCheck, IconBell, AgentMark, IconActivity, IconAgents, IconArchive, IconArrowLeft, IconArrowDown, IconBack, IconClose, IconEdit, IconFolder, IconGauge, IconGlobe, IconImport, IconList, IconMenu, IconSettings, IconMore, IconOverview, IconPalette, IconPlus, IconPuzzle, IconServer, IconSidebar, IconSignIn, IconSignOut, IconSparkle, IconTerminal, IconTrace, IconLanguage, IconWaveform, IconSideChat, IconWorktree } from './components/icons';
+import { IconCheck, IconBell, AgentMark, IconActivity, IconAgents, IconArchive, IconArrowLeft, IconArrowDown, IconBack, IconClose, IconEdit, IconFolder, IconGauge, IconGlobe, IconImport, IconList, IconMenu, IconSettings, IconMore, IconOverview, IconPalette, IconPlus, IconPuzzle, IconServer, IconSidebar, IconSignIn, IconSignOut, IconSparkle, IconTerminal, IconTrace, IconLanguage, IconWaveform, IconSideChat, IconWorktree } from './components/icons';
 import { StatReadings } from './components/SessionStats';
 import { ThreadTracePanel } from './components/TracePanel';
 import { chooseLocale, locale, LOCALES, localeChoice, t } from './i18n';
@@ -1999,6 +1999,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
       void refreshThreads();
     },
     onOpenTerminal: () => (demo ? askToConnect() : openTerminal()),
+    onOpenDesktop: hasDesktop && hostUp && !onPage ? () => openDesktop(false) : undefined,
     onNewBeside: (thread) => newThread({ beside: thread }),
     onOpenGit: () => { setFiles(null); setTraceOpen(false); setAgentsOpen(false); setGitOpen(true); },
     onOpenFiles: (thread) => {
@@ -3121,7 +3122,6 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           {onDesk && !selected && <div className="topbar-desk" ref={setDeskSlot} />}
           {selected && (
             <div className="topbar-actions">
-              {hasDesktop && hostUp && !onPage && <button type="button" className={`icon-btn topbar-desktop${desktop === 'open' ? ' on' : ''}`} aria-label={t('desktop.title')} title={t('desktop.title')} aria-pressed={desktop === 'open'} onClick={() => desktop === 'open' ? setDesktop('minimized') : openDesktop(false)}><IconDesktop /></button>}
               {/* The thread at a glance: one panel for the team, the plan, the changes, the pictures
                   and the files. The badge is only ever what needs the person. */}
               {api && hostUp && (overviewDock ? (

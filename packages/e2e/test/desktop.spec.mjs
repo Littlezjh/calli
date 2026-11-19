@@ -132,6 +132,14 @@ async function openDesktop(page) {
   }
 }
 
+async function openConversationDesktop(page, screenshot) {
+  assert.equal(await page.locator('.topbar-desktop').count(), 0, 'the desktop has no persistent header button');
+  await page.locator('.topbar-more').click();
+  await page.getByRole('menuitem', { name: '桌面', exact: true }).waitFor();
+  if (screenshot) await page.screenshot({ path: shot(screenshot), animations: 'disabled' });
+  await page.getByRole('menuitem', { name: '桌面', exact: true }).click();
+}
+
 const connected = (page) => page.locator('.desktop-screen canvas').waitFor({ timeout: 15_000 }).then(() => page.locator('.desktop-panel .term-note').waitFor({ state: 'detached', timeout: 15_000 }));
 
 test('a machine without a desktop offers none', { skip }, async () => {
@@ -141,6 +149,9 @@ test('a machine without a desktop offers none', { skip }, async () => {
     await page.locator('.side-more').click();
     await page.getByRole('menuitem').first().waitFor();
     assert.equal(await page.getByRole('menuitem', { name: '桌面', exact: true }).count(), 0);
+    await page.keyboard.press('Escape');
+    await page.locator('.topbar-more').click();
+    assert.equal(await page.getByRole('menuitem', { name: '桌面', exact: true }).count(), 0, 'the conversation menu also omits unavailable desktops');
   } finally {
     await page.close();
   }
@@ -235,7 +246,7 @@ test('a conversation can send while its desktop is beside it, without leaking ke
       await openThread(page, daemonTouchy, `并排聊天 ${theme}`);
       const input = page.locator('.composer textarea');
       await input.fill('保留这段草稿');
-      await page.locator('.topbar-desktop').click();
+      await openConversationDesktop(page, `desktop-menu-${theme}`);
       await connected(page);
       assert.equal(await page.locator('.desktop-control').getAttribute('aria-pressed'), 'false');
       const panel = await page.locator('.desktop-side').boundingBox();
@@ -263,7 +274,7 @@ test('a conversation can send while its desktop is beside it, without leaking ke
       await page.getByRole('button', { name: '返回并排', exact: true }).click();
       await page.locator('.desktop-minimize').click();
       await page.locator('.desktop-side').waitFor({ state: 'hidden' });
-      await page.locator('.topbar-desktop').click();
+      await openConversationDesktop(page);
       await page.locator('.desktop-side').waitFor();
       assert.equal(await input.inputValue(), '下一轮草稿');
       assert.equal(sockets.length, 1, 'layout changes reuse the original connection');
@@ -284,7 +295,7 @@ test('the phone conversation opens a viewer and returns to its draft on the same
       await openThread(page, daemonOpen, `手机会话与桌面 ${theme}`);
       const input = page.locator('.composer textarea');
       await input.fill('手机草稿');
-      await page.locator('.topbar-desktop').click();
+      await openConversationDesktop(page, `desktop-menu-phone-${theme}`);
       await connected(page);
       assert.equal(await page.locator('.desktop-pad').count(), 0, 'the conversation opens view only');
       await page.waitForFunction(() => {
@@ -297,7 +308,7 @@ test('the phone conversation opens a viewer and returns to its draft on the same
       await input.fill(`inspect-work-mode phone-${theme}`);
       await page.locator('.composer .send-btn').click();
       await page.locator('.row.assistant', { hasText: `phone-${theme}` }).waitFor({ timeout: 15_000 });
-      await page.locator('.topbar-desktop').click();
+      await openConversationDesktop(page);
       await page.locator('.desktop-panel').waitFor();
       await page.getByRole('button', { name: '返回会话', exact: true }).click();
       assert.equal(sockets.length, 1);
