@@ -2920,6 +2920,7 @@ export const ja: Messages = {
   'overview.diffTurn': (n: number) => `第 ${n} ターン`,
   'overview.diffPart': (n: number) => `変更 ${n}`,
   'overview.diffLast': '最後のターンへ',
+  'overview.pictureLarge': '拡大して見る',
   'overview.diffFailed': 'このターンの diff を読み込めませんでした',
   'overview.diffEmpty': 'このターンには diff がありません',
   'overview.diffWindow': (shown: number, older: number) => `最新 ${shown} 件の変更を表示、それ以前の ${older} 件は非表示`,

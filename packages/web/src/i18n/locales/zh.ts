@@ -2922,6 +2922,7 @@ export const zh = {
   'overview.diffTurn': (n: number) => `第 ${n} 轮`,
   'overview.diffPart': (n: number) => `第 ${n} 次修改`,
   'overview.diffLast': '跳到最后一轮',
+  'overview.pictureLarge': '放大查看',
   'overview.diffFailed': '这一轮的 diff 没有读到',
   'overview.diffEmpty': '这一轮没有留下 diff',
   'overview.diffWindow': (shown: number, older: number) => `显示最近 ${shown} 次修改，另有 ${older} 次更早的未显示`,

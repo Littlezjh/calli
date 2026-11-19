@@ -75,6 +75,8 @@ type OverviewProps = {
   onOpenDiff: (file: ChangedFile) => void;
   onOpenFile: (path: string) => Promise<void>;
   onPreview: (path: string) => void;
+  /** On a computer a picture opens in the side column; without it the full-size viewer opens over everything. */
+  onOpenPicture?: (path: string, name: string) => void;
   onOpenTrace: () => void;
   onClose: () => void;
   onViewAll: (section: OverviewSection, returnToPreview?: boolean) => void;
@@ -86,7 +88,7 @@ type Layout = { height: number; sections: Section[]; counts: Partial<Record<Sect
 
 /** Preview counts are chosen once per opening; refreshes keep the same slots and footer. */
 export function ThreadOverview(props: OverviewProps) {
-  const { chain, api, threadId, updatedAt, active, team, agents, plan, roots, loadFile, onOpenMember, onOpenDiff, onOpenFile, onPreview, onOpenTrace, onClose, onViewAll, onLoadingChange, persistent = false, detail } = props;
+  const { chain, api, threadId, updatedAt, active, team, agents, plan, roots, loadFile, onOpenMember, onOpenDiff, onOpenFile, onPreview, onOpenPicture, onOpenTrace, onClose, onViewAll, onLoadingChange, persistent = false, detail } = props;
   const reading = useOverviewReading(api, threadId, updatedAt, active);
   const { outputs, stats, loading, failed } = reading;
   const ready = Boolean(outputs || failed);
@@ -202,7 +204,7 @@ export function ThreadOverview(props: OverviewProps) {
       const selected = take(id, detail ? pictures.filter(file => matches(rel(file.path))) : pictures);
       matched = selected.length;
       summary = gonePictures.length ? t('overview.missingImages', gonePictures.length) : String(pictures.length);
-      rows = <>{selected.map(file => file.missing ? <FileLine key={file.path} path={rel(file.path)} full={file.path} missing locked onOpen={() => {}} /> : <Picture key={file.path} path={file.path} name={rel(file.path)} load={loadFile} enabled={Boolean(detail || layout)} />)}{pad(id, selected.length)}</>;
+      rows = <>{selected.map(file => file.missing ? <FileLine key={file.path} path={rel(file.path)} full={file.path} missing locked onOpen={() => {}} /> : <Picture key={file.path} path={file.path} name={rel(file.path)} load={loadFile} onOpen={onOpenPicture} enabled={Boolean(detail || layout)} />)}{pad(id, selected.length)}</>;
     } else {
       const selected = take(id, detail ? files.filter(file => matches(rel(file.path))) : files);
       matched = selected.length;
@@ -358,7 +360,7 @@ function PathName({ path }: { path: string }) {
 
 /** A thumbnail, fetched while it is on screen; the full picture opens over everything. A file that
  *  exists but cannot be read keeps its square, grey, with the reason on hover. */
-function Picture({ path, name, load, enabled = true }: { path: string; name: string; load: (path: string) => Promise<Blob>; enabled?: boolean }) {
+function Picture({ path, name, load, onOpen, enabled = true }: { path: string; name: string; load: (path: string) => Promise<Blob>; onOpen?: (path: string, name: string) => void; enabled?: boolean }) {
   const [url, setUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [large, setLarge] = useState(false);
@@ -376,7 +378,7 @@ function Picture({ path, name, load, enabled = true }: { path: string; name: str
   // on the picture background instead, with room around it.
   const vector = /\.svgz?$/i.test(path);
   return <>
-    <button type="button" className={`overview-row overview-picture-row${vector ? ' vector' : ''}${error ? ' failed' : ''}`} title={error ? `${name}\n${error}` : name} disabled={!url} onClick={() => setLarge(true)}>
+    <button type="button" className={`overview-row overview-picture-row${vector ? ' vector' : ''}${error ? ' failed' : ''}`} title={error ? `${name}\n${error}` : name} disabled={!url} onClick={() => (onOpen ? onOpen(path, name) : setLarge(true))}>
       <span className="overview-picture-mini">{url ? <img src={url} alt="" /> : <IconImage size={15} />}</span><PathName path={name} />{error && <span className="overview-gone">{t('view.noPreview')}</span>}
     </button>
     {large && url && <Lightbox url={url} name={name} onClose={() => setLarge(false)} />}

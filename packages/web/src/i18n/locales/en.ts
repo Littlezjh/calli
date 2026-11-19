@@ -2924,6 +2924,7 @@ export const en: Messages = {
   'overview.diffTurn': (n: number) => `Turn ${n}`,
   'overview.diffPart': (n: number) => `Change ${n}`,
   'overview.diffLast': 'Jump to the last turn',
+  'overview.pictureLarge': 'View larger',
   'overview.diffFailed': 'Could not read this turn\'s diff',
   'overview.diffEmpty': 'No diff was left in this turn',
   'overview.diffWindow': (shown: number, older: number) => `Latest ${shown} changes shown; ${older} older ${older === 1 ? 'change' : 'changes'} not shown`,

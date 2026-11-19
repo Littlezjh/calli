@@ -108,7 +108,7 @@ test('adaptive overview waits at its trigger, fits without scrolling and preserv
         if (shots && width !== 320) await page.screenshot({ path: `${shots}/overview-files-${width}-${theme}.png` });
         await detail.locator('.overview-row').hover();
         await detail.locator('.overview-preview').click();
-        await page.locator('.preview-scrim').waitFor();
+        await page.locator('.preview-scrim, .dock-panel .preview').waitFor();
         await page.locator('.preview-bar').getByRole('button', { name: '关闭预览' }).click();
         assert.equal(await detail.locator('input').inputValue(), 'report-7');
         if (mobile) await detail.locator('.overview-details-head button').click();

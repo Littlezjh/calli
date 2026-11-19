@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { Api } from '../api';
-import { IconClose, IconExternal, IconRefresh } from './icons';
+import { IconBack, IconClose, IconExternal, IconRefresh } from './icons';
+import { DockPanel } from './DockPanel';
 import { externalPreview } from '../preview-notes';
 import { PreviewAnnotations } from './PreviewAnnotations';
 import { t } from '../i18n';
@@ -20,9 +21,13 @@ interface Props {
   path: string;
   onClose: () => void;
   onError: (e: unknown) => void;
+  /** On a computer it goes in the side column beside the conversation instead of over it. */
+  docked?: boolean;
+  /** Opened from a list: the way back to it, in place of just closing. */
+  onBack?: () => void;
 }
 
-export function PreviewPanel({ api, threadId, path, onClose, onError }: Props) {
+export function PreviewPanel({ api, threadId, path, onClose, onError, docked = false, onBack }: Props) {
   const frame = useRef<HTMLIFrameElement>(null);
   const [url, setUrl] = useState<string | null>(null);
   const [refreshedAt, setRefreshedAt] = useState(0);
@@ -55,41 +60,49 @@ export function PreviewPanel({ api, threadId, path, onClose, onError }: Props) {
 
   const name = path.split('/').pop() || path;
 
+  const bar = (
+    <div className="preview-bar">
+      {onBack && <button className="ghost" onClick={onBack} aria-label={t('common.back')}><IconBack size={14} /></button>}
+      <span className="preview-name" title={path}>
+        {name}
+      </span>
+      <span className="preview-actions">
+        <button className="ghost" onClick={() => void load()}>
+          <IconRefresh size={14} /> {t('preview.refresh')}
+        </button>
+        <button className="ghost" onClick={() => url && window.open(url, '_blank', 'noopener,noreferrer')}>
+          <IconExternal size={14} /> {t('preview.newTab')}
+        </button>
+        <button className="ghost" onClick={onClose} aria-label={t('preview.close')}>
+          <IconClose size={14} />
+        </button>
+      </span>
+    </div>
+  );
+  const body = <>
+    {url ? (
+      <iframe
+        ref={frame}
+        key={`${url}#${refreshedAt}`}
+        className="preview-frame"
+        src={url}
+        // On the preview port the page has an origin of its own, apart from the app: scripts
+        // run, its own assets load same-origin, and the app stays out of reach. Without
+        // allow-same-origin the frame would be opaque and the browser would block its CSS.
+        sandbox="allow-scripts allow-same-origin"
+        title={t('preview.label', name)}
+      />
+    ) : (
+      <div className="preview-loading">{t('preview.opening')}</div>
+    )}
+    <PreviewAnnotations api={api} threadId={threadId} path={path} url={url} frame={frame} generation={refreshedAt} />
+  </>;
+  if (docked) return <DockPanel label={t('preview.label', name)}><div className="preview docked">{bar}{body}</div></DockPanel>;
   return createPortal(
     <div className="preview-scrim" onClick={onClose}>
       <div className="preview" role="dialog" aria-modal="true" aria-label={t('preview.label', name)} onClick={(e) => e.stopPropagation()}>
-        <div className="preview-bar">
-          <span className="preview-name" title={path}>
-            {name}
-          </span>
-          <span className="preview-actions">
-            <button className="ghost" onClick={() => void load()}>
-              <IconRefresh size={14} /> {t('preview.refresh')}
-            </button>
-            <button className="ghost" onClick={() => url && window.open(url, '_blank', 'noopener,noreferrer')}>
-              <IconExternal size={14} /> {t('preview.newTab')}
-            </button>
-            <button className="ghost" onClick={onClose} aria-label={t('preview.close')}>
-              <IconClose size={14} />
-            </button>
-          </span>
-        </div>
-        {url ? (
-          <iframe
-            ref={frame}
-            key={`${url}#${refreshedAt}`}
-            className="preview-frame"
-            src={url}
-            // On the preview port the page has an origin of its own, apart from the app: scripts
-            // run, its own assets load same-origin, and the app stays out of reach. Without
-            // allow-same-origin the frame would be opaque and the browser would block its CSS.
-            sandbox="allow-scripts allow-same-origin"
-            title={t('preview.label', name)}
-          />
-        ) : (
-          <div className="preview-loading">{t('preview.opening')}</div>
-        )}
-        <PreviewAnnotations api={api} threadId={threadId} path={path} url={url} frame={frame} generation={refreshedAt} />
+        {bar}
+        {body}
       </div>
     </div>, document.body
   );

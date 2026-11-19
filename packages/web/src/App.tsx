@@ -66,6 +66,8 @@ import { TerminalPanel } from './components/TerminalPanel';
 import { DesktopPanel } from './components/DesktopPanel';
 import { FilesPanel, type FilesTarget } from './components/FilesPanel';
 import { PreviewPanel } from './components/PreviewPanel';
+import { DockPanel } from './components/DockPanel';
+import { PictureDock } from './components/PictureDock';
 import { fileRef } from './files';
 import { AddAgentDialog } from './components/AddAgentDialog';
 import { OnboardingDialog } from './components/OnboardingDialog';
@@ -1855,26 +1857,43 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
     setGitOpen(false);
     setAgentsOpen(false);
     setOverviewDetail(null);
+    setPreview(null);
+    setDiffFile(null);
+    setPicture(null);
     setDesktop('open');
   };
   // Auxiliary panels share one edge. Putting the desktop away preserves its connection.
   useEffect(() => {
     if (files || traceOpen || gitOpen || agentsOpen || activeOverviewDetail) setDesktop(value => value === 'open' ? 'minimized' : value);
   }, [files, traceOpen, gitOpen, agentsOpen, activeOverviewDetail]);
-  useLayoutEffect(() => { setOverviewDetail(null); setOverviewSignal(0); }, [api, selectedId, onPage]);
+  // The list of a handover chain stays open as another segment is picked from it, beside the conversation it switches.
+  useLayoutEffect(() => { setOverviewDetail(d => d && d.api === api && d.threadId === selectedId && !onPage ? d : null); setOverviewSignal(0); }, [api, selectedId, onPage]);
   const closeOverviewDetail = () => {
     setOverviewDetail(null);
     if (overviewDock && !activeOverviewDetail?.returnToPreview) setOverviewOpen(false);
     else if (!overviewDock && activeOverviewDetail?.returnToPreview) setOverviewSignal(signal => signal + 1);
   };
+  // A page the agent wrote, rendered in a sandboxed iframe.
+  const [preview, setPreview] = useState<{ threadId: string; path: string } | null>(null);
+  const [diffFile, setDiffFile] = useState<{ threadId: string; file: ChangedFile } | null>(null);
+  const [picture, setPicture] = useState<{ threadId: string; path: string; name: string } | null>(null);
   /** A side panel takes the same edge as the overview, so the panel steps aside while one is open —
    *  but the person's own switch is left alone: it comes back when the side panel closes. */
-  const sideOpen = Boolean(agentsOpen && coordination) || Boolean(files) || traceOpen || gitOpen;
+  const dockOpen = !compact && Boolean(activeOverviewDetail || preview || diffFile || picture);
+  const sideOpen = Boolean(agentsOpen && coordination) || Boolean(files) || traceOpen || gitOpen || dockOpen;
+  // One panel at a time in the column: whichever opens last takes it, and the other steps out.
+  const sideKeys = Boolean(agentsOpen && coordination) || Boolean(files) || traceOpen || gitOpen;
+  const wasSide = useRef(false);
+  const wasDock = useRef(false);
+  useEffect(() => {
+    if (sideKeys && !wasSide.current) { setPreview(null); setDiffFile(null); setPicture(null); setOverviewDetail(null); }
+    if (dockOpen && !wasDock.current) { setFiles(null); setTraceOpen(false); setAgentsOpen(false); setGitOpen(false); }
+    if (dockOpen && !wasDock.current) setDesktop(value => value === 'open' ? 'minimized' : value);
+    wasSide.current = sideKeys; wasDock.current = dockOpen;
+  }, [sideKeys, dockOpen]);
   const overviewShown = overviewDock && overviewOpen && !sideOpen && desktop !== 'open' && !activeOverviewDetail && Boolean(selected) && hostUp;
   /** Only the person turns the standing panel off; the switch above remembers it. */
   const closeOverview = useCallback(() => { if (overviewDock) setOverviewOpen(false); }, [overviewDock, setOverviewOpen]);
-  // A page the agent wrote, rendered in a sandboxed iframe.
-  const [preview, setPreview] = useState<{ threadId: string; path: string } | null>(null);
   const openFileLink = useCallback(
     async (raw: string) => {
       if (!api || !selectedId) throw new Error('no thread');
@@ -2188,6 +2207,9 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   appBack.current = () => {
     if (desktop === 'open') { setDesktop('minimized'); return true; }
     if (listOpen) { setDrawer(false); return true; }
+    if (!compact && diffFile) { setDiffFile(null); return true; }
+    if (!compact && preview) { setPreview(null); return true; }
+    if (!compact && picture) { setPicture(null); return true; }
     if (activeOverviewDetail) { closeOverviewDetail(); return true; }
     if (onSettings) {
       if (settingsPath.includes('/')) openSettings(settingsPath.slice(0, settingsPath.lastIndexOf('/')));
@@ -2818,7 +2840,6 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
     return order;
   }, [timeline.items]);
   // One file's whole change history, opened from the changes group; read only while it is open.
-  const [diffFile, setDiffFile] = useState<{ threadId: string; file: ChangedFile } | null>(null);
   // A member's own thread: it was sent from the lead's, which is where its way back goes.
   // A lead's earlier segments are retired seats of its own team, not members: they carry no "back to the lead" line.
   const atMember = Boolean(teamShown && selected!.coordination!.rootId !== selected!.id && !selected!.coordination!.retired);
@@ -2911,7 +2932,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   const overviewChain = selected && latestSegment && !demo ? (() => {
     const members = handoverGroups(threads).find(group => group.members.some(item => item.id === selected.id))?.members ?? [];
     if (members.length < 2) return undefined;
-    return { rows: [latestSegment, ...members.filter(item => item.id !== latestSegment.id)], latestId: latestSegment.id, viewingId: inputThread?.id ?? selected.id, onOpen: (id: string) => pick(id) };
+    return { rows: [latestSegment, ...members.filter(item => item.id !== latestSegment.id)], latestId: latestSegment.id, viewingId: inputThread?.id ?? selected.id, onOpen: (id: string) => { setOverviewDetail(d => d && d.section === 'chain' && !compact ? { ...d, threadId: id } : d); pick(id); } };
   })() : undefined;
   const overviewBody = (close: () => void, persistent: boolean, detail?: OverviewSection) => selected && api && (
     <ThreadOverview key={`${hostId ?? ''}:${selected.id}:${detail ?? 'preview'}`}
@@ -2923,6 +2944,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
       loadFile={loadFile} persistent={persistent}
       onOpenMember={(member) => { setAgentsStart(member ?? null); setAgentsOpen(true); setFiles(null); }}
       onOpenDiff={(file) => setDiffFile({ threadId: selected.id, file })}
+      onOpenPicture={compact ? undefined : (path, name) => setPicture({ threadId: selected.id, path, name })}
       onOpenFile={async (path) => {
         if (/\.html?$/i.test(path)) setPreview({ threadId: selected.id, path });
         else await openFileLink(path);
@@ -3075,7 +3097,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
 
       {/* A conversation under way leans toward the middle of the screen, as in Codex; a new
           thread, and the pages, stay centred where they are. */}
-      <main className={`main${selected && !onPage && hostUp && !compact && desktop !== 'open' ? ' lean' : ''}${overviewShown || (activeOverviewDetail && overviewDock && overviewOpen) ? ' overview-room' : ''}`} ref={mainRef}>
+      <main className={`main${selected && !onPage && hostUp && !compact && desktop !== 'open' ? ' lean' : ''}${overviewShown || (activeOverviewDetail && overviewDock && overviewOpen && !dockOpen) ? ' overview-room' : ''}`} ref={mainRef}>
         {compact && selected && !listOpen && !onPage && hostUp && (
           <ThreadQuickSwitch threads={topLevelThreads} selectedId={selected.id} agents={agents} onSelect={pick} />
         )}
@@ -3658,7 +3680,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
         )}
         </div>
         )}
-        {activeOverviewDetail && overviewBody(closeOverviewDetail, true, activeOverviewDetail.section)}
+        {activeOverviewDetail && compact && overviewBody(closeOverviewDetail, true, activeOverviewDetail.section)}
       </main>
 
       {/* The overview standing beside the conversation: a layer of its own, put away only by the
@@ -3674,6 +3696,8 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
         return a ? <MemberModel agent={a} models={modelsByAgent[a.id] ?? []} value={{ model: thread.model ?? null, effort: thread.effort ?? null }} onNeed={needModels} onChange={({ model, effort }) => { void api.updateThread(thread.id, { model, effort }).then(() => refreshThreads()).catch(handleError); }}
           permission={a.capabilities.permissionModes.length ? thread.permissionMode : undefined} onPermission={(permissionMode) => { void api.updateThread(thread.id, { permissionMode }).then(() => refreshThreads()).catch(handleError); }} /> : null;
       }} leadAgent={threads.find((t) => t.id === coordination.rootId)?.agent} phone={compact} onClose={() => setAgentsOpen(false)} onOpen={thread => { openThread(thread); setAgentsOpen(false); }} onAdjust={(name, draft) => { setAgentsOpen(false); setSelectedId(coordination.rootId); setRestore({ text: t('app.adjustTask', name) + draft, nonce: Date.now() }); }} onRefresh={() => { void refreshThreads(); }} onError={handleError} />}
+      {/* On a computer what the overview opens goes in the column beside the conversation: the whole list of a group here; a page or a file's changes opened from it take its place, with a way back. */}
+      {activeOverviewDetail && !compact && !preview && !picture && !(diffFile && diffFile.threadId === selected?.id) && <DockPanel label={t(activeOverviewDetail.section === 'all' ? 'overview.label' : `overview.${activeOverviewDetail.section}`)}>{overviewBody(closeOverviewDetail, true, activeOverviewDetail.section)}</DockPanel>}
       {files && filesThread && api && <FilesPanel api={api} threadId={filesThread.id} target={files} phone={compact} revision={filesThread.updatedAt} writingStage={filesThread.writing?.stage ?? null} writingHabits={filesThread.writing?.habits ?? null} noted={{ count: noteCount, nonce: filesNotePulse }} onClose={() => setFiles(null)} />}
       {gitOpen && selected && api && <GitPanel key={`${hostId ?? ''}:${selected.id}`} api={api} threadId={selected.id} phone={compact} running={selected.status === 'running'} onClose={() => setGitOpen(false)} />}
       {traceOpen && selected && (
@@ -3690,8 +3714,12 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
         <DesktopPanel api={api} initialControl={desktopControl} attention={Boolean(waitingOn || error || selected?.status === 'error')} hidden={desktop === 'minimized'} onMinimize={() => setDesktop('minimized')} onClose={() => setDesktop('closed')} />
       )}
       </div>
+      {picture && api && !compact && picture.threadId === selected?.id && (
+        <PictureDock key={`${hostId ?? ''}:${picture.threadId}:${picture.path}`} path={picture.path} name={picture.name} load={loadFile}
+          onClose={() => { setPicture(null); setOverviewDetail(null); }} onBack={activeOverviewDetail ? () => setPicture(null) : undefined} />
+      )}
       {preview && api && (
-        <PreviewPanel key={`${hostId ?? ''}:${preview.threadId}:${preview.path}`} api={api} threadId={preview.threadId} path={preview.path} onClose={() => setPreview(null)} onError={handleError} />
+        <PreviewPanel key={`${hostId ?? ''}:${preview.threadId}:${preview.path}`} api={api} threadId={preview.threadId} path={preview.path} onClose={() => { setPreview(null); if (!compact) setOverviewDetail(null); }} onBack={!compact && activeOverviewDetail ? () => setPreview(null) : undefined} docked={!compact} onError={handleError} />
       )}
       {termOpen && (
         <TerminalPanel
@@ -3817,7 +3845,9 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           threadId={diffFile.threadId}
           file={diffFile.file}
           turnOrder={turnOrder}
-          onClose={() => setDiffFile(null)}
+          docked={!compact}
+          onBack={!compact && activeOverviewDetail ? () => setDiffFile(null) : undefined}
+          onClose={() => { setDiffFile(null); if (!compact) setOverviewDetail(null); }}
           onJumpTurn={(turnId) => { setDiffFile(null); setJump({ threadId: diffFile.threadId, turnId }); }}
         />
       )}
