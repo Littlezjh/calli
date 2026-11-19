@@ -74,7 +74,7 @@ import { MachineUsagePage } from './components/MachineUsagePage';
 import { QuotaBoard } from './components/QuotaBoard';
 import { QuotaNavigation, quotaPushed } from './quota-reading';
 import { noteSource, SelectionMenu } from './components/SelectionMenu';
-import { AgentPanel } from './components/AgentPanel';
+import { AgentPanel, memberStatus } from './components/AgentPanel';
 import { memberProgress, ThreadOverview, type OverviewSection } from './components/ThreadOverview';
 import { prepareOverview } from './overview-reading';
 import { ChangeDiffDialog } from './components/ChangeDiffDialog';
@@ -2801,11 +2801,15 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   const takeoverLabel = takeoverChoice ? [agents.find(a => a.id === takeoverChoice.agent)?.label ?? takeoverChoice.agent, takeoverChoice.model].filter(Boolean).join(' · ') : undefined;
 
   const teamWaiting = Boolean(coordination?.members.some((m) => m.thread?.waiting));
+  // 成员概况直接露在输入框上方，完整输出仍在点击后由现有面板按需读取。
   const teamShown = Boolean(selected?.coordination && (selected.coordination.rootId !== selected.id || selected.coordination.children > 0) && !onPage && hostUp);
-  // The overview is a panel from one top-bar button now; the button carries only what asks for the
-  // person. The team it opens is the lead's own (a member's thread has none to show).
+  // 协作概况只属于当前主线程，切换会话时不能显示上一个团队的成员。
   const overviewTeam = teamShown && coordination?.rootId === selected?.id ? coordination : null;
   const teamNeeds = overviewTeam?.members.filter((member) => memberProgress(member) === 'need').length ?? 0;
+  const teamRunning = overviewTeam?.members.filter(member => member.thread?.status === 'running').length ?? 0;
+  const teamFailures = overviewTeam?.members.filter(member => memberProgress(member) === 'failed').length ?? 0;
+  const teamAttention = overviewTeam?.members.filter(member => member.thread?.waiting || memberProgress(member) === 'need').length ?? 0;
+  const teamNote = [overviewTeam?.paused ? t('team.paused') : '', teamAttention ? t('overview.needsYou', teamAttention) : '', teamFailures ? t('overview.failedCount', teamFailures) : '', teamRunning ? t('team.running', teamRunning) : ''].filter(Boolean).join(' · ');
   // The conversation's turns, for naming the section each change belongs to in the diff dialog.
   const turnOrder = useMemo(() => {
     const seen = new Set<string>();
@@ -3536,6 +3540,17 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
 
         {!onPage && !(host && !hostUp) && (
         <div className={`composer-slot${voice.state.active || voice.state.error ? ' voice-mode' : ''}`}>
+        {teamShown && !voice.state.active && <div className="coord-bar">
+          {atMember ? <button type="button" className="coord-status" onClick={() => pick(selected!.coordination!.rootId)}>
+            <IconBack size={14} />{t('app.backToLead')}
+          </button> : <button type="button" className={`coord-status${teamAttention || teamFailures ? ' attention' : ''}`} aria-label={t('team.view')} aria-pressed={agentsOpen}
+            title={overviewTeam?.members.map(member => `${member.name} · ${memberStatus(member)}`).join('\n') ?? t('team.view')}
+            onClick={() => { setAgentsStart(null); setAgentsOpen(value => !value); setFiles(null); }}>
+            <IconAgents size={15} />
+            <span className="coord-status-names">{overviewTeam ? overviewTeam.members.map(member => member.name).join(' · ') : t('common.loading')}</span>
+            <span className="coord-status-note">{t('team.count', overviewTeam?.members.length ?? selected!.coordination!.children)}{teamNote ? ` · ${teamNote}` : ''}</span>
+          </button>}
+        </div>}
         {selectedId && <WorkSummary items={workSources} />}
         {(voice.state.active || voice.state.error) && <VoiceOrb session={voice.state} provider={agentLabel(voice.state.providerId ?? selected?.agent ?? '')}
           levels={voice.levels} empty={timeline.items.length === 0} awaitingApproval={Boolean(waitingOn) || teamWaiting}
