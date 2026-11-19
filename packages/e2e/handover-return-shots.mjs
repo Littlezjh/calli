@@ -92,10 +92,10 @@ try {
       const scroller = document.querySelector('.scroller'); scroller.scrollTop -= 40;
     }, a.id);
     await view.page.waitForTimeout(600);
-    await view.page.locator('.chain-line-float').waitFor();
+    if (await view.page.locator('.chain-float, .chain-line-float').count()) throw new Error('no segment line is pinned over the reading');
     await view.page.locator('.send-target').waitFor();
     await view.page.waitForTimeout(250);
-    await shot(view, 'floating-mark');
+    await shot(view, 'scrolled-mark');
   }
   // The overview's group: one row per segment.
   for (const view of pages) {

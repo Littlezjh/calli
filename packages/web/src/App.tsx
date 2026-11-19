@@ -3409,7 +3409,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
                 if (alone) { setSingleSegmentId(thread.id); setSelectedId(thread.id); setView('thread'); setDrawer(false); }
                 else if (thread.id !== selected.id) pick(thread.id);
               }}
-              onGoLatest={goLatest} onFocus={setChainFocus}
+              onFocus={setChainFocus}
               onOpenFinds={onRouterThread ? () => openDesk(true) : undefined}
               onBrowseOlder={() => { stickToBottom.current = false; setAtBottom(false); }}
               canFork={thread => ({ enabled: Boolean(thread.agentSessionId && capsOf(thread.agent)?.fork), any: Boolean(capsOf(thread.agent)?.forkAt) })}

@@ -5,14 +5,14 @@ import { buildTimeline, clockLabel } from '../timeline';
 import { t } from '../i18n';
 import { entryKey, readingPath, type ChainEntry } from '../handover';
 import { blankPress, dragPull, gateDirection, noPull, pageShift, pullProgress, pullReady, type Edges, type GateDir, type GateInput, type Pull } from '../segmentGate';
-import { AgentMark, IconArrowDown, IconChevron, IconHandover } from './icons';
+import { AgentMark, IconChevron, IconHandover } from './icons';
 import { Prose, ThreadView } from './ThreadView';
 
 type ViewProps = ComponentProps<typeof ThreadView>;
 type Part = 'before' | 'after' | undefined;
 type Segment = { thread: Thread; page: HistoryPage; part?: 'before' | 'after'; clip?: number; followups: number };
 /** The segment the reading is at: its id and part, and whether its own line has scrolled out of sight. */
-export interface ChainFocus { threadId: string; part?: 'before' | 'after'; lineHidden: boolean; /** One-based place in the chain and how many segments it has. */ index?: number; total?: number }
+export interface ChainFocus { threadId: string; part?: 'before' | 'after'; /** One-based place in the chain and how many segments it has. */ index?: number; total?: number }
 type Props = ViewProps & {
   api: Api; thread: Thread; /** Every thread the hub lists: the chain the reading turns through is found in it. */ chainThreads?: Thread[]; merged: boolean; ready: boolean;
   agentLabel: (id: string) => string;
@@ -30,7 +30,6 @@ type Props = ViewProps & {
   agentIcon?: (id: string) => string | undefined;
   /** The title on a segment's line: open that segment alone, to go on in. */
   onOpenSegment?: (thread: Thread, alone?: boolean) => void;
-  onGoLatest?: () => void;
   /** Which segment the reading is at, as the person scrolls: where a typed message goes. */
   onFocus?: (focus: ChainFocus | null) => void;
 };
@@ -62,7 +61,7 @@ const LEAVE_MS = 130;
  * pull has to go on before the next one comes (and the same at the top, going back), so reading to the
  * bottom of one conversation never carries on into the next by accident. Only the page in view is read.
  */
-export function MergedHistory({ api, thread, chainThreads, merged, ready, agentLabel, laterOf, latest, latestSignal, agentIcon, onOpenSegment, onGoLatest, onFocus, onBrowseOlder, onSegmentFork, canFork, onSegmentFile, onSegmentPreview, ...current }: Props) {
+export function MergedHistory({ api, thread, chainThreads, merged, ready, agentLabel, laterOf, latest, latestSignal, agentIcon, onOpenSegment, onFocus, onBrowseOlder, onSegmentFork, canFork, onSegmentFile, onSegmentPreview, ...current }: Props) {
   const currentPart: Part = thread.handback ? 'after' : undefined;
   const currentKey = entryKey({ thread, part: currentPart });
   const [earlier, setEarlier] = useState<ChainEntry[]>([]);
@@ -233,7 +232,7 @@ export function MergedHistory({ api, thread, chainThreads, merged, ready, agentL
     setSettled(view.nonce);
   });
 
-  // Which segment the reading is at, and whether its own line has scrolled out of sight.
+  // Which segment the reading is at.
   const report = useRef(onFocus);
   report.current = onFocus;
   useEffect(() => {
@@ -243,9 +242,8 @@ export function MergedHistory({ api, thread, chainThreads, merged, ready, agentL
     const measure = () => {
       frame = 0;
       const box = scroller.getBoundingClientRect();
-      const mark = root.current?.querySelector<HTMLElement>('[data-chain-line]');
-      const found: ChainFocus = { threadId: active.thread.id, ...(active.part ? { part: active.part } : {}), lineHidden: !mark || mark.getBoundingClientRect().bottom < box.top + 4, index: index + 1, total: full.length };
-      setFocus(previous => previous && previous.threadId === found.threadId && previous.part === found.part && previous.lineHidden === found.lineHidden && previous.index === found.index && previous.total === found.total ? previous : found);
+      const found: ChainFocus = { threadId: active.thread.id, ...(active.part ? { part: active.part } : {}), index: index + 1, total: full.length };
+      setFocus(previous => previous && previous.threadId === found.threadId && previous.part === found.part && previous.index === found.index && previous.total === found.total ? previous : found);
     };
     const fit = () => {
       const style = getComputedStyle(scroller);
@@ -357,8 +355,6 @@ export function MergedHistory({ api, thread, chainThreads, merged, ready, agentL
   if (!paged) return <ThreadView {...current} />;
   const first = index === 0 && !olderUnknown;
   const beginning = ready && first ? <div className="row chain-beginning" role="status">{t('handover.chain.beginning')}</div> : null;
-  const head = latest ?? thread;
-  const floating = focus?.lineHidden && (focus.threadId !== head.id || focus.part === 'before') ? focusEntry(focus, full) : null;
   const activeKey = view.key;
   const failure = failed[activeKey];
   let body: ReactNode;
@@ -387,11 +383,6 @@ export function MergedHistory({ api, thread, chainThreads, merged, ready, agentL
   const pageClass = `chain-page${leaving ? ` chain-leaving-${leaving > 0 ? 'next' : 'prev'}` : view.dir ? ` chain-enter-${view.dir > 0 ? 'next' : 'prev'}` : ''}${settling && contentReady && !leaving ? ' chain-settling' : ''}`;
   return <div className="merged-history paged" ref={root}>
     <GatePill edge="top" register={pillTop} />
-    {/* Overlays the text from the top of the reading; sticky with no height of its own, so nothing moves. */}
-    <div className="chain-float" aria-live="polite">
-      {floating && <div className="chain-line chain-line-float">{lineBody({ thread: floating.thread, part: floating.part, agentLabel, icon: agentIcon?.(floating.thread.agent), onOpen: onOpenSegment })}
-        <button type="button" className="chain-line-latest" aria-label={t('handover.chain.goLatest')} title={t('handover.chain.goLatest')} onClick={onGoLatest}><IconArrowDown size={14} /></button></div>}
-    </div>
     {index === 0 && olderUnknown && <div className="row chain-older">
       {earlierError
         ? <span className="history-status" role="alert">{t(earlierError === 'missing' ? 'handover.chain.missing' : 'handover.chain.failed')} <button className="text-btn" onClick={() => void fetchEarlier()}>{t('common.retry')}</button></span>
@@ -413,10 +404,6 @@ function GatePill({ edge, register }: { edge: 'top' | 'bottom'; register: Mutabl
   return <div className={`chain-pill-anchor ${edge}`}>
     <div className={`chain-pill${state ? ' on' : ''}${ready ? ' ready' : ''}`} role="status" aria-live="polite">{edge === 'top' && ring}<span>{state?.label ?? ''}</span>{edge === 'bottom' && ring}</div>
   </div>;
-}
-
-function focusEntry(focus: ChainFocus, segments: Array<{ thread: Thread; part?: 'before' | 'after' }>) {
-  return segments.find(item => item.thread.id === focus.threadId && (item.part ?? 'after') === (focus.part ?? 'after'));
 }
 
 function lineBody({ thread, part, agentLabel, icon, onOpen }: { thread: Thread; part?: 'before' | 'after'; agentLabel: Props['agentLabel']; icon?: string; onOpen?: (thread: Thread) => void }) {
