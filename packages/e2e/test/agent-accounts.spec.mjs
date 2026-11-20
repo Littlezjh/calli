@@ -65,46 +65,58 @@ for (const adapter of ['claude', 'agy']) test(`${adapter}: independent account c
           await shot('start-failed');
           await row.getByRole('button', { name: '登录', exact: true }).click();
         }
-        const link = page.getByRole('link', { name: '打开登录链接' });
+        const panel = page.locator('.agent-login-panel');
+        const link = panel.getByRole('link', { name: '打开登录链接' });
         await link.waitFor();
+        assert.equal(await page.locator('.dialog-scrim').count(), 0, 'inline login must not block the workspace with a modal scrim');
         assert.equal(new URL(await link.getAttribute('href')).hostname, adapter === 'claude' ? 'claude.com' : 'accounts.google.com');
         assert.equal(await link.getAttribute('rel'), 'noopener noreferrer');
         await shot('login');
-        const box = await page.locator('.agent-login-dialog').boundingBox();
+        const box = await panel.boundingBox();
         assert.ok(box.x >= 0 && box.x + box.width <= (mobile ? 390 : 1440));
-        assert.ok(box.y >= 0 && box.y + box.height <= (mobile ? 844 : 1000));
-        assert.ok(await page.getByRole('button', { name: '提交验证码' }).isDisabled());
+        assert.ok(await panel.getByRole('button', { name: '提交验证码' }).isDisabled());
         if (!mobile && colorScheme === 'light') {
-          await page.getByRole('button', { name: '取消', exact: true }).click();
-          await page.locator('.agent-login-dialog').waitFor({ state: 'detached' });
+          // Collapsing or navigating away keeps the daemon login session alive so the user can return and paste the code.
+          const originalHref = await link.getAttribute('href');
+          await panel.getByRole('button', { name: '收起', exact: true }).click();
+          await panel.waitFor({ state: 'detached' });
+          await row.getByText('等待验证码', { exact: true }).waitFor();
+          await page.reload();
+          await page.locator('.agents-page').waitFor();
+          await row.getByRole('button', { name: '继续登录', exact: true }).click();
+          await link.waitFor();
+          assert.equal(await link.getAttribute('href'), originalHref, 'resumed login keeps the same session URL');
+          // Explicit cancel terminates the login session.
+          await panel.getByRole('button', { name: '取消登录', exact: true }).click();
+          await panel.waitFor({ state: 'detached' });
           await row.getByText('待登录', { exact: false }).waitFor();
           await row.getByRole('button', { name: '登录', exact: true }).click();
           await link.waitFor();
         }
         if (!mobile && colorScheme === 'dark') {
           await page.route('**/api/agents/*/login/*', route => route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ error: 'login not found' }) }), { times: 1 });
-          await page.getByText('登录链接已过期，请重新登录。').waitFor();
-          await page.getByRole('button', { name: '重试', exact: true }).click();
+          await panel.getByText('登录链接已过期，请重新登录。').waitFor();
+          await panel.getByRole('button', { name: '重试', exact: true }).click();
           await link.waitFor();
         }
         if (mobile && colorScheme === 'dark') {
-          await page.getByLabel(adapter === 'claude' ? '验证码' : '授权码或回跳地址', { exact: true }).fill('wrong');
-          await page.getByRole('button', { name: '提交验证码' }).click();
-          await page.getByText('登录未成功，请重试并使用新链接获取验证码。').waitFor();
+          await panel.getByLabel(adapter === 'claude' ? '验证码' : '授权码或回跳地址', { exact: true }).fill('wrong');
+          await panel.getByRole('button', { name: '提交验证码' }).click();
+          await panel.getByText('登录未成功，请重试并使用新链接获取验证码。').waitFor();
           await shot('failed');
-          await page.getByRole('button', { name: '重试', exact: true }).click();
+          await panel.getByRole('button', { name: '重试', exact: true }).click();
           await link.waitFor();
         }
-        await page.getByLabel(adapter === 'claude' ? '验证码' : '授权码或回跳地址', { exact: true }).fill(adapter === 'claude' ? 'test-code#test-state' : 'https://antigravity.google/oauth-callback?code=test-agy-code&state=fixture');
-        await page.getByRole('button', { name: '提交验证码' }).click();
-        await page.getByText('登录成功，可以开始新会话了。').waitFor();
+        await panel.getByLabel(adapter === 'claude' ? '验证码' : '授权码或回跳地址', { exact: true }).fill(adapter === 'claude' ? 'test-code#test-state' : 'https://antigravity.google/oauth-callback?code=test-agy-code&state=fixture');
+        await panel.getByRole('button', { name: '提交验证码' }).click();
+        await panel.getByText('登录成功，可以开始新会话了。').waitFor();
         await shot('success');
-        await page.getByRole('button', { name: '关闭', exact: true }).click();
+        await panel.getByRole('button', { name: '关闭', exact: true }).click();
         await row.getByText(email, { exact: false }).waitFor();
         await row.getByRole('button', { name: '登录', exact: true }).click();
         await link.waitFor();
-        await page.getByRole('button', { name: '取消', exact: true }).click();
-        await page.locator('.agent-login-dialog').waitFor({ state: 'detached' });
+        await panel.getByRole('button', { name: '取消登录', exact: true }).click();
+        await panel.waitFor({ state: 'detached' });
         assert.equal(creates, 1, 'retrying or cancelling login must not create another account');
         assert.deepEqual(errors, []);
       } finally { await context.close(); }

@@ -38,18 +38,29 @@ async function openThreadWithTerminalButton(page, title) {
   return thread;
 }
 
+async function openTerminalMenu(page) {
+  await page.getByLabel('这个线程的更多操作').click();
+  await page.getByRole('menuitem', { name: '打开终端' }).click();
+}
+
 test('the header button opens a terminal that runs commands and survives closing', async () => {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   const page = await ctx.newPage();
   try {
     await openThreadWithTerminalButton(page, '终端桌面');
-    await page.getByLabel('打开终端').click();
+    await openTerminalMenu(page);
     await page.locator('.term-panel').waitFor();
+    const termBox = await page.locator('.term-panel').boundingBox();
+    assert.ok(termBox && termBox.x > 100 && termBox.width < 1200, 'desktop terminal opens in the right side dock, not full-screen');
 
     await page.locator('.term-body').click();
     await page.keyboard.type('echo e2e-ok');
     await page.keyboard.press('Enter');
     await termShows(page, 'e2e-ok');
+
+    // Copying from the terminal header button succeeds and confirms with the copied label.
+    await page.getByLabel('复制终端内容').click();
+    await page.getByLabel('已复制').waitFor();
 
     // A program asks the terminal for its background colour and reads the answer.
     const typed = [];
@@ -63,7 +74,7 @@ test('the header button opens a terminal that runs commands and survives closing
     // Closing the panel hides the terminal; reopening reattaches and replays what already ran.
     await page.getByLabel('关闭').click();
     assert.equal(await page.locator('.term-panel').count(), 0);
-    await page.getByLabel('打开终端').click();
+    await openTerminalMenu(page);
     await page.locator('.term-panel').waitFor();
     await termShows(page, 'e2e-ok');
     // The replay passes the old question through xterm again; its answer must not reach the shell.
@@ -78,7 +89,7 @@ test('the header button opens a terminal that runs commands and survives closing
     const otherTyped = [];
     other.on('request', (r) => { if (r.method() === 'POST' && /\/terminals\/[^/]+\/input$/.test(r.url())) otherTyped.push(JSON.parse(r.postData()).data); });
     await openThreadWithTerminalButton(other, '终端旁观');
-    await other.getByLabel('打开终端').click();
+    await openTerminalMenu(other);
     await other.locator('.term-panel').waitFor();
     await other.evaluate(() => { document.hasFocus = () => false; });
     await page.bringToFront();
