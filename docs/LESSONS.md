@@ -115,3 +115,11 @@
 证据：`dcf84b5`（11-03，安静计划行）→ `c50ffb6`（11-09，面板复用类名）→ 11-19 用户报「计划的样式太丑」，根因是串味不是设计。
 
 出现天数：1。**规则**：给界面上样式前，先 `grep` 类名有没有别的功能在用；面板类组件的规则一律收在自己根类名的名下（如 `.plan-view .plan-list`），不写全局类。`packages/web/test/plan-styles.test.ts` 守住这一条。
+
+### 10. 隐藏注入块不该出现在用户可见面
+
+为什么：hub 给 agent 的 prompt 会追加 `<calli-*>` 协议块（进度、工具、引用、会议材料）。预览和标题的提取函数 `askedText` 原来只剥 `<calli-references>`，其他块跟着落进侧栏预览。信箱化之后成员信件的 `[进度]` 语义也依赖「协议文字只在机器通道」，可见面混进协议块会让人误读成员状态。
+
+证据：线上库审计 `scripts/leak-audit.mjs`（11-20）：thread.preview 1207 条里 3 条带块（ebb74bf5、b87bdff9、71f88466）；displayText 10439 条 0 泄露、34 条设计内卡片。修复 `fc8fe24`（11-20）：`askedText` 剥所有行首锚定的 `<calli-*>` 块，行内代码提及保留。
+
+出现天数：1。**规则**：`<calli-*>` 块只进 prompt（事件 `data.text`），不进 displayText、preview、标题。新增注入块后跑 `node scripts/leak-audit.mjs`（只读扫 hub.db，退出码 1 即有泄露，可挂 CI）；`packages/daemon/test/util.test.ts` 守住剥块规则。
