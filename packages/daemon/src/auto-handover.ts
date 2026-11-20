@@ -305,9 +305,11 @@ export class AutoHandover {
       if (attempt.cancelled || !this.view(id).enabled || this.closed) return 'parked';
       const listed = (await this.targets(id))[0];
       // An older conversation of the chain that could take the work back is offered beside a new one;
-      // the person is not there, so it is the default: fewer segments to read.
+      // the person is not there, so it is the default: fewer segments to read. Only the chosen
+      // successor's own: going back to another agent's would hand the work to an account nobody
+      // picked, under a brief written for the one that was. With no successor at all, any will do.
       const returns = listed && listed.agent === thread.agent ? [] : await this.returnTargets(id);
-      const back = returns.find(r => r.agent === listed?.agent) ?? returns[0];
+      const back = listed ? returns.find(r => r.agent === listed.agent) : returns[0];
       const target = listed ?? (back ? { agent: back.agent } : undefined);
       if (!target) { this.notices.set(id, { state: 'stopped', reason: exhausted ? 'exhausted' : 'near' }); return 'parked'; }
       attempt.view = { state: 'preparing', target, reason: exhausted ? 'exhausted' : 'near', ...(back ? { returnTo: back, choice: 'return' as const } : {}) };
