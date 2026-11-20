@@ -34,7 +34,10 @@ export function textOf(content: unknown): string {
  * only notes is summed up by its first comment, else by the passage itself.
  */
 export function askedText(text: string): string {
-  text = text.replace(/(?:^|\n\n)<calli-references>\n[^\n]*\n<\/calli-references>(?=\n\n|$)/g, '');
+  // Any hub-injected block at a blank-line boundary is machinery, not the ask: references,
+  // progress, tools, meeting prep. Inline code mentions (`<calli-progress>`) stay — they
+  // open mid-line, never at a blank-line boundary.
+  text = text.replace(/(?:^|\n\n)<calli-[a-z-]+>[\s\S]*?<\/calli-[a-z-]+>(?=\n|$)/g, '');
   const lines = text.split('\n');
   const quoted: string[] = [];
   const comments: string[] = [];
