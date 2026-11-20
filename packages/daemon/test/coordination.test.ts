@@ -852,8 +852,21 @@ test('a mid-flight letter waits in the mailbox, and one wake letter carries ever
   } finally { await h.close(); }
 });
 
-test('a queued notice rides the person’s own turn as read-only context, once', async () => {
+test('member instructions teach the mailbox wake rule for the progress line; the lead gets none of it', async () => {
   const h = await setup();
+  try {
+    await h.team.enable(h.root.id);
+    const worker = (await h.team.command(h.root.id, spawn('worker')) as { to: string }).to;
+    const member = h.team.instructions(worker, 'hello');
+    assert.match(member, /交回末尾的 \[进度\] 行决定要不要叫醒主控/);
+    assert.match(member, /纯确认、收尾、没有新东西的回复写 进行中/);
+    const lead = h.team.instructions(h.root.id, 'hello');
+    assert.match(lead, /信件可能多封并成一轮/);
+    assert.doesNotMatch(lead, /交回末尾的 \[进度\] 行/);
+  } finally { await h.close(); }
+});
+
+test('a queued notice rides the person’s own turn as read-only context, once', async () => {  const h = await setup();
   try {
     await h.team.enable(h.root.id);
     const worker = (await h.team.command(h.root.id, spawn('worker', 'claude', 'CALLI_PROGRESS_WORK')) as { to: string }).to;
