@@ -420,14 +420,14 @@ test('the VNC password is asked, asked again when wrong, then kept on the device
   try {
     await openThread(page, daemonLocked, '有密码的桌面');
     await openDesktop(page);
-    const field = page.locator('.dialog input');
+    const field = page.locator('.desktop-password input');
     await field.waitFor();
-    assert.equal(await page.locator('.dialog').count(), 1);
+    assert.equal(await page.locator('.dialog-scrim').count(), 0, 'authentication stays inside the desktop');
     assert.equal(await field.getAttribute('type'), 'password');
     await field.fill('wrong123');
     await page.getByRole('button', { name: '连接', exact: true }).click();
     await page.getByText('密码不对，请重新输入').waitFor({ timeout: 15_000 });
-    await page.locator('.dialog input').fill('secret12');
+    await page.locator('.desktop-password input').fill('secret12');
     await page.getByRole('button', { name: '连接', exact: true }).click();
     await connected(page);
 
@@ -437,7 +437,7 @@ test('the VNC password is asked, asked again when wrong, then kept on the device
     assert.equal(await page.locator('.demo-bar').count(), 0, 'the hub token survives a reload too');
     await openDesktop(page);
     await connected(page);
-    assert.equal(await page.locator('.dialog').count(), 0, 'not asked again');
+    assert.equal(await page.locator('.desktop-password').count(), 0, 'not asked again');
 
     // A restored browser uses persisted credentials, without the harness signing it in again.
     const restored = await browser.newContext({ viewport: { width: 1280, height: 800 }, storageState: await ctx.storageState() });
@@ -448,7 +448,7 @@ test('the VNC password is asked, asked again when wrong, then kept on the device
       assert.equal(await reopened.locator('.demo-bar').count(), 0, 'the saved hub token is reused');
       await openDesktop(reopened);
       await connected(reopened);
-      assert.equal(await reopened.locator('.dialog').count(), 0, 'the saved VNC password is reused');
+      assert.equal(await reopened.locator('.desktop-password').count(), 0, 'the saved VNC password is reused');
     } finally { await restored.close(); }
   } finally {
     await ctx.close();

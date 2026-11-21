@@ -12,7 +12,7 @@ import { copyText } from '../clipboard';
 import { clampZoom, fillZoom, fitSize, isTap, LONG_PRESS_MS, pointerDelta, scrollAxis, scrollForZoom, softwareKeyboardUp, TAP_SLOP_PX, textEdit, twoFingerKind, type Size } from '../desktopTouch';
 import { useIsCompact, useIsTouch } from '../hooks';
 import { t } from '../i18n';
-import { Dialog } from './Dialog';
+import { DesktopPassword } from './DesktopPassword';
 import { Popover } from './Popover';
 import {
   IconArrowDown,
@@ -1410,15 +1410,12 @@ export function DesktopPanel({ api, hidden = false, initialControl = true, atten
           </div>
         )}
         {asking && (
-          <Dialog
-            title={t('desktop.pwTitle')}
-            message={asking === 'wrong' ? t('desktop.pwWrong') : t('desktop.pwMsg')}
-            input={{ initial: '', label: t('desktop.pw'), secret: true }}
-            confirmLabel={t('desktop.connect')}
-            onConfirm={(password) => {
+          <DesktopPassword
+            wrong={asking === 'wrong'}
+            onConnect={(password) => {
               setAsking(null);
-              pendingRef.current = password ?? null;
-              rfbRef.current?.sendCredentials({ password: password ?? '' });
+              pendingRef.current = password;
+              rfbRef.current?.sendCredentials({ password });
             }}
             onCancel={() => {
               setAsking(null);
