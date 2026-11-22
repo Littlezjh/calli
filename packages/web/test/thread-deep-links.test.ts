@@ -127,3 +127,53 @@ test('UUID repair does not reinterpret malformed identities or ordinary UUID tex
   ]) assert.equal(parseThreadLink(threadLinkCandidates(`${candidate}继续说明`)[0], deployment), null, candidate);
   assert.deepEqual(threadLinkCandidates(`Ordinary ID ${uuid}; https://calli.example/app/files/${uuid}; ftp://calli.example/app/#/thread/${uuid}`), []);
 });
+
+// Only a matching outer wrapper may be removed; smart quotes within queries are identity characters.
+test('smart quote wrappers never truncate machine values', () => {
+  for (const [body, expected, machine] of [
+    [`#/thread/${uuid}?machine=“remote”`, `#/thread/${uuid}?machine=“remote”`, '“remote”'],
+    [`#/thread/${uuid}?machine=remote”`, `#/thread/${uuid}?machine=remote”`, 'remote”'],
+    [`“#/thread/${uuid}?machine=remote”`, `#/thread/${uuid}?machine=remote`, 'remote'],
+    [`‘#/thread/${uuid}?machine=remote’`, `#/thread/${uuid}?machine=remote`, 'remote'],
+    [`“#/thread/${uuid}?machine=“remote””`, `#/thread/${uuid}?machine=“remote”`, '“remote”'],
+    [`“https://calli.example/app/#/thread/${uuid}?machine=remote”`, `https://calli.example/app/#/thread/${uuid}?machine=remote`, 'remote'],
+    ['#/thread/source?machine=“remote”', '#/thread/source?machine=“remote”', '“remote”'],
+  ]) {
+    assert.deepEqual(threadLinkCandidates(body), [expected], body);
+    assert.equal(parseThreadLink(expected, deployment)?.machine, machine, body);
+  }
+});
+
+// Embedded BOMs repair a complete copied UUID, but actual separators must not swallow later links.
+test('BOM-separated links are all retained after embedded UUID repair', () => {
+  const first = threadLinkHash(uuid, null);
+  const copied = threadLinkHash(uuid, null).replace(uuid, `${uuid.slice(0, 8)}\u{FEFF}${uuid.slice(8)}`);
+  const other = '#/thread/other?machine=remote';
+  for (const [body, expected] of [
+    [`${first}\u{FEFF}${other}`, [first, other]],
+    [`x${first}\u{FEFF}${other}`, [other]],
+    [`ftp://foreign.example/${copied}\u{FEFF}${other}`, [other]],
+    [`${copied}\u{FEFF}${other}`, [first, other]],
+    [`${first}\u{FEFF}?machine=remote`, [`${first}?machine=remote`]],
+    [`${copied}\u{FEFF}?machine=remote`, [`${first}?machine=remote`]],
+    [`${copied}\u{FEFF}?machine=remote\u{FEFF}${other}`, [`${first}?machine=remote`, other]],
+    [`https://docs.example/\u{FEFF}${first}`, [first]],
+    [`${copied.replace(/-/g, '‑').toUpperCase().replace('#/THREAD/', '#/thread/')}\u{FEFF}请看${other}`, [first, other]],
+    [`“${copied}”\u{FEFF}${other}`, [first, other]],
+    [`#/thread/source\u{FEFF}${other}`, ['#/thread/source', other]],
+    [`${first}?machine=remote\u{FEFF}${other}`, [`${first}?machine=remote`, other]],
+  ] as const) assert.deepEqual(threadLinkCandidates(body), expected, body);
+});
+
+// Detaching prose must not erase syntax that makes the original candidate invalid.
+test('CJK suffix repair retains forbidden paths fragments queries and controls', () => {
+  for (const suffix of [
+    '继续/extra', '继续%2Fextra', '继续\\extra', '继续%3Fmachine=remote',
+    '继续%23fragment', '继续#fragment', '继续%00', '继续%0Aextra',
+    '以及https://foreign.example/app/#/thread/other', '以及#/thread/other?machine=remote',
+  ]) {
+    const candidate = `#/thread/${uuid}${suffix}`;
+    assert.deepEqual(threadLinkCandidates(candidate), [candidate], suffix);
+    assert.equal(parseThreadLink(threadLinkCandidates(candidate)[0], deployment), null, suffix);
+  }
+});

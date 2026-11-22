@@ -279,15 +279,26 @@ test('pasted UUID variants preserve input and resolve once across four layouts',
           if (route.request().method() === 'POST') created.push(route.request().postDataJSON().sourceId);
           await route.continue();
         });
-        const foreign = `https://foreign.example/#/thread/${source.id}继续说明`;
-        await input.fill(foreign);
-        await send.click();
-        await page.getByText('会话链接无效或不属于当前 Calli。', { exact: true }).waitFor();
-        assert.equal(await input.inputValue(), foreign);
-        assert.deepEqual(created, []);
+        const hash = `#/thread/${source.id}`;
+        const bomId = `${source.id.slice(0, 8)}\u{FEFF}${source.id.slice(8)}`.replace(/-/g, '‑').toUpperCase();
+        for (const [body, error] of [
+          [`https://foreign.example/#/thread/${source.id}继续说明`, '会话链接无效或不属于当前 Calli。'],
+          [`${hash}以及https://foreign.example/#/thread/other`, '会话链接无效或不属于当前 Calli。'],
+          [`${hash}继续%3Fmachine=remote`, '会话链接无效或不属于当前 Calli。'],
+          [`${hash}?machine=“remote”`, '暂不支持引用另一台机器的完整会话，请在来源机器的会话中发送。'],
+          [`#/thread/${bomId}\u{FEFF}?machine=remote`, '暂不支持引用另一台机器的完整会话，请在来源机器的会话中发送。'],
+          [`#/thread/${bomId}\u{FEFF}#/thread/other?machine=remote`, '暂不支持引用另一台机器的完整会话，请在来源机器的会话中发送。'],
+          [`ftp://foreign.example/#/thread/${bomId}\u{FEFF}#/thread/other?machine=remote`, '暂不支持引用另一台机器的完整会话，请在来源机器的会话中发送。'],
+        ]) {
+          await input.fill(body);
+          await send.click();
+          await page.getByText(error, { exact: true }).waitFor();
+          assert.equal(await input.inputValue(), body);
+          assert.deepEqual(created, [], 'unsafe boundaries fail before creating any snapshot');
+        }
         const link = `${daemon.base}/#/thread/${source.id}`;
         const copiedId = `${source.id.slice(0, 8)}\u{200B}${source.id.slice(8)}`.replace(/-/g, '‑').toUpperCase();
-        const body = `${link}对这个增加配置，保留原文。\n“${link.replace(source.id, encodeURIComponent(copiedId))}”\n#/thread/${source.id}继续说明`;
+        const body = `${link}对这个增加配置，保留原文。\n“${link.replace(source.id, encodeURIComponent(copiedId))}”\n#/thread/${source.id}继续说明\n“#/thread/${bomId}”\u{FEFF}${hash}`;
         await input.fill('');
         await page.evaluate(text => navigator.clipboard.writeText(text), body);
         await input.focus();

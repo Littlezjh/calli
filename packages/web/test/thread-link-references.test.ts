@@ -82,6 +82,76 @@ test('tolerant UUID matching never grants a foreign machine or guesses a missing
   }
 });
 
+test('smart quotes and BOM-separated remote links fail before any creates', async () => {
+  // A delimiter cannot silently reinterpret a nonlocal machine or hide a later remote link.
+  const created: string[] = [];
+  const source = { host: null, createReference: async (input: { kind: 'thread'; sourceId: string }) => {
+    created.push(input.sourceId);
+    return threadReference(input.sourceId);
+  } };
+  const link = threadLinkHash(uuid, null);
+  const copied = link.replace(uuid, `${uuid.slice(0, 8)}\u{FEFF}${uuid.slice(8)}`);
+  for (const body of [
+    `${link}?machine=“remote”`, `“${link}?machine=remote”`,
+    `${link}\u{FEFF}?machine=remote`, `${copied}\u{FEFF}?machine=remote`,
+    `${copied}\u{FEFF}?machine=remote\u{FEFF}#/thread/other?machine=remote`,
+    `${link}\u{FEFF}#/thread/other?machine=remote`,
+    `${copied}\u{FEFF}#/thread/other?machine=remote`,
+    `ftp://foreign.example/${copied}\u{FEFF}#/thread/other?machine=remote`,
+    `“${copied}”\u{FEFF}请看#/thread/other?machine=remote`,
+  ]) {
+    await assert.rejects(resolveThreadLinkReferences({ body, deployment, source }), failure('remote'), body);
+    assert.deepEqual(created, [], body);
+  }
+});
+
+test('unsafe CJK suffixes reject the whole body without partial snapshots', async () => {
+  // Forbidden suffix syntax is not prose, even after a complete copied UUID.
+  const created: string[] = [];
+  const source = { host: null, createReference: async (input: { kind: 'thread'; sourceId: string }) => {
+    created.push(input.sourceId);
+    return threadReference(input.sourceId);
+  } };
+  const copied = `${uuid.slice(0, 8)}\u{FEFF}${uuid.slice(8)}`;
+  for (const suffix of [
+    '继续/extra', '继续%2Fextra', '继续\\extra', '继续%3Fmachine=remote',
+    '继续%23fragment', '继续#fragment', '继续%00', '继续%0Aextra',
+    '以及https://foreign.example/app/#/thread/other', '以及#/thread/other?machine=remote',
+  ]) for (const id of [uuid, copied]) {
+    const body = `#/thread/valid #/thread/${id}${suffix}`;
+    await assert.rejects(resolveThreadLinkReferences({ body, deployment, source }), failure('invalid'), body);
+    assert.deepEqual(created, [], body);
+  }
+});
+
+test('quoted remote and BOM-separated local links keep exact identities and frozen snapshots', async () => {
+  // Correct wrappers remain usable; repaired duplicates reuse the already selected source snapshot.
+  for (const [body, host] of [
+    [`“#/thread/${uuid}?machine=remote”`, 'remote'],
+    [`“#/thread/${uuid}\u{FEFF}?machine=remote”`, 'remote'],
+    [`‘#/thread/${uuid}?machine=remote’`, 'remote'],
+    [`#/thread/${uuid}?machine=“remote”`, '“remote”'],
+    [`“#/thread/${uuid}?machine=“remote””`, '“remote”'],
+  ]) {
+    const created: string[] = [];
+    const references = await resolveThreadLinkReferences({ body, deployment,
+      source: { host, createReference: async input => { created.push(input.sourceId); return threadReference(input.sourceId); } },
+    });
+    assert.deepEqual(created, [uuid], body);
+    assert.deepEqual(splitReferences(withReferences(references, body)), { body, references });
+  }
+  const created: string[] = [];
+  const frozen = threadReference(uuid, 'frozen', 7);
+  const copied = `${uuid.slice(0, 8)}\u{FEFF}${uuid.slice(8)}`.replace(/-/g, '‑').toUpperCase();
+  const body = `“#/thread/${copied}”\u{FEFF}#/thread/other\u{FEFF}#/thread/${uuid}`;
+  const references = await resolveThreadLinkReferences({ body, deployment, references: [frozen],
+    source: { host: null, createReference: async input => { created.push(input.sourceId); return threadReference(input.sourceId); } },
+  });
+  assert.deepEqual(created, ['other']);
+  assert.deepEqual(references, [frozen, threadReference('other')]);
+  assert.deepEqual(splitReferences(withReferences(references, body)), { body, references });
+});
+
 test('ordinary external URLs and quoted assistant text are not resolved implicitly', async () => {
   // The caller passes only the explicit user body, not quotes, scheduler text or assistant content.
   let creates = 0;
