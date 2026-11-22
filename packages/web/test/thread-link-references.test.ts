@@ -5,6 +5,7 @@ import { readDrafts, writeDraft } from '../src/drafts';
 import { threadDeepLink, threadLinkHash } from '../src/thread-deep-links';
 
 const deployment = 'https://calli.example/app/?token=not-copied#/thread/recipient';
+const uuid = '123e4567-e89b-42d3-a456-426614174000';
 const threadReference = (sourceId: string, id = `snapshot-${sourceId}`, snapshotSeq = 10): ContextReference => ({
   id, kind: 'thread', sourceId, snapshotSeq, title: sourceId, path: '/project', at: '2026-11-17T00:00:00Z',
 });
@@ -26,6 +27,59 @@ test('send resolution preserves the original URL and body while deduplicating li
   assert.equal(resolved.length, 4);
   assert.deepEqual(splitReferences(withReferences(resolved, body)), { references: resolved, body });
   assert.deepEqual(mergeReferences([selected], [threadReference('selected', 'new-selection', 100)]), [selected]);
+});
+
+test('tolerant UUID variants resolve once without rewriting body, drafts or frozen snapshots', async () => {
+  // Only request identities are normalized; the user can reload and resend their unchanged words.
+  const link = threadDeepLink(uuid, null, deployment);
+  const copiedId = `${uuid.slice(0, 8)}\u{200B}${uuid.slice(8)}`.replace(/-/g, '‑').toUpperCase();
+  const body = `${link}对这个增加配置，支持修改。\n“${link.replace(uuid, encodeURIComponent(copiedId))}”\n${threadLinkHash(uuid, null)}继续说明`;
+  const created: string[] = [];
+  const source = { host: null, createReference: async (input: { kind: 'thread'; sourceId: string }) => {
+    created.push(input.sourceId);
+    assert.equal(input.sourceId, uuid);
+    return threadReference(input.sourceId, 'frozen', 7);
+  } };
+  const references = await resolveThreadLinkReferences({ body, deployment, source });
+  assert.deepEqual(created, [uuid]);
+  assert.deepEqual(splitReferences(withReferences(references, body)), { body, references });
+  let value = '{}';
+  const storage = { getItem: () => value, setItem: (_key: string, next: string) => { value = next; } };
+  writeDraft(storage, 'recipient', { text: body, notes: [], references });
+  const saved = readDrafts(storage).recipient;
+  assert.equal(saved.text, body);
+  const retried = await resolveThreadLinkReferences({ body: saved.text, references: saved.references, deployment, source });
+  assert.deepEqual(created, [uuid], 'retry reuses the frozen snapshot instead of creating another');
+  assert.equal(retried[0].id, 'frozen');
+  assert.equal(retried[0].snapshotSeq, 7);
+});
+
+test('tolerant UUID matching never grants a foreign machine or guesses a missing identity', async () => {
+  // All link boundaries are checked before any create, and an unknown source gets no fallback search.
+  let created: string[] = [];
+  const source = { host: null, createReference: async (input: { kind: 'thread'; sourceId: string }) => {
+    created.push(input.sourceId);
+    throw new Error('thread not found');
+  } };
+  for (const body of [
+    `${threadLinkHash(uuid, null)}继续说明?machine=remote`,
+    `${threadLinkHash(uuid, null)}?machine=remote继续说明`,
+  ]) await assert.rejects(resolveThreadLinkReferences({ body, deployment, source }), failure('remote'));
+  for (const body of [
+    `https://foreign.example/app/#/thread/${uuid}继续说明`,
+    `https://calli.example/other/#/thread/${uuid}继续说明`,
+    `${threadLinkHash(uuid, null)}%2Fextra`,
+    `${threadLinkHash(uuid, null)}?machine=%ZZ`,
+  ]) await assert.rejects(resolveThreadLinkReferences({ body, deployment, source }), failure('invalid'));
+  assert.deepEqual(created, []);
+  const bare = await resolveThreadLinkReferences({ body: `An ordinary ID: ${uuid}`, deployment, source });
+  assert.deepEqual(bare, []);
+  assert.deepEqual(created, []);
+  for (const id of [uuid, uuid.slice(0, -1), `${uuid}a`, `${uuid}g`]) {
+    created = [];
+    await assert.rejects(resolveThreadLinkReferences({ body: threadLinkHash(id, null), deployment, source }), failure('unavailable'));
+    assert.deepEqual(created, [id], 'missing/ambiguous IDs are queried exactly once, never truncated or searched');
+  }
 });
 
 test('ordinary external URLs and quoted assistant text are not resolved implicitly', async () => {

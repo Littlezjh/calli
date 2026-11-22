@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import { isThreadLinkQuery, parseThreadLink, threadDeepLink, threadLinkCandidates, threadLinkHash } from '../src/thread-deep-links';
 
 const deployment = 'https://calli.example/app/?token=secret#/settings';
+const uuid = '123e4567-e89b-42d3-a456-426614174000';
 
 // Copied links identify a Calli thread and retain only the deployment path and machine.
 test('deep links preserve deployment paths and machines without credentials', () => {
@@ -46,4 +47,83 @@ test('link candidates retain exact links and deduplicate repeated mentions', () 
   assert.deepEqual(threadLinkCandidates("'#/thread/source'"), ['#/thread/source']);
   assert.deepEqual(threadLinkCandidates(`参考这个会话：${local}，以及#/thread/source。`), [local, '#/thread/source']);
   assert.deepEqual(threadLinkCandidates(`请看${local}`), [local]);
+});
+
+// Repair only temporary UUID candidates, including prose and common copy/paste artifacts.
+test('UUID candidates tolerate attached prose, wrapping and copy artifacts', () => {
+  const local = threadDeepLink(uuid, null, deployment);
+  const hash = threadLinkHash(uuid, null);
+  const encoded = [...uuid].map(char => `%${char.charCodeAt(0).toString(16)}`).join('');
+  for (const [label, body, expected] of [
+    ['attached Chinese', `${local}对这个增加配置，保留正文`, local],
+    ['attached Japanese', `${hash}を参照してください`, hash],
+    ['attached Korean', `${hash}를참고해주세요`, hash],
+    ['Chinese prefix and suffix', `请看${local}并修改`, local],
+    ['space', `${local} Please keep my words.`, local],
+    ['newline', `${local}\n继续说明`, local],
+    ['nonbreaking space', `${local} 继续说明`, local],
+    ['ideographic space', `${local}　继续说明`, local],
+    ['Markdown', `Read [this](${local}), please.`, local],
+    ['smart quotes', `“${local}”`, local],
+    ['colon', `${local}: next step`, local],
+    ['em dash', `${local}—继续说明`, local],
+    ['ellipsis', `${local}…继续说明`, local],
+    ['backticks', `\`${hash}\``, hash],
+    ['uppercase UUID', local.replace(uuid, uuid.toUpperCase()), local],
+    ['zero-width space', local.replace(uuid, `${uuid.slice(0, 8)}\u{200B}${uuid.slice(8)}`), local],
+    ['word joiner', local.replace(uuid, `${uuid.slice(0, 18)}\u{2060}${uuid.slice(18)}`), local],
+    ['soft hyphen', local.replace(uuid, `${uuid.slice(0, 23)}\xAD${uuid.slice(23)}`), local],
+    ['byte-order mark', local.replace(uuid, `${uuid.slice(0, 8)}\u{FEFF}${uuid.slice(8)}`), local],
+    ['copy artifacts before prose', `${local}\u{200B}继续说明`, local],
+    ['nonbreaking hyphens', local.replace(uuid, uuid.replace(/-/g, '‑')), local],
+    ['fullwidth hyphens', local.replace(uuid, uuid.replace(/-/g, '－')), local],
+    ['encoded UUID', local.replace(uuid, encoded), local],
+    ['encoded copy artifacts', local.replace(uuid, encodeURIComponent(`${uuid.slice(0, 8)}\u{200B}${uuid.slice(8)}`)), local],
+    ['encoded prose', `${local}${encodeURIComponent('继续说明')}`, local],
+  ]) {
+    assert.deepEqual(threadLinkCandidates(body), [expected], label);
+    assert.deepEqual(parseThreadLink(threadLinkCandidates(body)[0], deployment), { id: uuid, machine: null }, label);
+  }
+});
+
+// Machine identity and old exact IDs must survive normalization without introducing search syntax.
+test('UUID repair preserves query identity and leaves exact parsing and legacy IDs unchanged', () => {
+  const remote = threadDeepLink(uuid, 'dev (東京)', deployment);
+  assert.deepEqual(threadLinkCandidates(remote.replace(uuid, uuid.toUpperCase())), [remote]);
+  assert.deepEqual(parseThreadLink(threadLinkCandidates(remote.replace(uuid, uuid.toUpperCase()))[0], deployment), { id: uuid, machine: 'dev (東京)' });
+  const machine = `${threadLinkHash(uuid, null)}继续说明?machine=remote`;
+  assert.deepEqual(parseThreadLink(threadLinkCandidates(machine)[0]), { id: uuid, machine: 'remote' });
+  const ambiguous = `${threadLinkHash(uuid, null)}?machine=remote继续说明`;
+  assert.deepEqual(parseThreadLink(threadLinkCandidates(ambiguous)[0]), { id: uuid, machine: 'remote继续说明' });
+  const colonMachine = `${threadLinkHash(uuid, null)}?machine=dev:`;
+  assert.deepEqual(parseThreadLink(threadLinkCandidates(colonMachine)[0]), { id: uuid, machine: 'dev:' });
+  const preview = `${threadLinkHash(uuid.toUpperCase(), null)}?preview=%2Fresult.html`;
+  assert.deepEqual(threadLinkCandidates(preview), [`${threadLinkHash(uuid, null)}?preview=%2Fresult.html`]);
+  assert.equal(parseThreadLink(`${remote} keywords`, deployment), null);
+  assert.deepEqual(parseThreadLink(`${threadLinkHash(uuid, null)}继续说明`), { id: `${uuid}继续说明`, machine: null }, 'search/navigation never discard keywords');
+  for (const id of ['source', 'old', '東京', 'so\u{200B}urce']) {
+    const link = threadDeepLink(id, null, deployment);
+    assert.deepEqual(threadLinkCandidates(link), [link]);
+    assert.deepEqual(threadLinkCandidates(`${link}\u{FEFF}继续说明`), [link], 'legacy BOM separators keep their original meaning');
+    assert.equal(parseThreadLink(link, deployment)?.id, id);
+  }
+});
+
+// A complete UUID is not permission to guess a truncated ID, foreign link or hidden URI segment.
+test('UUID repair does not reinterpret malformed identities or ordinary UUID text', () => {
+  const local = threadDeepLink(uuid, null, deployment);
+  for (const suffix of ['a', 'g', '-extra', '/extra', '%2Fextra', '%23fragment', '%3Fmachine=remote']) {
+    const candidate = `${local}${suffix}`;
+    assert.deepEqual(threadLinkCandidates(candidate), [candidate]);
+    assert.notEqual(parseThreadLink(candidate, deployment)?.id, uuid, suffix);
+  }
+  const short = local.slice(0, -1);
+  assert.deepEqual(threadLinkCandidates(short), [short]);
+  assert.notEqual(parseThreadLink(short, deployment)?.id, uuid);
+  for (const candidate of [
+    local.replace('/app/', '/other/'), local.replace('calli.example', 'foreign.example'),
+    local.replace('https://', 'https://user:secret@'), `${local}%ZZ`,
+    `${local}?machine=%ZZ`, `${local}?machine=a&machine=b`,
+  ]) assert.equal(parseThreadLink(threadLinkCandidates(`${candidate}继续说明`)[0], deployment), null, candidate);
+  assert.deepEqual(threadLinkCandidates(`Ordinary ID ${uuid}; https://calli.example/app/files/${uuid}; ftp://calli.example/app/#/thread/${uuid}`), []);
 });

@@ -54,14 +54,38 @@ export function isThreadLinkQuery(value: string): boolean {
   return /^(?:https?:\/\/\S*)?#\/thread(?:\/|$|\?)/i.test(value.trim());
 }
 
+const UUID_PREFIX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+const COPY_INVISIBLES = /[\xAD\u{200B}-\u{200F}\u{2060}\u{FEFF}]/gu;
+const COPY_HYPHENS = /[\u{2010}-\u{2015}\u{2212}\u{FE63}\u{FF0D}]/gu;
+const ATTACHED_PROSE = /^(?:[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\u{2013}\u{2014}\u{2026}]|:+$)/u;
+
+/** Repair only a temporary UUID identity, never deployment paths, machines or the user's text. */
+function normalizeThreadLinkCandidate(candidate: string): string {
+  const hashAt = candidate.indexOf('#');
+  if (!candidate.startsWith('#/thread/', hashAt)) return candidate;
+  const start = hashAt + '#/thread/'.length;
+  const queryAt = candidate.indexOf('?', start);
+  const end = queryAt < 0 ? candidate.length : queryAt;
+  let id: string;
+  try { id = decodeURIComponent(candidate.slice(start, end)); }
+  catch { return candidate; }
+  const cleaned = id.replace(COPY_INVISIBLES, '');
+  const uuid = UUID_PREFIX.exec(cleaned.replace(COPY_HYPHENS, '-'))?.[0];
+  // Non-UUID and ambiguous longer IDs retain exact matching; only unambiguous prose is detached.
+  if (!uuid || cleaned.length > uuid.length && !ATTACHED_PROSE.test(cleaned.slice(uuid.length))) return candidate;
+  return candidate.slice(0, start) + uuid.toLowerCase() + candidate.slice(end);
+}
+
 /** Find explicitly typed links without treating a fragment inside another URI as a local link. */
 export function threadLinkCandidates(text: string): string[] {
   const found: string[] = [];
-  const pattern = /https?:\/\/[^\s<>"'`，。；：、！？（）【】「」『』]+|#\/thread(?:[/?][^\s<>"'`，。；：、！？（）【】「」『』]*|(?=\s|$))/gi;
+  // Keep embedded BOMs available to UUID repair while other whitespace still separates links.
+  const pattern = /https?:\/\/(?:[^\s<>"'`“”‘’，。；：、！？（）【】「」『』]|\u{FEFF})+|#\/thread(?:[/?](?:[^\s<>"'`“”‘’，。；：、！？（）【】「」『』]|\u{FEFF})*|(?=\s|$))/giu;
   for (const match of text.matchAll(pattern)) {
     // Chinese prose commonly touches the URL; URI slashes still cannot introduce a local hash.
-    if (match.index && !/[\s([<'"，。；：、！？（【「『]/.test(text[match.index - 1]) && text.charCodeAt(match.index - 1) < 128) continue;
-    const candidate = match[0].replace(/[)\]}>.,;!?]+$/, '');
+    if (match.index && !/[\s([<'"`，。；：、！？（【「『]/.test(text[match.index - 1]) && text.charCodeAt(match.index - 1) < 128) continue;
+    // Unrepaired BOMs retain their original whitespace-boundary meaning for legacy IDs and queries.
+    const candidate = normalizeThreadLinkCandidate(match[0].replace(/[)\]}>.,;!?]+$/, '')).split('\u{FEFF}')[0];
     if (isThreadLinkQuery(candidate)) found.push(candidate);
   }
   return [...new Set(found)];
