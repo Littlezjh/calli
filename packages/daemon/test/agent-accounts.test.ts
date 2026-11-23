@@ -179,6 +179,8 @@ test('agy account API isolates native home, copies portable settings, and keeps 
   assert.notEqual(instance.env.HOME, home);
   assert.equal(statSync(instance.env.HOME).mode & 0o777, 0o700);
   assert.equal(instance.env.XDG_CONFIG_HOME, join(instance.env.HOME, '.config'));
+  assert.equal(instance.env.GH_CONFIG_DIR, join(home, '.config', 'gh'));
+  assert.equal(instance.env.GIT_CONFIG_GLOBAL, join(home, '.gitconfig'));
   for (const key of ['GOOGLE_API_KEY', 'GEMINI_API_KEY', 'GOOGLE_APPLICATION_CREDENTIALS']) assert.equal(instance.env[key], '');
   assert.equal(existsSync(join(directory, 'antigravity-oauth-token')), false);
   assert.equal(existsSync(join(directory, 'conversations')), false);
@@ -325,4 +327,59 @@ test('agy explicit catalog refresh publishes metadata and an older request canno
   await stale;
   assert.deepEqual((await adapter.models()).map(m => m.id), ['gemini-current']);
   assert.deepEqual(pushed, [['gemini-current']]);
+});
+
+test('agy isolated accounts preserve host gh and git config across chained copies, XDG git config, and legacy saved instances', async () => {
+  const hostHome = join(root, 'xdg-git-host');
+  const xdgGit = join(hostHome, '.config', 'git', 'config');
+  mkdirSync(join(hostHome, '.config', 'git'), { recursive: true });
+  writeFileSync(xdgGit, '[user]\n\tname = Host User\n');
+  const agyConfig = join(hostHome, '.gemini', 'antigravity-cli');
+  mkdirSync(agyConfig, { recursive: true });
+  const command = [process.execPath, fileURLToPath(new URL('./fixtures/fake-agy.mjs', import.meta.url))];
+  await registry.add({ id: 'agy-xdg-root', adapter: 'agy', command, env: { HOME: hostHome, CALLI_AGY_HOME: agyConfig } });
+  const first = await registry.createAccount({ adapter: 'agy', sourceId: 'agy-xdg-root' });
+  assert.equal(first.env!.GH_CONFIG_DIR, join(hostHome, '.config', 'gh'));
+  assert.equal(first.env!.GIT_CONFIG_GLOBAL, xdgGit);
+  const chained = await registry.createAccount({ adapter: 'agy', sourceId: first.id });
+  assert.equal(chained.env!.GH_CONFIG_DIR, join(hostHome, '.config', 'gh'));
+  assert.equal(chained.env!.GIT_CONFIG_GLOBAL, xdgGit);
+
+  const envDump = join(root, 'legacy-agy-env.json');
+  const legacyHome = join(root, 'legacy-agy-home');
+  mkdirSync(join(legacyHome, '.gemini', 'antigravity-cli'), { recursive: true });
+  const previousHome = process.env.HOME;
+  const previousXdg = process.env.XDG_CONFIG_HOME;
+  const previousGh = process.env.GH_CONFIG_DIR;
+  const previousGit = process.env.GIT_CONFIG_GLOBAL;
+  process.env.HOME = hostHome;
+  delete process.env.XDG_CONFIG_HOME;
+  delete process.env.GH_CONFIG_DIR;
+  delete process.env.GIT_CONFIG_GLOBAL;
+  try {
+    const legacy = new AgyAdapter(command, {
+      HOME: legacyHome,
+      XDG_CONFIG_HOME: join(legacyHome, '.config'),
+      CALLI_AGY_HOME: join(legacyHome, '.gemini', 'antigravity-cli'),
+      FAKE_AGY_ENV_FILE: envDump,
+    });
+    assert.match(legacy.resumeCommand!('conv-1'), /GH_CONFIG_DIR=/);
+    assert.match(legacy.resumeCommand!('conv-1'), /GIT_CONFIG_GLOBAL=/);
+    const session = await legacy.start({ cwd: root });
+    try {
+      await session.prompt({ text: 'hello', images: [] }, { emit: () => {}, requestApproval: async () => ({ cancelled: true as const }) });
+    } finally {
+      await session.close();
+    }
+    const observed = JSON.parse(readFileSync(envDump, 'utf8'));
+    assert.equal(observed.HOME, legacyHome);
+    assert.equal(observed.XDG_CONFIG_HOME, join(legacyHome, '.config'));
+    assert.equal(observed.GH_CONFIG_DIR, join(hostHome, '.config', 'gh'));
+    assert.equal(observed.GIT_CONFIG_GLOBAL, xdgGit);
+  } finally {
+    if (previousHome === undefined) delete process.env.HOME; else process.env.HOME = previousHome;
+    if (previousXdg === undefined) delete process.env.XDG_CONFIG_HOME; else process.env.XDG_CONFIG_HOME = previousXdg;
+    if (previousGh === undefined) delete process.env.GH_CONFIG_DIR; else process.env.GH_CONFIG_DIR = previousGh;
+    if (previousGit === undefined) delete process.env.GIT_CONFIG_GLOBAL; else process.env.GIT_CONFIG_GLOBAL = previousGit;
+  }
 });

@@ -2,7 +2,7 @@ import type { WorkMode } from './types.js';
 import { AcpAdapter, type AcpSession } from './acp.js';
 import type { UsageSample } from '../telemetry.js';
 import { isCompaction } from './compaction.js';
-import { AGY_AUTH_ENV, copyAgyAccount, startAgyLogin } from './agy-account.js';
+import { AGY_AUTH_ENV, copyAgyAccount, startAgyLogin, withHostGitEnv } from './agy-account.js';
 import { individualQuotaExhausted } from './quota-errors.js';
 import { PlanReply } from './plan-reply.js';
 import { execFile } from 'node:child_process';
@@ -334,7 +334,7 @@ export class AgyAdapter extends AcpAdapter {
     /** Extra environment for this agent instance, such as a second account's home. */
     env: Record<string, string> = {},
   ) {
-    super([...cliCommand, 'acp'], env);
+    super([...cliCommand, 'acp'], env.HOME && env.XDG_CONFIG_HOME ? withHostGitEnv(env) : env);
     const configuredIdle = Number(env.CALLI_ACP_BACKGROUND_IDLE_MS);
     this.backgroundIdleMs = Number.isFinite(configuredIdle) && configuredIdle > 0 ? configuredIdle : 1500;
   }
@@ -466,7 +466,7 @@ export class AgyAdapter extends AcpAdapter {
   }
 
   resumeCommand(agentSessionId: string): string {
-    const prefix = Object.entries(this.env).filter(([key, value]) => ['HOME', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_CACHE_HOME'].includes(key) || (AGY_AUTH_ENV.includes(key) && value === ''))
+    const prefix = Object.entries(this.env).filter(([key, value]) => ['HOME', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_CACHE_HOME', 'GH_CONFIG_DIR', 'GIT_CONFIG_GLOBAL'].includes(key) || (AGY_AUTH_ENV.includes(key) && value === ''))
       .map(([key, value]) => `${key}=${quoteArg(value)}`).join(' ');
     return `${prefix ? `env ${prefix} ` : ''}${this.cliCommand.map(quoteArg).join(' ')} --conversation ${quoteArg(agentSessionId)}`;
   }

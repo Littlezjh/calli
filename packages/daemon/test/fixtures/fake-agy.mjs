@@ -29,6 +29,14 @@ if (args[0] === 'acp' && args[1] === '--login') {
   await new Promise(() => {});
 }
 
+if (process.env.FAKE_AGY_ENV_FILE) {
+  writeFileSync(process.env.FAKE_AGY_ENV_FILE, JSON.stringify({
+    HOME: process.env.HOME,
+    XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
+    GH_CONFIG_DIR: process.env.GH_CONFIG_DIR,
+    GIT_CONFIG_GLOBAL: process.env.GIT_CONFIG_GLOBAL,
+  }));
+}
 if (process.env.FAKE_AGY_ACCOUNT_CHECK === '1') {
   const directory = join(process.env.HOME, '.gemini', 'antigravity-cli');
   if (directory !== process.env.CALLI_AGY_HOME || process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY ||
