@@ -3413,10 +3413,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
               laterOf={latestSegment ? entry => laterSegment(entry.thread, latestSegment, threads, entry.part) : undefined}
               latest={latestSegment ?? undefined}
               agentIcon={id => agents.find(a => a.id === id)?.icon}
-              onOpenSegment={(thread, alone) => {
-                if (alone) { setSingleSegmentId(thread.id); setSelectedId(thread.id); setView('thread'); setDrawer(false); }
-                else if (thread.id !== selected.id) pick(thread.id);
-              }}
+              onOpenSegment={thread => { if (thread.id !== selected.id) pick(thread.id); }}
               onFocus={setChainFocus}
               onOpenFinds={onRouterThread ? () => openDesk(true) : undefined}
               onBrowseOlder={() => { stickToBottom.current = false; setAtBottom(false); }}
