@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chainEntries, handoverHistoryKey, laterSegment, latestHandoverThread, nextSegment, takeoverMention, cancellableHandover } from '../src/handover';
+import { chainEntries, partAt, handoverHistoryKey, laterSegment, latestHandoverThread, nextSegment, takeoverMention, cancellableHandover } from '../src/handover';
 import type { Thread } from '../src/api';
 
 const segment = (id: string, parent?: string) => ({ id, createdAt: id, handover: parent ? { sourceId: parent, mode: 'continue' } : null }) as Thread;
@@ -115,4 +115,31 @@ test('the key of loaded ancestors changes when a thread is handed back to', () =
   const key = handoverHistoryKey(b, [a, b]);
   a.handback = null;
   assert.notEqual(handoverHistoryKey(b, [a, b]), key);
+});
+
+test('stepping back through a chain handed back and forth reaches every part of every segment', () => {
+  // A → B → C, back to B, back to C: the shape a long relay between two accounts takes.
+  const A = { id: 'A', handover: null, handback: null } as unknown as Thread;
+  const B = { id: 'B', handover: { sourceId: 'A', mode: 'continue', sourceSeq: 5175 }, handback: { sourceId: 'C', afterSeq: 10437, sourceSeq: 6988, at: '' } } as unknown as Thread;
+  const C = { id: 'C', handover: { sourceId: 'B', mode: 'continue', sourceSeq: 6879 }, handback: { sourceId: 'B', afterSeq: 7390, sourceSeq: 13502, at: '' } } as unknown as Thread;
+  const byId = new Map([A, B, C].map(t => [t.id, t]));
+  // The same step MergedHistory takes when the reader scrolls past the top of a page.
+  const older = (entry: { thread: Thread; part?: 'before' | 'after' }) => {
+    const { thread } = entry;
+    const via = thread.handback && entry.part !== 'before';
+    const link = via ? { id: thread.handback!.sourceId, seq: thread.handback!.sourceSeq } : thread.handover ? { id: thread.handover.sourceId, seq: thread.handover.sourceSeq } : null;
+    if (!link) return null;
+    const target = byId.get(link.id)!;
+    return { thread: target, part: partAt(target, link.seq === undefined ? undefined : link.seq + 1, Boolean(via)) };
+  };
+  const path: string[] = [];
+  for (let at: { thread: Thread; part?: 'before' | 'after' } | null = { thread: C, part: 'after' }; at; at = older(at)) {
+    path.push(`${at.thread.id}:${at.part ?? '-'}`);
+    assert.ok(path.length < 10, 'the walk ends');
+  }
+  assert.deepEqual(path, ['C:after', 'B:after', 'C:before', 'B:before', 'A:-']);
+  // Old links without a seq keep their earlier reading.
+  assert.equal(partAt(B, undefined, false), 'before');
+  assert.equal(partAt(B, undefined, true), 'after');
+  assert.equal(partAt(A, 3, true), undefined);
 });

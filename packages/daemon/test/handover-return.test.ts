@@ -174,12 +174,33 @@ test('an older conversation whose quota is high, which is blocked or has no sess
   } finally { await h.close(); }
 });
 
+test('an automatic handover going to another agent never lands in an older conversation of a third', async () => {
+  const h = await setup();
+  try {
+    const { a, b } = await h.chain();
+    // The order names agy3; A (agy) could take the work back, but nobody chose agy.
+    h.manager.autoHandover.configure({ enabled: true, threshold: 90, orders: { agy2: [{ agent: 'agy3', model: 'gemini-pro' }] } });
+    await h.manager.startTurn(b.id, { text: 'quota-near' });
+    await wait(() => h.manager.autoHandover.view(b.id).state === 'countdown');
+    const view = h.manager.autoHandover.view(b.id);
+    assert.equal(view.target?.agent, 'agy3');
+    assert.equal(view.returnTo, undefined, 'no older conversation of another agent is offered');
+    await h.done(b.id);
+    await wait(() => h.manager.listThreads().length >= 3);
+    const c = h.manager.listThreads().find(t => t.handover?.sourceId === b.id)!;
+    assert.equal(c.agent, 'agy3');
+    assert.equal(h.manager.getThread(a.id).handback ?? null, null, 'A was not handed the work');
+    await h.done(c.id);
+  } finally { await h.close(); }
+});
+
 test('an automatic handover offers the older conversation first, and a new one when chosen', async () => {
   for (const choose of [null, 'new'] as const) {
     const h = await setup();
     try {
       const { a, b } = await h.chain();
-      h.manager.autoHandover.configure({ enabled: true, threshold: 90, orders: { agy2: [{ agent: 'agy3', model: 'gemini-pro' }] } });
+      // The order names A's own agent: its older conversation is the one offered.
+      h.manager.autoHandover.configure({ enabled: true, threshold: 90, orders: { agy2: [{ agent: 'agy', model: 'gemini-pro' }] } });
       await h.manager.startTurn(b.id, { text: 'quota-near' });
       await wait(() => h.manager.autoHandover.view(b.id).state === 'countdown');
       const view = h.manager.autoHandover.view(b.id);
@@ -196,7 +217,7 @@ test('an automatic handover offers the older conversation first, and a new one w
       } else {
         const c = h.manager.listThreads().find(t => t.handover?.sourceId === b.id)!;
         assert.ok(c, 'a new conversation');
-        assert.equal(c.agent, 'agy3');
+        assert.equal(c.agent, 'agy');
         assert.equal(c.handover?.method, 'summary', 'carried by a summary, never a copy of the session');
         assert.equal(h.manager.getThread(a.id).handback ?? null, null);
         await h.done(c.id);

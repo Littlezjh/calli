@@ -3,7 +3,7 @@ import { ApiError, type Api, type Thread } from '../api';
 import { historyPage, prependHistory, type HistoryPage } from '../history';
 import { buildTimeline, clockLabel } from '../timeline';
 import { t } from '../i18n';
-import { entryKey, readingPath, type ChainEntry } from '../handover';
+import { entryKey, partAt, readingPath, type ChainEntry } from '../handover';
 import { blankPress, dragPull, gateDirection, noPull, pageShift, pullProgress, pullReady, type Edges, type GateDir, type GateInput, type Pull } from '../segmentGate';
 import { AgentMark, IconChevron, IconHandover } from './icons';
 import { Prose, ThreadView } from './ThreadView';
@@ -192,7 +192,7 @@ export function MergedHistory({ api, thread, chainThreads, merged, ready, agentL
     try {
       const target = await api.thread(next.id);
       if (generation.current !== version) return;
-      const part: Part = next.viaHandback ? undefined : target.handback ? 'before' : undefined;
+      const part: Part = partAt(target, next.clip, next.viaHandback);
       const entry: ChainEntry = { thread: target, ...(part ? { part } : {}), ...(next.clip !== undefined ? { clip: next.clip } : {}), followups: next.followups };
       // Broken or cyclic metadata must not put the same conversation on the way twice.
       if (keys.includes(entryKey(entry)) || keys.includes(entryKey({ thread: target, part: part ?? (target.handback ? 'after' : undefined) }))) { setEarlierError('missing'); return; }

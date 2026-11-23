@@ -12,6 +12,19 @@ export interface ChainEntry {
 }
 
 /** The same thread's reading position: a thread the chain came back to is two segments. */
+/**
+ * Which part of `target` a step back into it reaches, from where that step stops (`clip`, one past
+ * the last event read). A thread the chain came back to has two parts; the step lands in the one
+ * that holds that point, whether it got there by a handover or by a hand back. Stepping by the kind
+ * of link alone took a return to a thread that was itself returned to for its later part twice.
+ */
+export function partAt(target: Thread, clip: number | undefined, viaHandback: boolean): 'before' | 'after' | undefined {
+  if (!target.handback) return undefined;
+  // An old link without a seq: a handover was made before the return, a hand back after it.
+  if (clip === undefined) return viaHandback ? 'after' : 'before';
+  return clip - 1 <= target.handback.afterSeq ? 'before' : 'after';
+}
+
 export const entryKey = (entry: { thread: Thread; part?: 'before' | 'after' }): string => `${entry.thread.id}:${entry.part ?? 'after'}`;
 
 /** The live continuation edges: [from, to, countsAsSuccessor]. A continuation made from a thread before it was handed back to does not make that thread a parent. */

@@ -3702,7 +3702,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           permission={a.capabilities.permissionModes.length ? thread.permissionMode : undefined} onPermission={(permissionMode) => { void api.updateThread(thread.id, { permissionMode }).then(() => refreshThreads()).catch(handleError); }} /> : null;
       }} leadAgent={threads.find((t) => t.id === coordination.rootId)?.agent} phone={compact} onClose={() => setAgentsOpen(false)} onOpen={thread => { openThread(thread); setAgentsOpen(false); }} onAdjust={(name, draft) => { setAgentsOpen(false); setSelectedId(coordination.rootId); setRestore({ text: t('app.adjustTask', name) + draft, nonce: Date.now() }); }} onRefresh={() => { void refreshThreads(); }} onError={handleError} />}
       {/* On a computer what the overview opens goes in the column beside the conversation: the whole list of a group here; a page or a file's changes opened from it take its place, with a way back. */}
-      {activeOverviewDetail && !compact && !preview && !picture && !(diffFile && diffFile.threadId === selected?.id) && <DockPanel label={t(activeOverviewDetail.section === 'all' ? 'overview.label' : `overview.${activeOverviewDetail.section}`)}>{overviewBody(closeOverviewDetail, true, activeOverviewDetail.section)}</DockPanel>}
+      {activeOverviewDetail && !compact && !preview && !picture && !termOpen && !(diffFile && diffFile.threadId === selected?.id) && <DockPanel label={t(activeOverviewDetail.section === 'all' ? 'overview.label' : `overview.${activeOverviewDetail.section}`)}>{overviewBody(closeOverviewDetail, true, activeOverviewDetail.section)}</DockPanel>}
       {files && filesThread && api && <FilesPanel api={api} threadId={filesThread.id} target={files} phone={compact} revision={filesThread.updatedAt} writingStage={filesThread.writing?.stage ?? null} writingHabits={filesThread.writing?.habits ?? null} noted={{ count: noteCount, nonce: filesNotePulse }} onClose={() => setFiles(null)} />}
       {gitOpen && selected && api && <GitPanel key={`${hostId ?? ''}:${selected.id}`} api={api} threadId={selected.id} phone={compact} running={selected.status === 'running'} onClose={() => setGitOpen(false)} />}
       {traceOpen && selected && (
@@ -3731,6 +3731,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           api={api}
           cwd={selected?.cwd || draftCwd || workdirs[0] || ''}
           terminalId={terminalTarget}
+          docked={!compact}
           onClose={() => { setTermOpen(false); setTerminalTarget(null); }}
           onError={handleError}
         />

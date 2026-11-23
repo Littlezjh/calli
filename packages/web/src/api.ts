@@ -828,6 +828,8 @@ export interface AgentInfo {
   available: boolean;
   /** How it can be signed in from the hub, when its adapter can start the CLI's login. */
   login?: 'terminal' | 'wizard';
+  /** In-progress wizard login session kept alive by the daemon so any client can resume it. */
+  activeLogin?: AgentLogin;
   streamBridgeEnabled?: boolean;
   capabilities: {
     prewarm?: boolean;
