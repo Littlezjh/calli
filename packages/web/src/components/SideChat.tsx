@@ -4,6 +4,7 @@ import { Api, type AgentInfo, type AgentMention, type ModelOption, type Thread }
 import type { PreparedImage } from '../images';
 import { restoreVideos, type PreparedVideo } from '../videos';
 import { folderName } from '../paths';
+import { attachFallbackReference, splitReferences, withReferences } from '../context-references';
 import { buildTimeline, splitNotes, withNotes, type StoredEvent } from '../timeline';
 import { Composer } from './Composer';
 import { ThreadView } from './ThreadView';
@@ -28,11 +29,13 @@ interface Props {
   quoteText: string;
   /** The thread the passage was selected in, so the new agent knows where it came from. */
   sourceTitle: string | null;
+  /** The source thread id, attached as a read-only reference when native forking is unavailable. */
+  sourceThreadId?: string | null;
   /**
    * Set while that thread can be forked: the side chat is then an ephemeral fork of it, the way
    * Codex's side conversation works — the questions land with the whole conversation as context,
    * while the panel itself starts empty. Null (agent cannot fork, no session yet, or a turn is
-   * running) falls back to a fresh thread carrying the quoted passage alone.
+   * running) falls back to a fresh thread with a read-only reference to the source conversation.
    */
   forkSourceId: string | null;
   /** Why pictures cannot be attached, or null when they can. */
@@ -64,6 +67,7 @@ export function SideChat({
   effort,
   quoteText,
   sourceTitle,
+  sourceThreadId,
   forkSourceId,
   attachBlocked,
   onClose,
@@ -184,11 +188,20 @@ export function SideChat({
       baseSeq.current = (await api.historyPosition(created.id)).snapshotSeq;
     } else {
       // A fresh agent seeing a bare snippet has nothing to go on but the words, so the message
-      // says which thread the notes were lifted out of.
+      // names the source thread and attaches a read-only snapshot of it when available.
       created = await api.createThread({ agent, cwd, permissionMode, model: draftModel, effort: draftEffort, title });
       if (choiceChanged) created = await api.updateThread(created.id, { model: draftModel, effort: draftEffort, rememberModelChoice: true });
       const { notes, body } = splitNotes(text);
-      if (sourceTitle && notes.length) firstText = withNotes(notes, `${t('sideChat.notesFrom', sourceTitle)}\n\n${body}`);
+      const referenced = splitReferences(body);
+      if (sourceTitle && notes.length) {
+        firstText = withNotes(notes, withReferences(referenced.references, `${t('sideChat.notesFrom', sourceTitle)}\n\n${referenced.body}`));
+      }
+      if (!api.demo && sourceThreadId
+        && referenced.references.length < 12
+        && !referenced.references.some(item => item.kind === 'thread' && item.sourceId === sourceThreadId)) {
+        const sourceReference = await api.createReference({ kind: 'thread', sourceId: sourceThreadId }).catch(() => null);
+        firstText = attachFallbackReference(firstText, sourceReference);
+      }
     }
     setThread(created);
     onThreadCreated(created);

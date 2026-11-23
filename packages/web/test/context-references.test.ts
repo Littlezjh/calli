@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mergeReferences, referencePreview, splitReferences, withReferences, type ContextReference } from '../src/context-references';
+import { attachFallbackReference, mergeReferences, referencePreview, splitReferences, withReferences, type ContextReference } from '../src/context-references';
 import { splitNotes, withNotes } from '../src/timeline';
 import { readDrafts, writeDraft } from '../src/drafts';
 
@@ -49,4 +49,19 @@ test('message context snapshots stay separate from notes when a draft is reloade
   assert.deepEqual(readDrafts(storage).thread.references, [message]);
   assert.deepEqual(readDrafts(storage).thread.notes, notes);
   assert.deepEqual(splitReferences(withReferences([message], 'My question')), { references: [message], body: 'My question' });
+});
+
+test('attachFallbackReference preserves leading notes, deduplicates by sourceId and respects the 12-reference limit', () => {
+  const source: ContextReference = { id: 'ref-source', kind: 'thread', title: 'Source thread', path: '/project', sourceId: 'thread-1', snapshotSeq: 9, at: '2026-01-01T00:00:00Z' };
+  const notes = [{ quote: 'Selected passage', comment: '' }];
+  const noted = withNotes(notes, 'Explain this');
+  const attached = attachFallbackReference(noted, source);
+  const parsedNotes = splitNotes(attached);
+  assert.deepEqual(parsedNotes.notes, notes);
+  assert.deepEqual(splitReferences(parsedNotes.body), { references: [source], body: 'Explain this' });
+  assert.equal(attachFallbackReference(attached, { ...source, id: 'ref-duplicate' }), attached);
+  const twelve = Array.from({ length: 12 }, (_, i): ContextReference => ({ ...reference, id: `dir-${i}` }));
+  const full = withNotes(notes, withReferences(twelve, 'Full'));
+  assert.equal(attachFallbackReference(full, source), full);
+  assert.equal(attachFallbackReference(noted, null), noted);
 });
