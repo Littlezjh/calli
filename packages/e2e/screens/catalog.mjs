@@ -2,6 +2,7 @@
 // widths, light and dark. A new page or a new async area gets an entry here, so screens.mjs
 // photographs it and test/ui-rules.spec.mjs holds it to the layout rules.
 import { TOKEN } from '../harness.mjs';
+import { prepareDesktopPassword, openDesktopPassword } from './desktop-password.mjs';
 
 export const VIEWPORTS = [
   { id: 'phone', width: 390, height: 844, mobile: true },
@@ -13,6 +14,7 @@ export const THEMES = ['light', 'dark'];
 /**
  * `hash(seed)` is the address the screen opens at; `ready` is a selector that is on screen once
  * its content has arrived; `phone` runs after load on a phone (opening the drawer, for one).
+ * `prepare` installs isolated fixtures before navigation; `open` reveals an area inside the page.
  */
 export const SCREENS = [
   {
@@ -26,6 +28,14 @@ export const SCREENS = [
     name: '出错的对话',
     hash: (seed) => `#/thread/${encodeURIComponent(seed.threads.failed.id)}`,
     ready: '.composer',
+  },
+  {
+    id: 'desktop-password',
+    name: '桌面密码',
+    hash: (seed) => `#/thread/${encodeURIComponent(seed.threads.rich.id)}`,
+    ready: '.composer',
+    prepare: prepareDesktopPassword,
+    open: openDesktopPassword,
   },
   {
     id: 'threads',
@@ -88,9 +98,11 @@ export async function newScreenPage(browser, viewport, theme) {
 
 /** Opens a screen and waits for its content and a quiet second after it. */
 export async function openScreen(page, seed, screen, viewport) {
+  if (screen.prepare) await screen.prepare(page);
   await page.goto(`${seed.daemon.base}/${screen.hash(seed)}`);
   await page.locator(screen.ready).first().waitFor({ state: 'attached' });
   if (viewport.mobile && screen.phone) await screen.phone(page);
+  if (screen.open) await screen.open(page);
   await page.waitForTimeout(1000);
 }
 
