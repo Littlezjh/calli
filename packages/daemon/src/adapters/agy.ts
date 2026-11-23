@@ -6,9 +6,11 @@ import { AGY_AUTH_ENV, copyAgyAccount, startAgyLogin } from './agy-account.js';
 import { individualQuotaExhausted } from './quota-errors.js';
 import { PlanReply } from './plan-reply.js';
 import { execFile } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
-import { access, copyFile, cp, mkdir, readdir } from 'node:fs/promises';
+import { access, copyFile, cp, mkdir, readdir, rm } from 'node:fs/promises';
+import { DatabaseSync } from 'node:sqlite';
 import { ANTIGRAVITY_ICON } from './icons.js';
 import { configDirectory, findSessionFile, quoteArg } from './session-location.js';
 import { agyLiveUsage } from './session-usage.js';
@@ -179,6 +181,115 @@ export async function copyDirectorySnapshot(from: string, to: string): Promise<v
   }
 }
 
+const AGY_SESSION_ID = /^[a-z0-9_-]{1,128}$/i;
+
+function replaceSameLengthBytes(buf: Buffer, pairs: Array<[Buffer, Buffer]>): Buffer {
+  let out = buf;
+  let copied = false;
+  for (const [from, to] of pairs) {
+    if (!from.length || from.length !== to.length) continue;
+    let pos = out.indexOf(from);
+    while (pos >= 0) {
+      if (!copied) { out = Buffer.from(out); copied = true; }
+      to.copy(out, pos);
+      pos = out.indexOf(from, pos + to.length);
+    }
+  }
+  return out;
+}
+
+/**
+ * Clones an Antigravity conversation inside `configDir` under a new conversation id: atomically
+ * snapshots its SQLite database with `VACUUM INTO`, rewrites `cascade_id` and `trajectory_id`
+ * across tables (in-place byte replacement preserves protobuf wire framing for equal-length UUIDs),
+ * and copies its brain directory and annotations. Cleans up partial files on failure.
+ */
+export async function cloneAgySession(configDir: string, sourceId: string, targetId: string): Promise<void> {
+  if (!AGY_SESSION_ID.test(sourceId) || !AGY_SESSION_ID.test(targetId)) throw new Error('invalid Antigravity conversation id');
+  const sourceDb = join(configDir, 'conversations', `${sourceId}.db`);
+  if (!(await access(sourceDb).then(() => true, () => false))) {
+    throw new Error(`Antigravity conversation ${sourceId} was not found`);
+  }
+  const targetDb = join(configDir, 'conversations', `${targetId}.db`);
+  if (await access(targetDb).then(() => true, () => false)) {
+    throw new Error(`Antigravity conversation ${targetId} already exists`);
+  }
+  const targetBrain = join(configDir, 'brain', targetId);
+  const targetAnn = join(configDir, 'annotations', `${targetId}.pbtxt`);
+  for (const dir of ['conversations', 'brain', 'annotations']) await mkdir(join(configDir, dir), { recursive: true });
+  try {
+    // Snapshot the source DB cleanly (including WAL state) without mutating the source conversation.
+    const src = new DatabaseSync(sourceDb, { readOnly: true });
+    try {
+      src.exec(`VACUUM INTO '${targetDb.replace(/'/g, "''")}'`);
+    } finally {
+      src.close();
+    }
+    const dst = new DatabaseSync(targetDb);
+    try {
+      const tables = dst.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all() as Array<{ name: string }>;
+      const hasMeta = tables.some(t => t.name === 'trajectory_meta');
+      const meta = hasMeta ? dst.prepare('SELECT trajectory_id, cascade_id FROM trajectory_meta LIMIT 1').get() as { trajectory_id?: string; cascade_id?: string } | undefined : undefined;
+      const oldCascade = typeof meta?.cascade_id === 'string' && meta.cascade_id ? meta.cascade_id : sourceId;
+      const oldTrajectory = typeof meta?.trajectory_id === 'string' && meta.trajectory_id ? meta.trajectory_id : null;
+      const newTrajectory = oldTrajectory ? randomUUID() : null;
+      const textPairs: Array<[string, string]> = [[oldCascade, targetId], ...(oldTrajectory && newTrajectory ? [[oldTrajectory, newTrajectory] as [string, string]] : [])];
+      const bytePairs: Array<[Buffer, Buffer]> = textPairs.map(([a, b]) => [Buffer.from(a, 'utf8'), Buffer.from(b, 'utf8')]);
+      const rewriteText = (value: string) => textPairs.reduce((acc, [from, to]) => acc.replaceAll(from, to), value);
+      dst.exec('BEGIN');
+      try {
+        for (const { name } of tables) {
+          const escaped = `"${name.replace(/"/g, '""')}"`;
+          const cols = (dst.prepare(`PRAGMA table_info(${escaped})`).all() as Array<{ name: string }>).map(c => c.name);
+          if (!cols.length) continue;
+          const selectCols = cols.map(c => `"${c.replace(/"/g, '""')}"`).join(', ');
+          const setCols = cols.map(c => `"${c.replace(/"/g, '""')}" = ?`).join(', ');
+          const rows = dst.prepare(`SELECT rowid AS __rowid__, ${selectCols} FROM ${escaped}`).all() as Array<Record<string, unknown>>;
+          const update = dst.prepare(`UPDATE ${escaped} SET ${setCols} WHERE rowid = ?`);
+          for (const row of rows) {
+            let changed = false;
+            const values = cols.map(col => {
+              const v = row[col];
+              if (typeof v === 'string') {
+                const next = rewriteText(v);
+                if (next !== v) changed = true;
+                return next;
+              }
+              if (v instanceof Uint8Array) {
+                const buf = Buffer.from(v.buffer, v.byteOffset, v.byteLength);
+                const next = replaceSameLengthBytes(buf, bytePairs);
+                if (next !== buf) { changed = true; return next; }
+              }
+              return v;
+            });
+            if (changed) update.run(...(values as any[]), row.__rowid__ as number);
+          }
+        }
+        dst.exec('COMMIT');
+      } catch (err) {
+        dst.exec('ROLLBACK');
+        throw err;
+      }
+    } finally {
+      dst.close();
+    }
+    const sourceBrain = join(configDir, 'brain', sourceId);
+    if (await access(sourceBrain).then(() => true, () => false)) {
+      await copyDirectorySnapshot(sourceBrain, targetBrain);
+    }
+    await cp(join(configDir, 'annotations', `${sourceId}.pbtxt`), targetAnn, { errorOnExist: true, force: false }).catch((err) => {
+      if (err?.code !== 'ENOENT') throw err;
+    });
+  } catch (err) {
+    await Promise.all([
+      ...['', '-wal', '-shm'].map(s => rm(targetDb + s, { force: true }).catch(() => undefined)),
+      rm(targetBrain, { recursive: true, force: true }).catch(() => undefined),
+      rm(targetAnn, { force: true }).catch(() => undefined),
+    ]);
+    throw err;
+  }
+}
+
 export const AGY_METADATA = {
   adapter: 'agy' as const,
   label: 'Antigravity',
@@ -206,11 +317,11 @@ export class AgyAdapter extends AcpAdapter {
     images: true,
     deleteSession: false,
     history: false,
-    fork: false,
+    fork: true,
     forkAt: false,
     multiAccount: false,
     createAccount: true,
-    forkInto: false,
+    forkInto: true,
     quota: true,
   };
   private modelCache: { at: number; models: ModelOption[] } | null = null;
@@ -222,10 +333,22 @@ export class AgyAdapter extends AcpAdapter {
     private readonly cliCommand: string[] = ['agy'],
     /** Extra environment for this agent instance, such as a second account's home. */
     env: Record<string, string> = {},
-  ) { super([...cliCommand, 'acp'], env); }
+  ) {
+    super([...cliCommand, 'acp'], env);
+    const configuredIdle = Number(env.CALLI_ACP_BACKGROUND_IDLE_MS);
+    this.backgroundIdleMs = Number.isFinite(configuredIdle) && configuredIdle > 0 ? configuredIdle : 1500;
+  }
 
   protected readonly modeIds = { ask: ['default'], auto_edit: ['accept-edits'], full_access: ['auto'] };
   protected override resumeVia = 'session/resume' as const;
+
+  override async forkSession(agentSessionId: string, cwd: string, forkRef?: string): Promise<string> {
+    if (forkRef) throw new Error('this agent can only copy a whole conversation');
+    const configDir = configDirectory(this.env, 'CALLI_AGY_HOME', ['.gemini', 'antigravity-cli'], cwd);
+    const copyId = randomUUID();
+    await cloneAgySession(configDir, agentSessionId, copyId);
+    return copyId;
+  }
 
   protected override liveUsage(id: string, cwd: string, emit: (sample: UsageSample) => void) {
     // Per-request telemetry still comes from the transcript; ACP supplies context occupancy and

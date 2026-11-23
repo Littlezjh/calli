@@ -2,6 +2,7 @@
 if (process.argv.includes('--version')) { process.stdout.write('fixture 1.2.3\n'); process.exit(0); }
 // Antigravity ACP fixture plus the account-query and login CLI entry points.
 import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, symlinkSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { createInterface } from 'node:readline';
 import { agyUsage } from './live-usage.mjs';
 import { coordinationFixture } from './coordination.mjs';
@@ -81,6 +82,7 @@ if (promptIndex >= 0 && args[promptIndex + 1] !== undefined) {
 }
 
 if (args[0] !== 'acp') throw new Error('expected agy acp');
+const { DatabaseSync } = await import('node:sqlite');
 let conversation = 'agy-conv-1', model = 'default', effort, mode = 'default';
 let fullAccess = false, pending, waiting = false;
 let stepIndex = 0;
@@ -117,6 +119,22 @@ const config = () => [{ id: 'model', category: 'model', currentValue: model, opt
   { id: 'thought_level', category: 'thought_level', currentValue: effort ?? 'high', options: [{ value: 'low' }, { value: 'high' }] }];
 const info = () => ({ sessionId: conversation, configOptions: config(), modes: { currentModeId: mode,
   availableModes: ['default', 'accept-edits', 'auto', 'plan'].map(id => ({ id, name: id })) } });
+
+const ensureConversationDb = id => {
+  const home = process.env.CALLI_AGY_HOME;
+  if (!home || !id || id === 'unforkable' || !/^[a-z0-9_-]{1,128}$/i.test(id)) return;
+  const dir = join(home, 'conversations');
+  const dbPath = join(dir, `${id}.db`);
+  if (existsSync(dbPath)) return;
+  mkdirSync(dir, { recursive: true });
+  const db = new DatabaseSync(dbPath);
+  try {
+    db.exec('CREATE TABLE IF NOT EXISTS trajectory_meta (trajectory_id TEXT PRIMARY KEY, cascade_id TEXT, trajectory_type INTEGER, source INTEGER)');
+    db.exec('CREATE TABLE IF NOT EXISTS steps (idx INTEGER PRIMARY KEY, step_payload BLOB)');
+    db.prepare('INSERT INTO trajectory_meta (trajectory_id, cascade_id, trajectory_type, source) VALUES (?, ?, 4, 17)').run(randomUUID(), id);
+    db.prepare('INSERT INTO steps (idx, step_payload) VALUES (0, ?)').run(Buffer.from(`step:${id}`, 'utf8'));
+  } finally { db.close(); }
+};
 
 let advanceIndex = 0;
 let advanceScript = '';
@@ -257,6 +275,25 @@ function runTurn(text) {
     setTimeout(() => result({ status: 'SUCCESS', response: 'live usage', num_turns: 1, usage: { inputTokens: 100, cachedReadTokens: 50, cachedWriteTokens: 0, outputTokens: 20, totalTokens: 170 } }), 2400);
     return;
   }
+  if (body === 'background-notice') {
+    step({ step_index: stepIndex++, state: 'DONE', step_type: 'agent_response', text_delta: 'main done' });
+    result({ status: 'SUCCESS', response: 'main done' });
+    setTimeout(() => update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '⚠ Individual quota reached.' } }), 20);
+    return;
+  }
+  if (body === 'background-tool') {
+    step({ step_index: stepIndex++, state: 'DONE', step_type: 'agent_response', text_delta: 'main done' });
+    result({ status: 'SUCCESS', response: 'main done' });
+    setTimeout(() => {
+      update({ sessionUpdate: 'tool_call', toolCallId: 'bg-tool-1', name: 'run_command', title: 'check status', kind: 'execute', status: 'in_progress' });
+      setTimeout(() => {
+        update({ sessionUpdate: 'tool_call_update', toolCallId: 'bg-tool-1', status: 'completed', rawOutput: 'ok' });
+        update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'background work done' } });
+        update({ sessionUpdate: 'usage_update', used: 2048, size: 1048576 });
+      }, 120);
+    }, 20);
+    return;
+  }
   if (text.includes('crash')) {
     process.stderr.write('fake-agy: something broke\n');
     process.exit(7);
@@ -291,6 +328,7 @@ createInterface({ input: process.stdin }).on('line', async line => {
     case 'session/resume':
     case 'session/load':
       conversation = p.sessionId ?? (process.env.FAKE_HANDOVER_EXHAUST_ONCE || process.env.FAKE_TRANSIENT_ONCE ? `agy-conv-${process.pid}` : 'agy-conv-1');
+      ensureConversationDb(conversation);
       reply(msg.id, info());
       update({ sessionUpdate: 'available_commands_update', availableCommands: [
         { name: 'compact', description: 'Compact the conversation' }, { name: 'goal', description: 'Set a native goal' },

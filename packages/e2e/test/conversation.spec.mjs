@@ -82,6 +82,13 @@ test('while a turn runs its steps stay the story: no changes card until it ends'
   assert.equal(await page.locator('.changes').count(), 0, 'no changes card while the turn runs');
   assert.equal((await longRun.locator('.step-status').innerText()).trim(), '运行中');
 
+  // Folding the work group while a tool is still running keeps the active command visible on the header line.
+  await page.locator('.work-toggle').first().click();
+  await page.locator('.work-toggle .work-active').waitFor({ state: 'visible', timeout: 5_000 });
+  assert.match((await page.locator('.work-toggle .work-active').innerText()).trim(), /运行中：npm test/);
+  await page.locator('.work-toggle').first().click();
+  await longRun.waitFor({ state: 'visible', timeout: 5_000 });
+
   // Ended: the work folds to its duration, the answer stands after it, and the card appears.
   await page.locator('.work-toggle', { hasText: '用时' }).first().waitFor({ timeout: 15_000 });
   await page.getByText('now the long run').waitFor({ timeout: 5_000 });

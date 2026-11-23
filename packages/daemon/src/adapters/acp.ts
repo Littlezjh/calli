@@ -285,6 +285,9 @@ export class AcpSession implements AgentSession {
    */
   private background: { id: string; hooks: TurnHooks } | null = null;
   private backgroundTurns = 0;
+  private readonly backgroundTools = new Set<string>();
+  private backgroundPendingRequests = 0;
+  private backgroundIdleTimer: ReturnType<typeof setTimeout> | null = null;
   private workMode: WorkMode = 'execute';
   private permissionMode: PermissionMode = 'ask';
   onWorkMode?: (mode: WorkMode) => void;
@@ -306,6 +309,9 @@ export class AcpSession implements AgentSession {
     private readonly effortConfigId: string = 'effort',
     private readonly liveUsage?: (emit: (sample: UsageSample) => void) => LiveUsage | undefined,
     private configOptions: ConfigOption[] = [],
+    /** For ACP agents that do not emit a costed usage_update (e.g. agy), settle an autonomous
+     *  background turn after this much silence once no tool call or human request is still open. */
+    private readonly backgroundIdleMs: number = 0,
   ) {}
 
   setSessionHooks(hooks: SessionHooks): void { this.sessionHooks = hooks; }
@@ -313,7 +319,29 @@ export class AcpSession implements AgentSession {
   /** The hooks of whichever turn is running: the prompted one, or work the agent started itself. */
   private get turnHooks(): TurnHooks | null { return this.hooks ?? this.background?.hooks ?? null; }
 
+  private clearBackgroundIdle(): void {
+    if (this.backgroundIdleTimer) {
+      clearTimeout(this.backgroundIdleTimer);
+      this.backgroundIdleTimer = null;
+    }
+  }
+
+  private scheduleBackgroundIdle(): void {
+    this.clearBackgroundIdle();
+    if (!this.backgroundIdleMs || this.hooks || !this.background) return;
+    if (this.backgroundTools.size > 0 || this.backgroundPendingRequests > 0) return;
+    this.backgroundIdleTimer = setTimeout(() => {
+      this.backgroundIdleTimer = null;
+      if (!this.hooks && this.background && this.backgroundTools.size === 0 && this.backgroundPendingRequests === 0) {
+        this.finishBackground('end_turn');
+      }
+    }, this.backgroundIdleMs);
+    this.backgroundIdleTimer.unref?.();
+  }
+
   private finishBackground(stopReason: string): void {
+    this.clearBackgroundIdle();
+    this.backgroundTools.clear();
     const turn = this.background;
     if (!turn) return;
     this.background = null;
@@ -348,14 +376,24 @@ export class AcpSession implements AgentSession {
     }
     // Output with no prompt open is the agent working on its own. A finished background task
     // only updates its tool call; the model speaking or calling a tool starts a cycle, which
-    // always ends with a costed usage report. Hooks are set after session/load, so replay is not this.
+    // ends on a costed usage report (Claude) or after quiet time with no open tools (agy).
+    // Hooks are set after session/load, so replay is not this.
     if (!this.hooks && !this.background && this.sessionHooks
       && ['agent_message_chunk', 'agent_thought_chunk', 'tool_call', 'plan'].includes(value?.sessionUpdate)) {
       const id = `background-${++this.backgroundTurns}`;
+      this.backgroundTools.clear();
       this.background = { id, hooks: this.sessionHooks.turnStarted(id, { background: true }) };
     }
     const hooks = this.turnHooks;
     if (!hooks) return; // replay during session/load, or stray updates
+    if (!this.hooks && this.background && typeof value?.toolCallId === 'string') {
+      if (value.sessionUpdate === 'tool_call') {
+        if (value.status === 'completed' || value.status === 'failed') this.backgroundTools.delete(value.toolCallId);
+        else this.backgroundTools.add(value.toolCallId);
+      } else if (value.sessionUpdate === 'tool_call_update' && (value.status === 'completed' || value.status === 'failed')) {
+        this.backgroundTools.delete(value.toolCallId);
+      }
+    }
     const costed = value?.sessionUpdate === 'usage_update' && typeof value.cost?.amount === 'number' && Number.isFinite(value.cost.amount) && value.cost.amount >= 0;
     if (costed) {
       this.costReported = true;
@@ -368,62 +406,87 @@ export class AcpSession implements AgentSession {
     }
     if (ev) hooks.emit(ev);
     if (costed && !this.hooks) this.finishBackground('end_turn');
+    else if (!this.hooks && this.background) this.scheduleBackgroundIdle();
   }
 
   /** Called by the peer for session/request_permission. */
   async onPermission(params: any): Promise<unknown> {
     const hooks = this.turnHooks;
     if (!hooks) return { outcome: { outcome: 'cancelled' } };
-    // An agent may name only the call; the card then borrows what the call's own update showed.
-    const toolCall = { ...params?.toolCall };
-    if (toolCall && toolCall.title === undefined && toolCall.rawInput === undefined) {
-      const known = this.toolCalls.get(String(toolCall.toolCallId));
-      if (known) Object.assign(toolCall, known);
+    const inBackground = !this.hooks && Boolean(this.background);
+    if (inBackground) {
+      this.backgroundPendingRequests++;
+      this.clearBackgroundIdle();
     }
-    const plan = toolCall?.rawInput?.plan;
-    if (typeof plan === 'string' && this.workMode === 'plan' && hooks.requestInput) {
-      const preferred = this.permissionMode === 'ask' ? ['exit-plan-default'] : this.permissionMode === 'full_access' ? ['exit-plan-bypass'] : ['exit-plan-auto', 'exit-plan-accept-edits'];
-      const option = preferred.map(id => params.options?.find((o: any) => o.optionId === id)).find(Boolean);
-      if (option) {
-        // Full access stands by its word on the plan gate too: the plan is recorded and carried
-        // out without waiting for a person. Every lesser level still reads it before deciding.
-        const auto = this.permissionMode === 'full_access' ? { answers: { approval: [option.optionId] } } : undefined;
-        const answer = await hooks.requestInput({ id: params.toolCall.toolCallId, title: '计划已准备好', kind: 'plan', plan, ...(auto ? { auto } : {}), questions: [{ id: 'approval', question: '是否按此计划开始执行？', options: [{ value: option.optionId, label: '开始执行' }] }] });
-        return 'answers' in answer ? { outcome: { outcome: 'selected', optionId: answer.answers.approval[0] } } : { outcome: { outcome: 'cancelled' } };
+    try {
+      // An agent may name only the call; the card then borrows what the call's own update showed.
+      const toolCall = { ...params?.toolCall };
+      if (toolCall && toolCall.title === undefined && toolCall.rawInput === undefined) {
+        const known = this.toolCalls.get(String(toolCall.toolCallId));
+        if (known) Object.assign(toolCall, known);
+      }
+      const plan = toolCall?.rawInput?.plan;
+      if (typeof plan === 'string' && this.workMode === 'plan' && hooks.requestInput) {
+        const preferred = this.permissionMode === 'ask' ? ['exit-plan-default'] : this.permissionMode === 'full_access' ? ['exit-plan-bypass'] : ['exit-plan-auto', 'exit-plan-accept-edits'];
+        const option = preferred.map(id => params.options?.find((o: any) => o.optionId === id)).find(Boolean);
+        if (option) {
+          // Full access stands by its word on the plan gate too: the plan is recorded and carried
+          // out without waiting for a person. Every lesser level still reads it before deciding.
+          const auto = this.permissionMode === 'full_access' ? { answers: { approval: [option.optionId] } } : undefined;
+          const answer = await hooks.requestInput({ id: params.toolCall.toolCallId, title: '计划已准备好', kind: 'plan', plan, ...(auto ? { auto } : {}), questions: [{ id: 'approval', question: '是否按此计划开始执行？', options: [{ value: option.optionId, label: '开始执行' }] }] });
+          return 'answers' in answer ? { outcome: { outcome: 'selected', optionId: answer.answers.approval[0] } } : { outcome: { outcome: 'cancelled' } };
+        }
+      }
+      const decision: ApprovalDecision = await hooks.requestApproval({
+        title: (typeof toolCall?.title === 'string' && toolCall.title) || 'Permission requested',
+        options: (params?.options ?? []).map((o: any) => ({
+          optionId: o.optionId,
+          name: o.name,
+          kind: o.kind,
+        })),
+        toolCall,
+      });
+      if ('cancelled' in decision) return { outcome: { outcome: 'cancelled' } };
+      return { outcome: { outcome: 'selected', optionId: decision.optionId } };
+    } finally {
+      if (inBackground) {
+        this.backgroundPendingRequests = Math.max(0, this.backgroundPendingRequests - 1);
+        this.scheduleBackgroundIdle();
       }
     }
-    const decision: ApprovalDecision = await hooks.requestApproval({
-      title: (typeof toolCall?.title === 'string' && toolCall.title) || 'Permission requested',
-      options: (params?.options ?? []).map((o: any) => ({
-        optionId: o.optionId,
-        name: o.name,
-        kind: o.kind,
-      })),
-      toolCall,
-    });
-    if ('cancelled' in decision) return { outcome: { outcome: 'cancelled' } };
-    return { outcome: { outcome: 'selected', optionId: decision.optionId } };
   }
 
   async onElicitation(params: any): Promise<unknown> {
     const questions = params.mode === 'form' ? formQuestions(params.requestedSchema, params.message) : null;
     const hooks = this.turnHooks;
     if (!questions?.length || !hooks?.requestInput) return { action: 'cancel' };
-    const answer = await hooks.requestInput({ id: params.toolCallId, title: params.message || '需要你的意见', questions });
-    if ('cancelled' in answer) return { action: 'cancel' };
-    const content = Object.fromEntries(questions.flatMap(q => {
-      const entries: Array<[string, unknown]> = [];
-      const a = answer.answers[q.id];
-      if (a?.length) {
-        const type = params.requestedSchema.properties[q.id].type;
-        entries.push([q.id, type === 'array' ? a : type === 'boolean' ? a[0] === 'true' : a[0]]);
+    const inBackground = !this.hooks && Boolean(this.background);
+    if (inBackground) {
+      this.backgroundPendingRequests++;
+      this.clearBackgroundIdle();
+    }
+    try {
+      const answer = await hooks.requestInput({ id: params.toolCallId, title: params.message || '需要你的意见', questions });
+      if ('cancelled' in answer) return { action: 'cancel' };
+      const content = Object.fromEntries(questions.flatMap(q => {
+        const entries: Array<[string, unknown]> = [];
+        const a = answer.answers[q.id];
+        if (a?.length) {
+          const type = params.requestedSchema.properties[q.id].type;
+          entries.push([q.id, type === 'array' ? a : type === 'boolean' ? a[0] === 'true' : a[0]]);
+        }
+        // The choice's own free-text line goes back under its field, beside the pick it qualifies.
+        const note = q.note ? answer.answers[q.note.id] : undefined;
+        if (q.note && note?.length) entries.push([q.note.id, note[0]]);
+        return entries;
+      }));
+      return { action: 'accept', content };
+    } finally {
+      if (inBackground) {
+        this.backgroundPendingRequests = Math.max(0, this.backgroundPendingRequests - 1);
+        this.scheduleBackgroundIdle();
       }
-      // The choice's own free-text line goes back under its field, beside the pick it qualifies.
-      const note = q.note ? answer.answers[q.note.id] : undefined;
-      if (q.note && note?.length) entries.push([q.note.id, note[0]]);
-      return entries;
-    }));
-    return { action: 'accept', content };
+    }
   }
 
   async setWorkMode(mode: WorkMode): Promise<void> {
@@ -571,6 +634,10 @@ export class AcpSession implements AgentSession {
     }
     this.peer.close();
   }
+
+  onPeerClosed(): void {
+    this.finishBackground('cancelled');
+  }
 }
 
 /** Everything an ACP agent has in common. The agent-specific parts are the abstract members. */
@@ -595,6 +662,8 @@ export abstract class AcpAdapter implements AgentAdapter {
    * as updates; DeepSeek Harness instead keeps the log to itself and offers `session/resume`.
    */
   protected resumeVia: 'session/load' | 'session/resume' = 'session/load';
+  /** Idle settle window for autonomous background turns on ACP agents that never emit cost.amount. */
+  protected backgroundIdleMs = 0;
 
   /** Commands as last announced by a session in each directory. Project commands differ per directory. */
   protected readonly commandsByCwd = new Map<string, SlashCommand[]>();
@@ -781,6 +850,7 @@ export abstract class AcpAdapter implements AgentAdapter {
           if (method === 'elicitation/create') return holder.session?.onElicitation(params);
           return undefined; // fs/* and terminal/* are not advertised, so the agent should not call them
         },
+        onClosed: () => holder.session?.onPeerClosed(),
       },
       `${this.id}-acp`,
     );
@@ -809,7 +879,7 @@ export abstract class AcpAdapter implements AgentAdapter {
       const offeredModes: string[] = (info?.modes?.availableModes ?? []).map((m: any) => m.id);
       const configOptions: ConfigOption[] = info?.configOptions ?? [];
 
-      const session = new AcpSession(sessionId, peer, this.modeIds, offeredModes, effortConfigIdOf(configOptions), emit => this.liveUsage(sessionId, opts.cwd, emit), configOptions);
+      const session = new AcpSession(sessionId, peer, this.modeIds, offeredModes, effortConfigIdOf(configOptions), emit => this.liveUsage(sessionId, opts.cwd, emit), configOptions, this.backgroundIdleMs);
       if (opts.ephemeral && !opts.resumeId && this.capabilities.deleteSession) {
         session.onEphemeralClose = async () => {
           if (this.deleteSession === AcpAdapter.prototype.deleteSession) {

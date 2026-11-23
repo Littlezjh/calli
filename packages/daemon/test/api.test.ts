@@ -1297,7 +1297,17 @@ test('fork works for pi too, and agents say whether they can import and fork', a
   assert.equal(((await res.json()) as { agentSessionId: string }).agentSessionId, 'pi-session-1-clone');
 
   const agents = (await (await api('/api/agents')).json()) as Array<{ id: string; capabilities: { history: boolean; fork: boolean } }>;
-  assert.deepEqual(agents.map((a) => [a.id, a.capabilities.history, a.capabilities.fork]).sort(), [['agy', false, false], ['claude', true, true], ['pi', true, true]]);
+  assert.deepEqual(agents.map((a) => [a.id, a.capabilities.history, a.capabilities.fork]).sort(), [['agy', false, true], ['claude', true, true], ['pi', true, true]]);
+
+  const agyThread = await newThread({ agent: 'agy' });
+  await api(`/api/threads/${agyThread.id}/turns`, { method: 'POST', body: JSON.stringify({ text: 'hello' }) });
+  await finishedEvents(agyThread.id);
+  const agyFork = await api(`/api/threads/${agyThread.id}/fork`, { method: 'POST' });
+  assert.equal(agyFork.status, 201);
+  const agyCopy = (await agyFork.json()) as { id: string; agentSessionId: string; forkedFrom: string };
+  assert.equal(agyCopy.forkedFrom, agyThread.id);
+  assert.notEqual(agyCopy.agentSessionId, 'agy-conv-1');
+  assert.match(agyCopy.agentSessionId, /^[0-9a-f-]{36}$/i);
 });
 
 test('fork at a turn: the copy ends where that turn ended, on the hub and on the agent', async () => {
@@ -1612,7 +1622,15 @@ test('fork into a worktree: a checkout and a branch of its own, the uncommitted 
   assert.match(((await refused.json()) as { error: string }).error, /not in a git repository/);
   assert.equal((await remove(loose.id, '?worktree=1')).status, 400, 'no worktree to remove');
   const agy = await newThread({ agent: 'agy', cwd: repo });
-  assert.deepEqual(await optionsOf(agy.id), { worktree: { available: false, reason: 'agent' } });
+  assert.deepEqual(await optionsOf(agy.id), { worktree: { available: true, branch: 'main', changes: 0 } });
+  await api(`/api/threads/${agy.id}/turns`, { method: 'POST', body: JSON.stringify({ text: 'hi' }) });
+  await finishedEvents(agy.id);
+  const agyTree = await forkInto(agy.id);
+  assert.equal(agyTree.status, 201);
+  const agyTreeCopy = (await agyTree.json()) as { id: string; worktree: { root: string } | null; agentSessionId: string };
+  assert.ok(agyTreeCopy.worktree?.root);
+  assert.notEqual(agyTreeCopy.agentSessionId, 'agy-conv-1');
+  await remove(agyTreeCopy.id, '?worktree=1');
 
   // A failure on the agent's side takes the half-made worktree away again.
   const stuck = await manager.createThread({ agent: 'claude', cwd: repo });
@@ -1623,7 +1641,7 @@ test('fork into a worktree: a checkout and a branch of its own, the uncommitted 
   assert.equal(git(repo, 'branch', '--list', 'calli/*').split('\n').filter(Boolean).length, trees - 1);
 
   const agents = (await (await api('/api/agents')).json()) as Array<{ id: string; capabilities: { forkInto: boolean } }>;
-  assert.deepEqual(agents.map((a) => [a.id, a.capabilities.forkInto]).sort(), [['agy', false], ['claude', true], ['pi', true]]);
+  assert.deepEqual(agents.map((a) => [a.id, a.capabilities.forkInto]).sort(), [['agy', true], ['claude', true], ['pi', true]]);
 });
 
 test('matchTurns pairs the two histories from the start and gives up when they disagree', () => {
@@ -1724,8 +1742,8 @@ test('agy: ACP approvals, images, compact and per-session settings', async () =>
   const said = withPicture.filter((e) => e.turnId === picturedTurn && e.type === 'message.delta').map((e) => e.data.text).join('');
   assert.ok(said.includes(';image:embedded;'), said);
 
-  // What it cannot do is refused up front.
-  assert.equal((await api(`/api/threads/${thread.id}/fork`, { method: 'POST' })).status, 400);
+  // What it cannot do is refused up front (per-turn fork and native session listing).
+  assert.equal((await api(`/api/threads/${thread.id}/fork`, { method: 'POST', body: JSON.stringify({ turnId: first.turnId }) })).status, 400);
   assert.equal((await api('/api/agents/agy/sessions')).status, 400);
 });
 

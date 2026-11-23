@@ -7,6 +7,8 @@ import { CodexAppServerAdapter } from '../src/adapters/codex.js';
 import { PiRpcAdapter } from '../src/adapters/pi.js';
 import type { AgentAdapter } from '../src/adapters/types.js';
 import { AttachmentStore } from '../src/attachments.js';
+import { listenPrivate } from '../src/http.js';
+import { personalServer } from '../src/personal.js';
 import { Scheduler } from '../src/scheduler.js';
 import { Store } from '../src/store.js';
 import { ThreadManager } from '../src/threads.js';
@@ -51,6 +53,9 @@ async function setup() {
   ]);
   const manager = new ThreadManager(store, adapters, new Workdirs([dir], join(dir, 'roots'), join(dir, 'scratch')), new AttachmentStore(dir));
   manager.personal.putSettings({ directory: personalDir, agent: 'pi', model: 'fake/plain' });
+  manager.personal.socket = join(dir, 'personal.sock');
+  const socket = personalServer(manager.personal);
+  await listenPrivate(socket, manager.personal.socket);
   const reports = new WorkerReports(manager);
   reports.start();
   const scheduler = new Scheduler(store, manager, adapters);
@@ -64,8 +69,9 @@ async function setup() {
     scheduler,
     async close() {
       reports.stop();
-      await scheduler.stop();
+      scheduler.dispose();
       await manager.shutdown();
+      await new Promise<void>(r => socket.close(() => r()));
       store.close();
       rmSync(dir, { recursive: true, force: true });
     },
@@ -109,6 +115,7 @@ test('dispatches, delegations and follow-ups reuse one cleanly named work sessio
     await settle(() => h.store.getThread(delegated.id)?.status === 'idle');
 
     const m3 = h.manager.personal.create({ text: '跟进审批结果' });
+    h.manager.personal.writeNote(m3.id, { text: 'Draft ready' });
     h.store.updateTodo(m3.id, { followUpAt: new Date(Date.now() - 1000).toISOString() });
     await h.scheduler.followUps();
     assert.deepEqual(h.store.todoThreadIds(m3.id), [delegated.id], 'follow-up reuses 管家工作台');
