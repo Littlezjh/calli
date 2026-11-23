@@ -155,3 +155,129 @@ test(`on a phone the root switcher sits on the folder page: phone-${colorScheme}
   }
 });
 }
+
+for (const colorScheme of ['light', 'dark']) {
+test(`deep file breadcrumbs collapse without overlapping on desktop and phone: ${colorScheme}`, async () => {
+  const deepDir = join(
+    daemon.workdir,
+    '.local',
+    'state',
+    'remote-agent-hub',
+    'data',
+    'agent-accounts',
+    'agy-4-demo01',
+    '.claude',
+    'projects',
+    '-srv-home-alice-code-calli',
+    'memory',
+  );
+  mkdirSync(deepDir, { recursive: true });
+  const deepFile = join(deepDir, 'deep-breadcrumb-regression-note.md');
+  writeFileSync(deepFile, '# Deep Note\n\nBreadcrumb overlap regression check.\n');
+
+  const title = `深路径面包屑-${colorScheme}`;
+  const sid = randomUUID();
+  const sessions = join(daemon.dataDir, 'pi-agent', 'sessions', 'e2e');
+  mkdirSync(sessions, { recursive: true });
+  writeFileSync(join(sessions, `e2e_${sid}.jsonl`), JSON.stringify({ type: 'session', id: sid, cwd: daemon.workdir }) + '\n' + JSON.stringify({ type: 'session_info', name: title }) + '\n');
+  writeFileSync(messagesFile, JSON.stringify({
+    [sid]: [
+      { role: 'user', content: '打开深路径文件' },
+      { role: 'assistant', content: [{ type: 'text', text: `看这里：[deep-breadcrumb-regression-note.md](${deepFile})` }] },
+    ],
+  }));
+  const imported = await api(daemon, '/api/threads/import', { method: 'POST', body: JSON.stringify({ agent: 'pi', sessionId: sid }) });
+  assert.equal(imported.status, 201, await imported.text());
+
+  // Desktop: collapsed crumbs do not overlap each other or the action bar, even when narrowed.
+  const desktopCtx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme });
+  const page = await desktopCtx.newPage();
+  page.setDefaultTimeout(10_000);
+  try {
+    await openUi(page, daemon);
+    await page.locator('.thread-item', { hasText: title }).click();
+    await page.locator('a.file-link', { hasText: 'deep-breadcrumb-regression-note.md' }).click();
+    const panel = page.locator('.files-panel');
+    await panel.locator('.files-markdown').waitFor();
+
+    const checkNoOverlap = async (label) => {
+      const layout = await page.evaluate(() => {
+        const nav = document.querySelector('.files-crumbs');
+        const actions = document.querySelector('.files-actions');
+        const items = [...document.querySelectorAll('.files-crumbs > .files-crumb')];
+        return {
+          navRight: nav.getBoundingClientRect().right,
+          actionsLeft: actions.getBoundingClientRect().left,
+          items: items.map((el) => {
+            const r = el.getBoundingClientRect();
+            const labelEl = el.querySelector('button, .files-crumb-current');
+            const lr = labelEl ? labelEl.getBoundingClientRect() : r;
+            return {
+              text: el.textContent?.trim() ?? '',
+              left: r.left,
+              right: r.right,
+              width: r.width,
+              labelLeft: lr.left,
+              labelRight: lr.right,
+              overflow: getComputedStyle(el).overflowX,
+            };
+          }),
+        };
+      });
+      assert.ok(layout.navRight <= layout.actionsLeft + 1, `${label}: crumbs run into actions (${layout.navRight} > ${layout.actionsLeft})`);
+      for (let i = 1; i < layout.items.length; i++) {
+        const prev = layout.items[i - 1];
+        const curr = layout.items[i];
+        assert.ok(prev.right <= curr.left + 1, `${label}: crumb "${prev.text}" overlaps "${curr.text}" (${prev.right} > ${curr.left})`);
+        if (prev.overflow !== 'hidden') {
+          assert.ok(prev.labelRight <= prev.right + 1, `${label}: unclipped crumb "${prev.text}" bleeds out (${prev.labelRight} > ${prev.right})`);
+        }
+      }
+      const last = layout.items[layout.items.length - 1];
+      assert.ok(last.width > 40, `${label}: file name stays readable (${last.width}px)`);
+    };
+
+    await checkNoOverlap(`desktop-${colorScheme}-default`);
+    if (process.env.CALLI_E2E_SHOTS_DIR) {
+      mkdirSync(process.env.CALLI_E2E_SHOTS_DIR, { recursive: true });
+      await page.screenshot({ path: join(process.env.CALLI_E2E_SHOTS_DIR, `files-crumbs-desktop-${colorScheme}.png`) });
+    }
+
+    // Ellipsis menu exposes the collapsed middle folders and opens them in the tree.
+    const more = panel.getByRole('button', { name: '展开省略的路径' });
+    await more.click();
+    const menu = page.getByRole('menu', { name: '展开省略的路径' });
+    await menu.waitFor();
+    await menu.getByRole('menuitem', { name: '-srv-home-alice-code-calli' }).click();
+    await panel.locator('.files-tree .files-row', { hasText: 'memory' }).waitFor();
+
+    // Narrow panel width (380px): still no overlap between crumbs or actions.
+    await panel.evaluate((el) => { el.style.width = '380px'; });
+    await checkNoOverlap(`desktop-${colorScheme}-narrow`);
+    if (process.env.CALLI_E2E_SHOTS_DIR) {
+      await page.screenshot({ path: join(process.env.CALLI_E2E_SHOTS_DIR, `files-crumbs-narrow-${colorScheme}.png`) });
+    }
+  } finally {
+    await desktopCtx.close();
+  }
+
+  // Phone: header shows file name cleanly and folder sub-breadcrumbs do not overflow the page.
+  const phoneCtx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, colorScheme });
+  const phonePage = await phoneCtx.newPage();
+  phonePage.setDefaultTimeout(10_000);
+  try {
+    await openUi(phonePage, daemon);
+    await phonePage.locator('.menu-btn').click();
+    await phonePage.locator('.thread-item', { hasText: title }).click();
+    await phonePage.locator('a.file-link', { hasText: 'deep-breadcrumb-regression-note.md' }).click();
+    const phonePanel = phonePage.locator('.files-panel.phone');
+    await phonePanel.locator('.files-markdown').waitFor();
+    assert.equal(await phonePage.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+    if (process.env.CALLI_E2E_SHOTS_DIR) {
+      await phonePage.screenshot({ animations: 'disabled', path: join(process.env.CALLI_E2E_SHOTS_DIR, `files-crumbs-phone-${colorScheme}.png`) });
+    }
+  } finally {
+    await phoneCtx.close();
+  }
+});
+}

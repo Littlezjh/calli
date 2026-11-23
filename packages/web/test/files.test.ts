@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { crumbsOf, fileRef, foldersTo, languageOf, resolveRelative, sizeLabel, splitHighlighted } from '../src/files.js';
+import { collapseCrumbs, crumbsOf, fileRef, foldersTo, languageOf, resolveRelative, sizeLabel, splitHighlighted } from '../src/files.js';
 
 test('a link to a place in a file keeps the line and drops the rest of the suffix', () => {
   assert.deepEqual(fileRef('src/a.ts:12'), { path: 'src/a.ts', line: 12 });
@@ -21,6 +21,27 @@ test('crumbs run from the thread folder down to the file', () => {
   assert.deepEqual(crumbsOf('/w/code/', '/w/code'), [{ name: 'code', path: '/w/code' }]);
   assert.deepEqual(crumbsOf('/w/code', '/w/codex/a.ts'), [{ name: 'a.ts', path: '/w/codex/a.ts' }], 'a sibling with a longer name is not inside');
   assert.deepEqual(foldersTo('/w/code', '/w/code/src/b/a.ts'), ['/w/code', '/w/code/src', '/w/code/src/b']);
+});
+
+test('deep breadcrumbs collapse middle folders while short paths stay intact', () => {
+  const short = crumbsOf('/w/code', '/w/code/packages/web/App.tsx');
+  assert.deepEqual(collapseCrumbs(short), short);
+
+  const deep = crumbsOf('/home/u', '/home/u/.local/state/hub/data/projects/memory/note.md');
+  assert.deepEqual(collapseCrumbs(deep), [
+    { name: 'u', path: '/home/u' },
+    {
+      hidden: [
+        { name: '.local', path: '/home/u/.local' },
+        { name: 'state', path: '/home/u/.local/state' },
+        { name: 'hub', path: '/home/u/.local/state/hub' },
+        { name: 'data', path: '/home/u/.local/state/hub/data' },
+        { name: 'projects', path: '/home/u/.local/state/hub/data/projects' },
+      ],
+    },
+    { name: 'memory', path: '/home/u/.local/state/hub/data/projects/memory' },
+    { name: 'note.md', path: '/home/u/.local/state/hub/data/projects/memory/note.md' },
+  ]);
 });
 
 test('links inside a Markdown file are taken from its folder; web links are not files', () => {

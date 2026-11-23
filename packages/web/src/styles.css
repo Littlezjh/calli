@@ -8860,10 +8860,19 @@ div.file-card:hover { background: var(--surface); }
   display: inline-flex;
   align-items: center;
   min-width: 0;
+  overflow: hidden;
   color: var(--muted);
 }
 
+.files-crumb > svg {
+  flex: none;
+}
+
 .files-crumb button {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   padding: 4px 6px;
   border: 0;
   border-radius: var(--radius-sm);
@@ -8872,25 +8881,58 @@ div.file-card:hover { background: var(--surface); }
   font: inherit;
 }
 
-.files-crumb button:hover {
+.files-crumb button:hover,
+.files-crumb button[aria-expanded='true'] {
   background: var(--hover);
   color: var(--text);
 }
 
 .files-crumb-current {
+  min-width: 0;
   padding: 4px 6px;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--text);
   font-weight: 600;
 }
 
-/* Long paths give up their first steps before the file's own name. */
+/* Long paths give up ancestor folders before the file's own name; the ellipsis menu stays intact. */
 .files-crumb:not(:last-child) {
-  flex-shrink: 1;
+  flex: 0 100 auto;
+}
+
+.files-crumb:last-child {
+  flex: 0 1 auto;
+}
+
+.files-crumb.files-crumb-more {
+  flex: none;
+  overflow: visible;
+}
+
+.files-crumb-more .pop {
+  display: inline-flex;
+}
+
+.files-crumb-menu .pop-item {
+  align-items: center;
+}
+
+.files-crumb-menu .pop-item svg {
+  flex: none;
+  color: var(--muted);
+}
+
+.files-crumb-menu .pop-item span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .files-actions {
+  flex: none;
   display: flex;
   align-items: center;
   gap: 2px;
@@ -9530,6 +9572,7 @@ div.file-card:hover { background: var(--surface); }
 }
 
 .files-title-sub button {
+  flex: none;
   padding: 1px 0;
   border: 0;
   background: none;
