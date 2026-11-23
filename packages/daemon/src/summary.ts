@@ -43,8 +43,11 @@ export class SummaryService {
   constructor(private readonly store: Store, private readonly manager: ThreadManager, private readonly personal: PersonalService,
     private readonly adapters: Map<string, AgentAdapter>) {}
 
-  /** Threads with turns since `since`, newest first. Summary runs, plan reviews and quiet scheduled runs are left out. */
+  /** Threads with turns since `since`, newest first. When `query` or `cursor` is given, searches the full thread index. */
   threads(input: Record<string, unknown>, owner: string) {
+    if (input.query !== undefined || input.cursor !== undefined) {
+      return this.personal.ledger.searchThreads(input, owner);
+    }
     let since = dayStart(6);
     if (input.since !== undefined) {
       if (typeof input.since !== 'string' || !/^\d{4}-\d{2}-\d{2}/.test(input.since) || !Number.isFinite(Date.parse(input.since))) throw new HttpError(400, 'since must be ISO 8601');

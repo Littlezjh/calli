@@ -343,6 +343,31 @@ export function createHttpServer(deps: HttpDeps): Server {
       if (method === 'GET') return sendJson(res, 200, await manager.personal.settingsView());
       if (method === 'PUT') { manager.personal.putSettings(await readJson(req)); return sendJson(res, 200, await manager.personal.settingsView()); }
     }
+    if (path === '/api/personal/superagent/settings') {
+      if (method === 'GET') return sendJson(res, 200, manager.personal.supervision.settings());
+      if (method === 'PUT') return sendJson(res, 200, manager.personal.supervision.saveSettings(await readJson(req)));
+    }
+    if (path === '/api/personal/ledger' && method === 'GET') {
+      const limitParam = url.searchParams.get('limit');
+      return sendJson(res, 200, manager.personal.ledger.snapshot({
+        ...(url.searchParams.get('includeDoneSince') ? { includeDoneSince: url.searchParams.get('includeDoneSince')! } : {}),
+        ...(url.searchParams.get('cursor') ? { cursor: url.searchParams.get('cursor')! } : {}),
+        ...(limitParam ? { limit: Number(limitParam) } : {}),
+      }));
+    }
+    if (path === '/api/personal/superagent/grants' && method === 'GET') {
+      return sendJson(res, 200, { grants: manager.personal.supervision.listGrants() });
+    }
+    if (parts[1] === 'personal' && parts[2] === 'superagent' && parts[3] === 'grants' && parts[4] && parts.length === 5 && method === 'DELETE') {
+      return sendJson(res, 200, manager.personal.supervision.revoke(parts[4]));
+    }
+    if (path === '/api/personal/thread-open' && method === 'POST') {
+      return sendJson(res, 201, manager.personal.ledger.recordThreadOpen(await readJson(req)));
+    }
+    if (path === '/api/personal/metrics/thread-opens' && method === 'GET') {
+      const days = Number(url.searchParams.get('days') ?? 14);
+      return sendJson(res, 200, manager.personal.ledger.threadOpenMetrics(Number.isFinite(days) ? days : 14));
+    }
     if (path === '/api/personal/proactive' && method === 'GET') {
       const proactive = manager.personal.proactive;
       return sendJson(res, 200, url.searchParams.get('summary') === 'true'

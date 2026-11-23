@@ -302,6 +302,8 @@ export { HttpError };
 interface PendingApproval {
   threadId: string;
   turnId: string;
+  title: string;
+  options: ApprovalRequest['options'];
   /** The option ids the agent offered. Anything else is refused instead of being passed on. */
   optionIds: string[];
   resolve(decision: ApprovalDecision): void;
@@ -3728,6 +3730,20 @@ export class ThreadManager {
     if (session) await session.cancel();
   }
 
+  /** Pending native approvals on a thread, for inspection by the ledger and supervision. */
+  pendingApprovals(threadId: string): Array<{ approvalId: string; threadId: string; turnId: string; title: string; options: ApprovalRequest['options'] }> {
+    const out: Array<{ approvalId: string; threadId: string; turnId: string; title: string; options: ApprovalRequest['options'] }> = [];
+    for (const [approvalId, p] of this.approvals) {
+      if (p.threadId === threadId) out.push({ approvalId, threadId: p.threadId, turnId: p.turnId, title: p.title, options: p.options });
+    }
+    return out;
+  }
+
+  /** Pending native questions/plan approvals on a thread, for inspection by the ledger and supervision. */
+  pendingInputs(threadId: string) {
+    return this.inputs.listPending(threadId);
+  }
+
   /**
    * Answers a pending approval. Returns false if there is none with this id.
    * An option the agent did not offer is an error: agents treat unknown ids as a refusal,
@@ -3740,6 +3756,7 @@ export class ThreadManager {
       throw new HttpError(400, `not one of the offered options: ${decision.optionId}`);
     }
     this.approvals.delete(approvalId);
+    this.personal.supervision.clearFallbackTimer(approvalId);
     p.resolve(decision);
     return true;
   }
@@ -3768,6 +3785,8 @@ export class ThreadManager {
     this.quotaResume.dispose();
     this.autoRetry.dispose();
     this.autoAdvance.dispose();
+    this.personal.ledger.stop();
+    this.personal.supervision.dispose();
     this.coordination?.suspendAll();
     // The file mirror must finish its queued writes before callers remove the data directory.
     await this.personal.flushMirror().catch(() => undefined);
@@ -4344,6 +4363,8 @@ export class ThreadManager {
           this.approvals.set(approvalId, {
             threadId,
             turnId,
+            title: req.title,
+            options: req.options,
             optionIds: req.options.map((o) => o.optionId),
             resolve: (decision) => {
               this.emitThreadEvent(threadId, turnId, 'approval.resolved', { approvalId, decision });

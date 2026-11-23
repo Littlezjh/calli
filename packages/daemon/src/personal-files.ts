@@ -102,6 +102,9 @@ function matterMarkdown(todo: TodoRecord, note: TodoNote, threads: string[]): st
     `created: ${yamlValue(todo.createdAt)}`,
     `updated: ${yamlValue(note.updatedAt)}`,
     `threads: [${threads.map(yamlString).join(', ')}]`,
+    ...(todo.acceptance ? [`acceptance: ${JSON.stringify(todo.acceptance)}`] : []),
+    ...(todo.capture ? [`capture: ${JSON.stringify(todo.capture)}`] : []),
+    ...(todo.validation ? [`validation: ${JSON.stringify(todo.validation)}`] : []),
   ].join('\n');
   const body = note.text.trim() ? note.text : MATTER_SCAFFOLD;
   return `---\n${yaml}\n---\n${body.endsWith('\n') ? body : `${body}\n`}`;

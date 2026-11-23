@@ -112,12 +112,44 @@ export class PushService {
     return this.enqueue(kind, null, key, undefined, brief);
   }
 
+  /** Whether a real push for this thread succeeded since `sinceMs`. */
+  hasSentPush(threadId: string, sinceMs = 0): boolean {
+    return this.records.some(r => r.threadId === threadId && r.result === 'sent' && Date.parse(r.at) >= sinceMs);
+  }
+
+  /** Sends one consolidated SuperAgent decision/review batch through the normal push pipeline. */
+  sendSuperagentBatch(key: string, title: string, body: string, assistantThreadId: string | null): PushRecord | null {
+    if (this.stopped || !this.settings().enabled) return null;
+    const settings = this.settings(), now = this.now();
+    const record: PushRecord = { key, at: new Date(now).toISOString(), kind: 'notice', threadId: assistantThreadId, title, result: 'queued', reason: null };
+    this.records.unshift(record); this.records.splice(20);
+    this.hourly = this.hourly.filter(t => now - t < 3600000);
+    if (this.hourly.length >= 30) {
+      record.result = 'dropped'; record.reason = 'hourly_rate_limit'; this.dropped++;
+      console.warn('[push] hourly_rate_limit');
+      return record;
+    }
+    this.hourly.push(now);
+    const time = new Date(now).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+    const fullBody = [
+      `[Calli] 助手汇总 · ${title}`,
+      `助手 · ${time}`,
+      body,
+      ...(settings.baseUrl ? [`打开助手：${settings.baseUrl}/#/desk`] : []),
+    ].join('\n');
+    this.queue.push({ record, body: fullBody, settings });
+    void this.drain();
+    return record;
+  }
+
   private onEvent(ev: StoredEvent) {
     if (!ev.threadId || this.stopped) return;
     const end = turnOutcome(ev);
     if (end || ev.type === 'turn.started') this.waits.delete(ev.threadId);
     if (ev.type === 'approval.resolved' || ev.type === 'input.resolved') {
-      this.waits.get(ev.threadId)?.delete(String(ev.data.approvalId ?? ev.data.inputId));
+      const resolvedId = String(ev.data.approvalId ?? ev.data.inputId);
+      this.waits.get(ev.threadId)?.delete(resolvedId);
+      this.manager.personal.supervision.clearFallbackTimer(resolvedId);
       return;
     }
     if (!end && !['approval.request', 'input.request', 'agent.notice'].includes(ev.type)) return;
@@ -145,6 +177,7 @@ export class PushService {
     } else if (end?.outcome === 'error' && settings.failure && origin.initiator !== 'coordination') kind = 'failure';
     else if (!proactive && end?.outcome === 'ok' && started?.data.review !== true && ev.data.quiet !== true && settings.scheduled && origin.initiator === 'schedule') kind = 'scheduled';
     else if (ev.type === 'agent.notice' && settings.notice && !proactive) kind = ev.data.confirmation ? 'confirmation' : 'notice';
+    if (kind && this.manager.personal.supervision.shouldDeferRawPush(ev.threadId, kind, ev)) return;
     if (kind) this.enqueue(kind, ev.threadId, `${ev.threadId}:${ev.seq}`, (kind === 'notice' || kind === 'confirmation') ? String(ev.data.text ?? '') : undefined);
   }
   private enqueue(kind: PushKind, threadId: string | null, key: string, notice?: string, brief?: PersonalBrief): PushRecord {

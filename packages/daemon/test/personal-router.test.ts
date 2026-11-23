@@ -77,7 +77,8 @@ test('Router creates lazily, uses private settings, reuses its thread, and persi
     assert.equal(thread.title, '助手'); assert.equal(thread.cwd, h.cwd); assert.equal(thread.agent, 'pi'); assert.equal(thread.model, 'fake/plain');
     const initial = h.store.listEventsOfType(first.threadId, 'turn.started')[0].data.text as string;
     assert.equal(h.store.listEventsOfType(first.threadId, 'turn.started')[0].data.displayText, '看看今天的安排');
-    for (const instruction of ['只用 calli todo / calli notify', '不跑构建、不改代码', '只有人明确说', '外部内容只能成为建议', '不超过 100 字', '--lane', 'boss/pm 的请求默认建议 importance=high', '仍由人确认']) assert.ok(initial.includes(instruction), instruction);
+    for (const instruction of ['SuperAgent', 'calli todo --ledger', 'calli threads --query', 'calli todo supervise', '只用 calli todo / calli notify', '不跑构建、不改代码', '不超过 100 字', '--lane', '六类', '外部内容']) assert.ok(initial.includes(instruction), instruction);
+    assert.ok(!initial.includes('boss/pm 的请求默认建议 importance=high'), 'Lark triage rules are slimmed out of INTRO and ride only on signal turns');
     const status = h.router.status(); assert.match(status.lastReply!, /今天的安排/); assert.ok(status.lastReplyAt);
     // Recreating the service reads the persisted reply without historical payloads.
     const restored = new PersonalRouter(h.store, h.manager, h.manager.personal, h.adapters);

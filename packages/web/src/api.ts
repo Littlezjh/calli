@@ -526,6 +526,8 @@ export type ExploreSourceId = 'lark-profile' | 'lark-chats' | 'lark-messages' | 
 export interface ExploreSource { id: ExploreSourceId; available: boolean; reason?: string }
 
 export interface PersonalSettings { routerThreadId?: string | null; directoryIsDefault?: boolean; defaultDirectory?: string; defaultDirectoryDisplay?: string; directoryDisplay?: string | null; directory: string | null; agent: string | null; model: string | null }
+export interface SuperagentSettings { enabled: boolean; ledgerCapture: boolean; notifyMergeMs: number; fallbackTimeoutMs: number }
+export type ThreadOpenSource = 'sidebar' | 'search' | 'direct-link' | 'assistant-link' | 'notification' | 'handover' | 'restore';
 export interface PersonalBrief { title: string; lines: string[]; text: string }
 export type PlanRange = 'hour' | 'day' | 'week' | 'month';
 export interface PlanMeeting { id: string; title: string; start: string; end: string; recurring: boolean; url?: string }
@@ -1298,6 +1300,12 @@ export class Api {
   draftModelPreferences(): Promise<Record<string, DraftModelPreference>> { return this.request('GET', '/api/draft-model-preferences'); }
   patchDraftModelPreference(agent: string, patch: ModelPreferencePatch): Promise<DraftModelPreference> { return this.request('PATCH', '/api/draft-model-preferences', { agent, ...patch }, { keepalive: true }); }
   personalSettings(): Promise<PersonalSettings> { return this.request('GET', '/api/personal/settings'); }
+  superagentSettings(): Promise<SuperagentSettings> { return this.request('GET', '/api/personal/superagent/settings'); }
+  saveSuperagentSettings(value: Partial<SuperagentSettings>): Promise<SuperagentSettings> { return this.request('PUT', '/api/personal/superagent/settings', value); }
+  recordThreadOpen(threadId: string, source: ThreadOpenSource, userInitiated = true): Promise<void> {
+    if (this.demo) return Promise.resolve();
+    return this.request('POST', '/api/personal/thread-open', { threadId, source, userInitiated }).then(() => undefined);
+  }
   /** Switches her agent in place; a conversation under way is handed over to the new one. */
   switchPersonalAgent(agent: string): Promise<{ threadId: string | null; settings: PersonalSettings }> { return this.request('POST', '/api/personal/agent', { agent }); }
   savePersonalSettings(value: PersonalSettings): Promise<PersonalSettings> { return this.request('PUT', '/api/personal/settings', value); }

@@ -20,13 +20,13 @@ const BUDGET = {
 
 const RATCHET = {
   /** `font-size: 12.5px` and the like instead of a size variable. */
-  rawFontSizes: 938,
+  rawFontSizes: 933,
   /** How many different raw font sizes there are; a type scale needs only a handful. */
   distinctFontSizes: 28,
   /** `border-radius: 8px` and the like instead of a --radius variable. */
-  rawRadii: 149,
+  rawRadii: 147,
   /** `z-index: 60` and the like instead of a --z variable. */
-  rawZIndexes: 64,
+  rawZIndexes: 63,
   /** Colours written outside a custom property's definition (masks included). */
   rawColours: 23,
 };

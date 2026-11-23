@@ -13605,8 +13605,9 @@ button.trace-step-head:hover { background: var(--hover); }
 .chat-brand { display: inline-flex; align-items: center; gap: 9px; font-size: 14px; font-weight: 600; }
 .chat-ava { display: grid; place-items: center; width: 27px; height: 27px; border: 1px solid var(--border); border-radius: var(--radius-pill); background: var(--surface-2); color: var(--muted); }
 .chat-entries { display: flex; align-items: center; gap: 2px; }
-.chat-entry { position: relative; display: inline-flex; align-items: center; gap: 7px; min-height: 34px; padding: 0 11px; border: 0; border-radius: var(--radius-pill); background: none; color: var(--muted); font-size: 12.5px; }
+.chat-entry { position: relative; display: inline-flex; align-items: center; justify-content: center; min-width: 34px; min-height: 34px; padding: 0 8px; border: 0; border-radius: var(--radius-pill); background: none; color: var(--muted); }
 .chat-entry:hover { background: var(--hover); color: var(--text); }
+.chat-entry-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .chat-badge { min-width: 17px; height: 17px; padding: 0 4px; border-radius: var(--radius-pill); background: var(--hover); color: var(--muted); font-size: 10.5px; line-height: 17px; text-align: center; font-variant-numeric: tabular-nums; }
 .chat-badge.warn { background: var(--warn); color: var(--on-color); }
 .chat-badge.danger { background: var(--danger); color: var(--on-color); }
@@ -13629,15 +13630,13 @@ button.trace-step-head:hover { background: var(--hover); }
 .chat-composer { flex: none; width: min(760px, 100%); margin: 0 auto; padding: 6px 16px calc(12px + var(--safe-bottom)); }
 .chat-composer .composer { width: auto; max-width: none; padding: 0; }
 
-/* Nothing said yet: her hello and three ways to begin. */
-.chat-fresh { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 13px; width: min(560px, calc(100% - 40px)); margin: 0 auto; padding-bottom: 6vh; }
-.chat-fresh .ava { display: grid; place-items: center; width: 52px; height: 52px; border: 1px solid var(--border); border-radius: var(--radius-pill); background: var(--surface-2); color: var(--muted); }
+/* Nothing said yet: calm title and three quiet prompt pills. */
+.chat-fresh { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; width: min(560px, calc(100% - 40px)); margin: 0 auto; padding-bottom: 6vh; }
 .chat-fresh h2 { margin: 0; font-size: 19px; font-weight: 600; letter-spacing: -.02em; }
-.chat-fresh > p { margin: -4px 0 0; color: var(--muted); font-size: 13px; line-height: 1.7; text-align: center; }
-.chat-starters { display: flex; flex-direction: column; gap: 8px; width: 100%; margin-top: 6px; }
-.chat-starter { display: flex; align-items: center; gap: 9px; min-height: 40px; padding: 0 15px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: var(--text); font-size: 13px; text-align: left; box-shadow: var(--shadow-card); }
-.chat-starter::before { content: ''; width: 5px; height: 5px; border-radius: var(--radius-pill); background: var(--faint); }
-.chat-starter:hover { background: var(--hover); }
+.chat-fresh > p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.65; text-align: center; }
+.chat-starters { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; width: 100%; margin-top: 8px; }
+.chat-starter { display: inline-flex; align-items: center; min-height: 34px; padding: 0 14px; border: 1px solid var(--border); border-radius: var(--radius-pill); background: transparent; color: var(--muted); font-size: 12.5px; text-align: left; }
+.chat-starter:hover { background: var(--hover); color: var(--text); }
 
 /* What cannot wait sits folded above the composer: one line with the count, one row per ask,
    one row open at a time, so the talk keeps the screen. */
@@ -13711,12 +13710,11 @@ button.trace-step-head:hover { background: var(--hover); }
 .chat-drawer-scrim { position: fixed; inset: 0; z-index: 47; background: var(--scrim); animation: chat-drawer-fade .2s; }
 @keyframes chat-drawer-fade { from { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .chat-drawer.over { animation: none; } }
-.chat-drawer-head { flex: none; display: flex; align-items: center; gap: 8px; padding: 13px 10px 11px 16px; border-bottom: 1px solid var(--border); }
-.chat-drawer-head b { font-size: 14px; font-weight: 600; }
+.chat-drawer-head { flex: none; display: flex; align-items: center; gap: 8px; padding: 10px 10px 10px 12px; border-bottom: 1px solid var(--border); }
 .chat-drawer-head .sp { flex: 1; }
-.chat-drawer-tabs { flex: none; display: flex; gap: 2px; padding: 10px 14px 0; }
-.chat-drawer-tabs button { min-height: 30px; padding: 0 13px; border: 0; border-radius: var(--radius-pill); background: none; color: var(--muted); font-size: 12.5px; }
-.chat-drawer-tabs button[aria-pressed='true'] { background: var(--surface); color: var(--text); box-shadow: var(--shadow-card); font-weight: 600; }
+.chat-drawer-tabs { flex: none; display: flex; gap: 2px; }
+.chat-drawer-tabs button { min-height: 30px; padding: 0 12px; border: 0; border-radius: var(--radius-pill); background: none; color: var(--muted); font-size: 12.5px; }
+.chat-drawer-tabs button[aria-pressed='true'] { background: var(--active); color: var(--text); font-weight: 560; }
 .chat-drawer-body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 14px; scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
 
 /* The desk rides inside the drawer, whose width is bounded — so its narrow layout is not a
@@ -13731,9 +13729,10 @@ button.trace-step-head:hover { background: var(--hover); }
 .chat-drawer .desk-matrix { gap: 34px; margin-top: 36px; }
 .chat-drawer .desk-fan { grid-template-columns: 1fr; gap: 24px; }
 
-/* The lists: each row one line of title, one of quiet meta, at most one of preview. */
-.chat-sessions { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
-.chat-sessions button { display: flex; flex-direction: column; gap: 4px; width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); text-align: left; }
+/* The lists: quiet hairline rows instead of boxed cards. */
+.chat-sessions { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; }
+.chat-sessions li + li { border-top: 1px solid var(--border); }
+.chat-sessions button { display: flex; flex-direction: column; gap: 3px; width: 100%; padding: 10px 8px; border: 0; border-radius: var(--radius-sm); background: transparent; text-align: left; }
 .chat-sessions button:hover { background: var(--hover); }
 .chat-session-title { font-size: 13px; font-weight: 570; color: var(--text); overflow-wrap: anywhere; }
 .chat-session-meta { display: flex; gap: 10px; color: var(--muted); font-size: 11px; }

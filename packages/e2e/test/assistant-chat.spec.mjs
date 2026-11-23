@@ -187,7 +187,7 @@ test('the desk drawer rides beside the conversation on a wide screen and never m
     await flow.evaluate(el => { el.scrollTop = 40; });
     const reading = await flow.evaluate(el => el.scrollTop);
     assert.ok(reading > 0, 'the conversation really scrolls, so preserving its reading is exercised');
-    await page.locator('.chat-drawer-head button').focus();
+    await page.locator('.chat-drawer-head').getByRole('button', { name: '关闭', exact: true }).focus();
     await page.keyboard.press('Escape');
     await page.locator('.chat-drawer').waitFor({ state: 'detached' });
     assert.equal(await flow.evaluate(el => el.scrollTop), reading, 'closing the drawer does not scroll the conversation');

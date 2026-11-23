@@ -70,6 +70,9 @@ export class WorkerReports {
     // A proactive turn's result (ready, failed) is recorded just after its ending.
     await this.manager.personal.proactive.flush();
     const outcome = turnOutcome(event)!;
+    // Update the task ledger first so validation state & capture reflect the settled turn.
+    this.manager.personal.ledger.onTurnSettled(event.threadId, event.turnId ?? null, outcome);
+    const superagentOn = this.manager.personal.supervision.settings().enabled;
     const turnStart = event.turnId ? this.store.listTurnEvents(event.threadId, event.turnId).find(item => item.type === 'turn.started') : undefined;
     const dispatchRunId = typeof turnStart?.data.dispatchRunId === 'string' ? turnStart.data.dispatchRunId : null;
     const runs = this.manager.personal.proactive.runs();
@@ -85,11 +88,13 @@ export class WorkerReports {
       const stage = outcome.outcome === 'error' ? 'blocked' : progress?.stage === 'blocked' ? 'answer'
         : progress?.stage === 'review' ? 'review' : 'progress';
       const title = this.store.getTodo((dispatch?.matterId ?? ''))?.text ?? dispatch?.title ?? this.store.getThread(event.threadId)!.title;
+      const resultRefs = superagentOn ? [`turn:${event.threadId}:${event.turnId}`] : undefined;
       await this.manager.personal.router.receiveWorkerReport({ matterId: (dispatch?.matterId ?? ''), threadId: event.threadId, title, stage,
         summary: clip(outcome.outcome === 'error' ? `失败：${outcome.message ?? ''}` : answer),
         ...(stage === 'answer' ? { question: progress!.note } : {}),
-        ...(outcome.outcome === 'error' ? { pushed: true } : {}),
+        ...(outcome.outcome === 'error' && !superagentOn ? { pushed: true } : {}),
         ...(this.store.listTurnEvents(event.threadId, event.turnId).some(item => item.type === 'agent.notice') ? { notified: true } : {}),
+        ...(superagentOn ? { sourceTurnId: event.turnId, resultRefs } : {}),
       });
       return;
     }
@@ -123,11 +128,14 @@ export class WorkerReports {
     const said = event.turnId ? routerReply(this.store.voiceAnswerEvents(event.threadId, event.turnId)) : null;
     const summary = outcome.outcome === 'error' ? `失败：${outcome.message ?? ''}` : said ?? nextStep(this.store.todoNote(todo.id).text);
     const notified = turnEvents.some(item => item.type === 'agent.notice');
+    const superagentOn = this.manager.personal.supervision.settings().enabled;
+    const resultRefs = superagentOn && event.turnId ? [`turn:${event.threadId}:${event.turnId}`] : undefined;
     await this.manager.personal.router.receiveWorkerReport({
       matterId: todo.id, title: todo.text, stage, summary: clip(summary),
       ...(stage === 'answer' && todo.waitingOn ? { question: todo.waitingOn } : {}),
-      ...(stage === 'blocked' && outcome.outcome === 'error' ? { pushed: true } : {}),
+      ...(stage === 'blocked' && outcome.outcome === 'error' && !superagentOn ? { pushed: true } : {}),
       ...(notified ? { notified: true } : {}),
+      ...(superagentOn && event.turnId ? { threadId: event.threadId, sourceTurnId: event.turnId, resultRefs } : {}),
     }).catch(error => {
       // Not delivered, so not reported: the next ending may try again.
       this.reported.delete(todo.id);

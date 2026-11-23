@@ -122,9 +122,12 @@ async function main(): Promise<void> {
   manager.autoHandover.seedDefault();
   manager.personal.proactive.recover();
   // Started after recovery: turns a restart cut off are not news from a Worker.
+  manager.personal.ledger.start();
+  manager.personal.ledger.backfill();
   const workerReports = new WorkerReports(manager);
   workerReports.start();
   const push = new PushService(store, manager);
+  manager.personal.supervision.attachPush(push);
   const feishu = new FeishuChat(store, manager);
   void feishu.configure();
   const personalPath = join(config.dataDir, 'personal', 'calli.sock');

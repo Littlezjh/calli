@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { AgentInfo, Api, ModelOption, PersonalSettings } from '../api';
+import type { AgentInfo, Api, ModelOption, PersonalSettings, SuperagentSettings } from '../api';
 import { t } from '../i18n';
 import { SettingsSection, usePageDraft } from './PageNavigation';
 import { DirectoryPicker } from './DirectoryPicker';
@@ -26,7 +26,21 @@ export function PersonalSettingsDialog({ api, agents, initial, onSave, onClose, 
   const [saved, setSaved] = useState(JSON.stringify(initial));
   const [savedNotice, setSavedNotice] = useState(false);
   const [petPresence, setPetPresence] = useState<PetPresence>(readPetPresence);
+  const [superagent, setSuperagent] = useState<SuperagentSettings | null>(null);
+  const [superagentBusy, setSuperagentBusy] = useState(false);
   usePageDraft(JSON.stringify(value) !== saved, saving);
+  useEffect(() => {
+    if (api.demo) return;
+    let live = true;
+    void api.superagentSettings().then(v => { if (live) setSuperagent(v); }).catch(() => undefined);
+    return () => { live = false; };
+  }, [api, retry]);
+  const updateSuperagent = async (patch: Partial<SuperagentSettings>) => {
+    if (!superagent || superagentBusy) return;
+    setSuperagentBusy(true); setError('');
+    try { setSuperagent(await api.saveSuperagentSettings(patch)); }
+    catch (e) { setError(String(e)); } finally { setSuperagentBusy(false); }
+  };
   useEffect(() => { let live = true; void api.workdirs().then(v => { if (live) setRoots(v.workdirs); }).catch(e => { if (live) setError(String(e)); }); return () => { live = false; }; }, [api, initial.defaultDirectory, retry]);
   useEffect(() => {
     let live = true; setModels(null); setQuery(''); setModelError('');
@@ -62,6 +76,11 @@ export function PersonalSettingsDialog({ api, agents, initial, onSave, onClose, 
         {(['always', 'event', 'off'] as const).map(mode => <button key={mode} type="button" aria-pressed={petPresence === mode}
           onClick={() => { setPetPresence(mode); savePetPresence(mode); }}>{t(mode === 'always' ? 'pet.presence.always' : mode === 'event' ? 'pet.presence.event' : 'pet.presence.off')}</button>)}
       </div></div>
+    {superagent && <div className="personal-setting-line"><span>{t('superagent.enabledLabel')}<small>{t('superagent.enabledHint')}</small></span>
+      <div className="desk-segment" role="group" aria-label={t('superagent.enabledLabel')}>
+        {([false, true] as const).map(flag => <button key={String(flag)} type="button" disabled={superagentBusy} aria-pressed={superagent.enabled === flag}
+          onClick={() => void updateSuperagent({ enabled: flag })}>{t(flag ? 'superagent.on' : 'superagent.off')}</button>)}
+      </div></div>}
     {onNavigate && <div className="settings-related">{([
       ['profile', 'profile.title'], ['lark', 'lark.name'], ['brief', 'brief.name'], ['proactive', 'proactive.name'],
     ] as const).map(([id, label]) => <button className="settings-link-row" key={id} onClick={() => onNavigate(`assistant/${id}`)}><span>{t(label)}</span><IconChevron size={15} /></button>)}</div>}

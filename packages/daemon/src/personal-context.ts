@@ -6,7 +6,8 @@ const HOUR = 60 * 60_000;
 const LABELS = { needs: '需要你', running: '在跑', review: '待验收', error: '出错停下', scheduled: '已安排', upcoming: '接下来' };
 type Category = keyof typeof LABELS;
 interface Entry { id: string; category: Category; title: string; note: string; agent?: string; at: string }
-interface Snapshot { threadId: string; at: string; entries: Entry[]; matters: { open: number; overdue: number } }
+interface LedgerBrief { id: string; title: string; phase: string; quadrant: string; primaryThreadId: string | null; reason: string; granted: boolean }
+interface Snapshot { threadId: string; at: string; entries: Entry[]; matters: { open: number; overdue: number }; ledger?: LedgerBrief[] }
 const json = (value: unknown) => JSON.stringify(value).replace(/</g, '\\u003c');
 const clip = (text: string) => [...text].slice(0, 300).join('');
 const fingerprint = (entry: Entry) => json([entry.category, entry.title, entry.note, entry.agent, entry.at]);
@@ -57,8 +58,21 @@ export function contextEntries(store: Store, manager: ThreadManager, threadId: s
 export function personalContext(store: Store, manager: ThreadManager, threadId: string, now = new Date(), upcoming: Entry[] = []) {
   const entries = [...contextEntries(store, manager, threadId, now), ...upcoming];
   const todos = store.listTodos().filter(todo => !todo.done && todo.state !== 'done');
+  // Prioritized task ledger digest (no 3-day window, no turn-detail reads).
+  const ledgerItems: LedgerBrief[] = manager.personal.ledger.snapshot({ now, limit: 12 }).items
+    .filter(item => !item.isParentGoal)
+    .map(item => ({
+      id: item.id,
+      title: clip(item.title),
+      phase: item.phase,
+      quadrant: item.priority.quadrant,
+      primaryThreadId: item.primaryThreadId,
+      reason: clip(item.reason),
+      granted: item.granted,
+    }));
   const snapshot: Snapshot = { threadId, at: now.toISOString(), entries,
-    matters: { open: todos.length, overdue: todos.filter(todo => todo.dueAt && Date.parse(todo.dueAt) < now.getTime()).length } };
+    matters: { open: todos.length, overdue: todos.filter(todo => todo.dueAt && Date.parse(todo.dueAt) < now.getTime()).length },
+    ledger: ledgerItems };
   const previous = store.hubSetting<Snapshot | null>(KEY, null);
   const full = !previous || previous.threadId !== threadId || now.getTime() - Date.parse(previous.at) >= 6 * HOUR;
   const before = new Map((full ? [] : previous.entries).map(entry => [entry.id, entry]));
@@ -80,6 +94,10 @@ export function personalContext(store: Store, manager: ThreadManager, threadId: 
     if (!changes.length) lines.push('无');
   }
   if (full || json(previous.matters) !== json(snapshot.matters)) lines.push(`事项：未完成 ${snapshot.matters.open} 件，逾期 ${snapshot.matters.overdue} 件。`);
+  if (ledgerItems.length && (full || json(previous?.ledger ?? []) !== json(ledgerItems))) {
+    lines.push('任务账本（按轻重缓急，完整列表用 calli todo --ledger）：');
+    for (const item of ledgerItems) lines.push(json(item));
+  }
   if (lines.length === 1) lines.push('没有变化。');
   return { text: `<calli-context>\n${lines.join('\n')}\n</calli-context>\n\n`, commit: () => store.saveHubSetting(KEY, snapshot) };
 }

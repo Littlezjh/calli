@@ -29,6 +29,15 @@ export class UserInputs {
     return null;
   }
 
+  /** Pending native questions/plan approvals on a thread, for inspection by the assistant/ledger. */
+  listPending(threadId: string): Array<{ inputId: string; threadId: string; turnId: string; request: UserInputRequest }> {
+    const out: Array<{ inputId: string; threadId: string; turnId: string; request: UserInputRequest }> = [];
+    for (const [inputId, p] of this.pending) {
+      if (p.threadId === threadId) out.push({ inputId, threadId: p.threadId, turnId: p.turnId, request: p.request });
+    }
+    return out;
+  }
+
   request(threadId: string, turnId: string, request: UserInputRequest): Promise<UserInputAnswer> {
     // A decision already made is said and done in one event: the log carries the request and its
     // answer together, so a reload shows the record without ever asking about it again.

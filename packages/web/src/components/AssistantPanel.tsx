@@ -16,7 +16,7 @@ import { ThreadPeek } from './ThreadPeek';
 import { RunControls, RunSummary, type ProactiveState } from './ProactiveRuns';
 import { DeskPage } from './DeskPage';
 import { PlanView } from './PlanView';
-import { IconAgents, IconChevron, IconClose, IconCompact, IconList, IconSettings, IconSideChat, IconSparkle } from './icons';
+import { IconAgents, IconChevron, IconClose, IconCompact, IconList, IconSettings, IconSideChat } from './icons';
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -348,7 +348,7 @@ export function AssistantHome({ api, todos, loading, error, threads, threadsKnow
   // above the composer, where its answer controls are — never as a thread id nothing answers.
   const openNeed = (id: string) => {
     const target = needTarget(id, runs);
-    if (target.kind === 'thread') { onOpenThread(target.id); return; }
+    if (target.kind === 'thread') { void api.recordThreadOpen(target.id, 'assistant-link').catch(() => undefined); onOpenThread(target.id); return; }
     if (target.kind === 'ask') { openDrawer(null); setTrayOpen(true); setOpenAsk(target.run.id); return; }
     loadRuns(); onReload(); // the ask is over and gone; the refreshed list drops the row
   };
@@ -378,15 +378,16 @@ export function AssistantHome({ api, todos, loading, error, threads, threadsKnow
     </section>}
   </div>;
 
-  // One bar: the app's own, which already names her. A phone keeps only the entries, their badges
-  // saying what the strip would; a wider screen adds the strip's words beside them.
+  // Quiet bar (AgentDock / yetone restraint): show status pills only when non-zero or failed,
+  // and keep the drawer/settings entries as calm monochrome icons with accessible names & tooltips.
   const needsCount = loading || error ? null : desk.needsYou + asks.filter(run => !run.matterId).length;
+  const hasStrip = !narrow && ((needsCount ?? 0) > 0 || (threadsKnown && (runningCount > 0 || errorCount > 0)) || brief?.state === 'failed');
   const header = <>
-    {!narrow && <div className="chat-strip" role="status">
-      <button onClick={() => openDrawer('matters')}><span className={needsCount ? 'warn' : undefined}>{t('desk.stripNeeds', needsCount)}</span></button>
-      <button onClick={() => openDrawer('sessions')}><span>{t('desk.stripRunning', threadsKnown ? runningCount : null)}</span></button>
-      <button onClick={() => openDrawer('sessions')}><span className={errorCount > 0 ? 'warn' : undefined}>{t('desk.stripError', threadsKnown ? errorCount : null)}</span></button>
-      {brief && <button onClick={onConfigure}><span className={brief.state === 'failed' ? 'warn' : undefined}>{t(`brief.kind.${brief.kind}`)} {t(brief.state === 'sent' ? 'brief.sent' : 'brief.failed', formatTime(brief.at, { hour: '2-digit', minute: '2-digit' }))}</span></button>}
+    {hasStrip && <div className="chat-strip" role="status">
+      {(needsCount ?? 0) > 0 && <button onClick={() => openDrawer('matters')}><span className="warn">{t('desk.stripNeeds', needsCount)}</span></button>}
+      {threadsKnown && runningCount > 0 && <button onClick={() => openDrawer('sessions')}><span>{t('desk.stripRunning', runningCount)}</span></button>}
+      {threadsKnown && errorCount > 0 && <button onClick={() => openDrawer('sessions')}><span className="warn">{t('desk.stripError', errorCount)}</span></button>}
+      {brief?.state === 'failed' && <button onClick={onConfigure}><span className="warn">{t(`brief.kind.${brief.kind}`)} {t('brief.failed', formatTime(brief.at, { hour: '2-digit', minute: '2-digit' }))}</span></button>}
     </div>}
     <nav className={`chat-entries${headerSlot ? ' topbar-actions' : ''}`} aria-label={t('desk.entries')}>
       <button className="chat-entry" onClick={() => openDrawer('matters')} title={t('desk.entryMatters')}><IconList size={16} /><span className="chat-entry-label">{t('desk.entryMatters')}</span>{narrow && needsCount ? <span className="chat-badge warn" aria-label={t('desk.stripNeeds', needsCount)}>{needsCount}</span> : null}</button>
@@ -479,14 +480,12 @@ export function AssistantHome({ api, todos, loading, error, threads, threadsKnow
         {composer}
       </> : <>
         <div className="chat-fresh">
-          <span className="ava"><IconSparkle size={22} /></span>
           <h2>{t('desk.freshTitle')}</h2>
           <p>{t('desk.freshBody')}</p>
           <div className="chat-starters">
             <button className="chat-starter" onClick={() => void send(t('desk.starterUrgent'), [], []).catch(report)}>{t('desk.starterUrgent')}</button>
             <button className="chat-starter" onClick={() => void send(t('desk.starterPlan'), [], []).catch(report)}>{t('desk.starterPlan')}</button>
             <button className="chat-starter" onClick={() => void send(t('desk.starterWaiting'), [], []).catch(report)}>{t('desk.starterWaiting')}</button>
-            <button className="chat-starter" onClick={() => void send(t('desk.starterDispatch'), [], []).catch(report)}>{t('desk.starterDispatch')}</button>
           </div>
           {error_ && <p className="chat-error" role="alert">{error_}</p>}
         </div>
@@ -506,13 +505,12 @@ export function AssistantHome({ api, todos, loading, error, threads, threadsKnow
       onOpen={() => onOpenThread(previewId)} onChange={onReload} />}
     {drawer && <aside className={`chat-drawer${wide ? ' side' : ' over'}`} ref={drawerRef} role="dialog" aria-modal={overlay || undefined} aria-label={t('desk.drawerLabel')}>
       <header className="chat-drawer-head">
-        <b>{t(`desk.tab.${drawer === 'sessions' ? 'sessions' : drawer === 'matters' ? 'matters' : 'desk'}`)}</b>
+        <nav className="chat-drawer-tabs">
+          {(['desk', 'sessions', 'matters'] as const).map(tab => <button key={tab} aria-pressed={drawer === tab} onClick={() => { openDrawer(tab); }}>{t(`desk.tab.${tab}`)}</button>)}
+        </nav>
         <span className="sp"></span>
         <button className="icon-btn" onClick={() => openDrawer(null)} title={t('common.close')} aria-label={t('common.close')}><IconClose size={17} /></button>
       </header>
-      <nav className="chat-drawer-tabs">
-        {(['desk', 'sessions', 'matters'] as const).map(tab => <button key={tab} aria-pressed={drawer === tab} onClick={() => { openDrawer(tab); }}>{t(`desk.tab.${tab}`)}</button>)}
-      </nav>
       <div className="chat-drawer-body">
         {drawer === 'desk' && <DeskPage api={api} todos={todos} loading={loading} error={error} threads={threads} agents={agents}
           personal={personal} personalError={personalError} refreshKey={refreshKey} onReload={onReload}

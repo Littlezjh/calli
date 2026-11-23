@@ -16,6 +16,8 @@ import { PersonalPrep } from './personal-prep.js';
 import { PersonalReview } from './personal-review.js';
 import { PersonalRouter } from './personal-router.js';
 import { ProactiveService } from './proactive.js';
+import { TaskLedger } from './task-ledger.js';
+import { TaskSupervision } from './task-supervision.js';
 import type { SignalRecord, Store, TodoImportance, TodoLane, TodoNote, TodoPatch, TodoRecord, TodoSource, TodoSubscription, TodoThread, TodoProposal } from './store.js';
 import { TODO_IMPORTANCES, TODO_LANES, TODO_SOURCE_TYPES, todoThread, urgencyOf } from './store.js';
 import type { InjectionGate } from './injections.js';
@@ -97,6 +99,8 @@ export class PersonalService {
   readonly review: PersonalReview;
   readonly router: PersonalRouter;
   readonly proactive: ProactiveService;
+  readonly ledger: TaskLedger;
+  readonly supervision: TaskSupervision;
   /** The one-shot onboarding explore; mutable so tests can substitute a fixture-backed instance. */
   explore: PersonalExplore;
   constructor(readonly store: Store, readonly manager: ThreadManager, private readonly adapters: Map<string, AgentAdapter>) {
@@ -106,6 +110,8 @@ export class PersonalService {
     this.review = new PersonalReview(store);
     this.router = new PersonalRouter(store, manager, this, adapters);
     this.proactive = new ProactiveService(store, manager, this, adapters);
+    this.ledger = new TaskLedger(store, manager, this);
+    this.supervision = new TaskSupervision(store, manager, this);
     this.explore = new PersonalExplore(store, manager, this);
   }
   private storedSettings(): PersonalSettings { return this.store.hubSetting('personal', { directory: null, agent: null, model: null }); }
@@ -328,7 +334,25 @@ export class PersonalService {
     const task = await this.validateDispatch(input);
     check();
     const run = this.proactive.proposeDispatch(task);
-    return input.now ? this.proactive.startDispatch(run.id, check) : run;
+    if (!input.now) return run;
+    const started = await this.proactive.startDispatch(run.id, check);
+    // Human-authorized immediate dispatch records a ledger matter (no orphan dispatches) and binds a TaskGrant.
+    if (started.threadId && turnId) {
+      const startEv = this.store.listTurnEvents(owner, turnId).find(e => e.type === 'turn.started');
+      const captured = this.ledger.captureThread(started.threadId, {
+        kind: 'dispatch',
+        matterId: task.matterId || undefined,
+        turnId,
+        seq: startEv?.seq ?? 0,
+      });
+      if (captured) {
+        this.supervision.grant(captured.id, { threadId: owner, turnId, seq: startEv?.seq ?? 0 }, {
+          repos: [task.cwd],
+          ...(task.model ? { modelPolicy: 'keep', fixedModel: task.model } : {}),
+        });
+      }
+    }
+    return started;
   }
 
   /** The run claim and matter link are committed together with turn.started, before a fast worker returns. */
@@ -541,6 +565,18 @@ export class PersonalService {
     if (input.waitingOn !== undefined) patch.waitingOn = input.waitingOn === null ? null : personalText(input.waitingOn, 500).trim();
     if (input.dueAt !== undefined) patch.dueAt = time(input.dueAt);
     if (input.followUpAt !== undefined) patch.followUpAt = time(input.followUpAt);
+    if (input.acceptance !== undefined) {
+      if (input.acceptance === null || input.acceptance === '') patch.acceptance = null;
+      else if (typeof input.acceptance === 'string') patch.acceptance = { text: personalText(input.acceptance, 2000).trim(), source: null, inferred: false };
+      else if (typeof input.acceptance === 'object' && !Array.isArray(input.acceptance)) {
+        const raw = input.acceptance as Record<string, unknown>;
+        patch.acceptance = {
+          text: personalText(raw.text, 2000).trim(),
+          source: null,
+          inferred: raw.inferred === true,
+        };
+      } else throw new HttpError(400, 'acceptance must be a string, object or null');
+    }
     return patch;
   }
   /** Thread IDs an agent names with --thread / --unlink; each must exist. */
@@ -577,7 +613,7 @@ export class PersonalService {
       // External provenance never inherits the summary/recorded-thread acceptance shortcuts.
       const recorded = !signal && (links.some(id => id !== actor) || Boolean(actor && this.store.summaryThreadIds().has(actor)));
       const proposed = Boolean(signal || (actor && (patch.owner ?? 'me') === 'me' && !recorded));
-      const todo = this.store.createTodo(randomUUID(), text, parentId, { horizon: patch.horizon, owner: patch.owner, dueAt: patch.dueAt, lane: patch.lane, importance: patch.importance, urgentUntil: patch.urgentUntil, source: patch.source, subscriptions: patch.subscriptions, proposed });
+      const todo = this.store.createTodo(randomUUID(), text, parentId, { horizon: patch.horizon, owner: patch.owner, dueAt: patch.dueAt, lane: patch.lane, importance: patch.importance, urgentUntil: patch.urgentUntil, source: patch.source, subscriptions: patch.subscriptions, acceptance: patch.acceptance, proposed });
       if (this.recordsSelf(actor, links)) this.store.linkTodoThread(todo.id, actor!);
       for (const id of links) this.store.linkTodoThread(todo.id, id);
       // Provenance lands in the archive's matter links; the source alone is not a delivery.
@@ -716,9 +752,15 @@ export class PersonalService {
     const withUrgency = (todo: TodoRecord) => ({ ...todo, urgency: urgencyOf(todo) });
     switch (input.op) {
       case 'todo.list': return this.store.listTodos().filter(t => !t.done).map(todo => ({ ...withUrgency(todo), threads: linkedThreads(todo.id) }));
+      case 'todo.ledger': return this.ledger.snapshot({
+        ...(typeof input.includeDoneSince === 'string' ? { includeDoneSince: input.includeDoneSince } : {}),
+        ...(typeof input.cursor === 'string' ? { cursor: input.cursor } : {}),
+        ...(input.limit !== undefined ? { limit: Number(input.limit) } : {}),
+      });
+      case 'todo.supervise': return this.supervision.supervise(owner, input);
       case 'todo.show': {
         const todo = this.store.getTodo(String(input.id)); if (!todo) throw new HttpError(404, 'todo not found');
-        return { ...withUrgency(todo), note: this.note(todo.id), threads: linkedThreads(todo.id), proposals: this.store.todoProposals(todo.id) };
+        return { ...withUrgency(todo), note: this.note(todo.id), threads: linkedThreads(todo.id), proposals: this.store.todoProposals(todo.id), task: this.ledger.taskView(todo) };
       }
       case 'agents': return (await this.manager.listAgents()).map(({ id, label, available }) => ({ id, label, available }));
       case 'plan': this.requireAssistant(owner); return this.plan.get(input.range);
@@ -735,7 +777,7 @@ export class PersonalService {
       case 'wish': { const id = randomUUID(); this.store.saveWish(id, owner, personalText(input.text, 500)); return { id }; }
       case 'profile.show': return this.profile();
       case 'settings.list': return this.settingsSummary();
-      case 'settings.set': return this.setSetting(String(input.key ?? ''), input.value);
+      case 'settings.set': return this.setSetting(String(input.key ?? ''), input.value, owner);
       default: throw new HttpError(400, 'unknown personal command; see calli todo --help');
     }
   }
@@ -776,6 +818,7 @@ export class PersonalService {
       brief: { ...brief }, push: { enabled: push.enabled, waiting: push.waiting, failure: push.failure, notice: push.notice,
         recipientSet: Boolean(push.recipient), addressSet: Boolean(push.baseUrl) },
       proactive: { mode: proactive.mode, repos: proactive.repos },
+      superagent: { ...this.supervision.settings() },
     };
   }
 
@@ -811,11 +854,17 @@ export class PersonalService {
    * conversation can never disagree about what is valid. Keys a person should only change
    * in person (directory, push recipient, removing repos) refuse here.
    */
-  private async setSetting(key: string, value: unknown): Promise<unknown> {
+  private async setSetting(key: string, value: unknown, owner?: string): Promise<unknown> {
     const [domain, field] = key.split('.');
     if (!domain || !field) throw new HttpError(400, `设置项必须是 域.字段，例如 brief.morning；收到：${key || '（空）'}`);
     const echo = () => ({ changed: key, settings: this.settingsSummary()[domain] });
     switch (key) {
+      case 'superagent.enabled': case 'superagent.ledgerCapture': case 'superagent.notifyMergeMs': {
+        if (!owner || !this.router.humanTurn(owner)) throw new HttpError(403, `${key} 只能在人当前对话轮里修改`);
+        if (field === 'notifyMergeMs') this.supervision.saveSettings({ notifyMergeMs: Number(String(value ?? '').trim()) });
+        else this.supervision.saveSettings({ [field]: this.boolean(value, key) });
+        return echo();
+      }
       case 'personal.directory': case 'push.recipient': case 'push.baseUrl':
         throw new HttpError(403, `「${key}」这一项请人在网页设置里改`);
       case 'personal.agent': case 'personal.model': {
