@@ -7496,6 +7496,15 @@ div.file-card:hover { background: var(--surface); }
   object-fit: contain;
 }
 
+/* 图片未取回时保留正文占位，最终尺寸差由阅读锚点补偿。 */
+.file-image.loading {
+  width: min(320px, 100%);
+  height: 180px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
 .file-image figcaption {
   /* A long path must not widen the picture's button and expose its background. */
   contain: inline-size;

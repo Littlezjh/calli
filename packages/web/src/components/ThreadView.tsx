@@ -1,5 +1,6 @@
 import { referencePreview, splitReferences, withReferences } from '../context-references';
 import { ReferenceChips } from './ContextReferences';
+import { captureReadingAnchor, restoreReadingAnchor, type ReadingAnchor } from '../scroll-anchor';
 import { MessageActionButton, MessageMore, PointMessageMenu, SelectMessage, useMessageGestures, type MessageAction } from './MessageActions';
 import { channelRows, hydrateHistoryFiles } from '../timeline';
 import { advanceStatus } from '../advance';
@@ -227,9 +228,10 @@ export function ThreadView({ onOpenFinds, chain = false, observeOlder = true, be
   // starts at the top and is pinned down) and the scroll restore after a load trigger nothing.
   const threadRef = useRef<HTMLDivElement | null>(null);
   const restoreFromBottom = useRef<number | null>(null);
+  const expandAnchor = useRef<ReadingAnchor | null>(null);
   const expand = () => {
     const scroller = threadRef.current?.closest<HTMLElement>('.scroller');
-    if (scroller) restoreFromBottom.current = scroller.scrollHeight - scroller.scrollTop;
+    if (scroller) { expandAnchor.current = captureReadingAnchor(scroller); restoreFromBottom.current = scroller.scrollHeight - scroller.scrollTop; }
     setExpandedFor({ key: threadKey, value: true });
   };
   const reachTop = useRef(() => {});
@@ -241,7 +243,8 @@ export function ThreadView({ onOpenFinds, chain = false, observeOlder = true, be
   // Unfolded turns land above the viewport; keep the same content in view.
   useLayoutEffect(() => {
     const scroller = threadRef.current?.closest<HTMLElement>('.scroller');
-    if (scroller && restoreFromBottom.current !== null) scroller.scrollTop = scroller.scrollHeight - restoreFromBottom.current;
+    if (scroller && restoreFromBottom.current !== null && restoreReadingAnchor(scroller, expandAnchor.current) === null) scroller.scrollTop = scroller.scrollHeight - restoreFromBottom.current;
+    expandAnchor.current = null;
     restoreFromBottom.current = null;
   }, [expanded]);
   useEffect(() => {
@@ -253,7 +256,8 @@ export function ThreadView({ onOpenFinds, chain = false, observeOlder = true, be
     // A prepend or collapsing a long handover can move the scrollbar too. Only user navigation
     // may cross another segment; consume each gesture before inserting the next page.
     const reach = () => {
-      if (chain && !upward) return;
+      // 程序恢复滚动和内容折叠不能再触发分页，包括普通会话。
+      if (!upward) return;
       upward = false;
       reachTop.current();
     };
@@ -263,7 +267,6 @@ export function ThreadView({ onOpenFinds, chain = false, observeOlder = true, be
       lastTop = top;
     };
     const nestedScrollConsumesUp = (target: EventTarget | null) => {
-      if (!chain) return false;
       for (let el = target instanceof Element ? target : null; el && el !== scroller; el = el.parentElement) {
         if (el.scrollTop > 0 && el.scrollHeight > el.clientHeight) return true;
       }
@@ -516,7 +519,10 @@ export function ThreadView({ onOpenFinds, chain = false, observeOlder = true, be
           </div>
         )}
         {beforeItems}
-        {shown.map((g) => renderItems(g.items))}
+        {shown.map(
+          // 按每组首条消息保持身份；前插历史不能重建旧消息和重置已加载的图片。
+          (g) => <Fragment key={g.items[0].key}>{renderItems(g.items)}</Fragment>,
+        )}
         {advance && <div className="advance-line">
           <span role="status">{advanceStatus(advance)}</span>
           <button onClick={advance.onCancel} disabled={advance.busy}>{t('view.advanceCancel')}</button>
@@ -1215,7 +1221,7 @@ function FileImage({ path, roots, load, onOpen }: { path: string; roots: string[
   }, [path, load]);
 
   if (!url) {
-    if (!gone) return null;
+    if (!gone) return <figure className="file-image loading" aria-hidden="true" />;
     return (
       <figure className="file-image missing">
         <figcaption title={path}>{relativePath(path, roots)} · {t('view.imageFailed')}</figcaption>
