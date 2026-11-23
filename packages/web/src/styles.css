@@ -12838,8 +12838,9 @@ button.trace-step-head:hover { background: var(--hover); }
 @media (hover: hover) { .chain-line-title:hover { color: var(--text); text-decoration: underline; text-underline-offset: 3px; } }
 .chain-line-meta { flex: none; white-space: nowrap; }
 @media (max-width: 640px) { .chain-line-time { display: none; } }
-.row.chain-followups { display: block; color: var(--faint); font-size: 12px; text-align: center; padding: 6px 0 2px; }
-.chain-followups .text-btn { display: inline; width: auto; min-height: 0; padding: 0; background: none; font-size: 12px; text-decoration: underline; text-underline-offset: 3px; }
+/* What a thread did on its own after it handed over: one hairline with the count, the turns read on beneath it. */
+.chain-followups .chain-line { margin: 12px 0 0; }
+.chain-followups .thread { padding-top: 2px; }
 /* One segment to a page: short ones leave room below, and dragging past an edge shows a pill. */
 .merged-history.paged { position: relative; }
 .chain-page { display: flex; flex-direction: column; min-height: var(--chain-min, 0); transition: transform 0.2s ease, opacity 0.2s ease; }

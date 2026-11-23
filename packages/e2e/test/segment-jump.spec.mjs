@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { startDaemon, openUi, api, launchBrowser } from '../harness.mjs';
 
 // A native agent can finish background tasks after handing over. Opening its earlier segment
-// must land at the handover, while its real later output remains available as follow-ups.
+// must land at the handover, while its real later output reads on beneath a hairline as follow-ups.
 test('overview segment jumps keep the handover boundary and the older-page button readable', async () => {
   const hub = await startDaemon();
   let browser;
@@ -53,11 +53,13 @@ test('overview segment jumps keep the handover boundary and the older-page butto
         if (phone) await page.getByRole('button', { name: '概况', exact: true }).click();
         await page.locator('.overview-member').filter({ hasText: source.title }).last().click();
         await page.locator('.chain-followups').waitFor();
-        assert.match(await page.locator('.chain-followups').innerText(), /3 条后续/);
-        assert.equal(await page.locator('.markdown', { hasText: "You've hit your session limit" }).count(), 0);
+        assert.match(await page.locator('.chain-followups .chain-line').innerText(), /3 条后续/);
         await page.locator('.handover-summary-turn').waitFor();
         assert.equal(await page.locator('.row.user', { hasText: '真实问题' }).count(), 7, 'a bounded page contains real questions and the folded summary');
         assert.ok(requests.some(url => url.includes(`/threads/${source.id}/history?`) && new URL(url).searchParams.get('before') === String(boundary + 1)), 'the read stops at the handover');
+        // The follow-ups read on beneath the hairline: the real native-agent failures are on the page, with no opening step.
+        await page.locator('.chain-followups .markdown', { hasText: "You've hit your session limit" }).last().waitFor();
+        assert.ok(requests.some(url => url.includes(`/threads/${source.id}/history?`) && new URL(url).searchParams.get('after') === String(boundary) && new URL(url).searchParams.get('forward') === '1'), 'the follow-ups read on from the handover');
         await page.waitForTimeout(300);
         const file = `${phone ? 'phone' : 'desktop'}-${theme}`;
         await page.screenshot({ path: join(shots, `after-${file}.png`) });
@@ -75,20 +77,10 @@ test('overview segment jumps keep the handover boundary and the older-page butto
         await page.screenshot({ path: join(shots, `older-${file}.png`) });
         await previous.click();
         await page.getByText('真实问题 1', { exact: true }).waitFor();
-        // Explicitly opening follow-ups still exposes the real native-agent failures.
-        await page.locator('.chain-followups .text-btn').click();
-        await page.locator('.markdown', { hasText: "You've hit your session limit" }).last().waitFor();
-        const older = page.getByRole('button', { name: '加载更早的消息', exact: true });
-        await older.waitFor();
-        const usable = await older.evaluate(button => {
-          const box = button.getBoundingClientRect();
-          const top = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2);
-          return button === top || button.contains(top);
-        });
-        assert.ok(usable, 'the segment heading must not cover the older-page button');
+        // The follow-ups under their hairline, read where the conversation ended.
+        await page.locator('.scroller').evaluate(el => { el.scrollTop = el.scrollHeight; });
+        await page.locator('.chain-followups .markdown', { hasText: "You've hit your session limit" }).last().waitFor();
         await page.screenshot({ path: join(shots, `followups-${file}.png`) });
-        await older.click();
-        await page.getByText('真实问题 6', { exact: true }).waitFor();
         assert.deepEqual(errors, []);
       } finally { await context.close(); }
     }

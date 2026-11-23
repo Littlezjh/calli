@@ -28,8 +28,8 @@ type Props = ViewProps & {
   /** Changes when the person asks for the latest segment while the page already is on its thread. */
   latestSignal?: number;
   agentIcon?: (id: string) => string | undefined;
-  /** The title on a segment's line: open that segment alone, to go on in. */
-  onOpenSegment?: (thread: Thread, alone?: boolean) => void;
+  /** The title on a segment's line: open that segment, to go on in. */
+  onOpenSegment?: (thread: Thread) => void;
   /** Which segment the reading is at, as the person scrolls: where a typed message goes. */
   onFocus?: (focus: ChainFocus | null) => void;
 };
@@ -370,7 +370,7 @@ export function MergedHistory({ api, thread, chainThreads, merged, ready, agentL
     body = <>
       <EarlierSegment segment={{ thread: active.thread, page: usable.page, ...(active.part ? { part: active.part } : {}), ...(active.clip !== undefined ? { clip: active.clip } : {}), followups: active.followups }} api={api} agentLabel={agentLabel} line={lineOf(active)}
         onQuote={current.onQuote} onMessageContext={current.onMessageContext} onHandToAssistant={current.onHandToAssistant} onAutoHandover={current.onAutoHandover} fork={canFork(active.thread)} onFork={turn => onSegmentFork(active.thread, turn)}
-        onOpenFile={path => onSegmentFile(active.thread, path)} onPreview={path => onSegmentPreview(active.thread, path)} onOpenSegment={onOpenSegment}
+        onOpenFile={path => onSegmentFile(active.thread, path)} onPreview={path => onSegmentPreview(active.thread, path)}
         older={{ hasOlder: usable.page.hasOlder, loadingOlder: busy[`o:${activeKey}`], onLoadOlder: () => void loadOlder(active), observeOlder: true, chain: true,
           olderError: failed[`o:${activeKey}`] ? t('handover.chain.failed') : undefined }} prefix={usable.page.hasOlder ? null : beginning} />
       {newerFailed
@@ -423,9 +423,9 @@ function ChainLine({ thread, part, agentLabel, icon, onOpen }: { thread: Thread;
   return <div className="row chain-line" data-chain-line={`${thread.id}:${part ?? 'after'}`}>{lineBody({ thread, part, agentLabel, icon, onOpen })}</div>;
 }
 
-function EarlierSegment({ segment, api, agentLabel, line, fork, onFork, onQuote, onMessageContext, onHandToAssistant, onAutoHandover, onOpenFile, onPreview, onOpenSegment, older, prefix }: {
+function EarlierSegment({ segment, api, agentLabel, line, fork, onFork, onQuote, onMessageContext, onHandToAssistant, onAutoHandover, onOpenFile, onPreview, older, prefix }: {
   segment: Segment; api: Api; agentLabel: Props['agentLabel']; fork: ReturnType<Props['canFork']>; line: ReactNode;
-  onFork: (id: string) => void; onOpenFile: (path: string) => Promise<void>; onPreview: (path: string) => void; onOpenSegment?: (thread: Thread, alone?: boolean) => void;
+  onFork: (id: string) => void; onOpenFile: (path: string) => Promise<void>; onPreview: (path: string) => void;
   older: Partial<ViewProps>; prefix: ReactNode; onQuote?: ViewProps['onQuote']; onMessageContext?: ViewProps['onMessageContext']; onHandToAssistant?: ViewProps['onHandToAssistant']; onAutoHandover?: ViewProps['onAutoHandover'];
 }) {
   const { thread, page } = segment;
@@ -441,9 +441,69 @@ function EarlierSegment({ segment, api, agentLabel, line, fork, onFork, onQuote,
       onOpenFile={onOpenFile} onPreview={onPreview} onFork={fork.enabled ? onFork : undefined} forkAnyTurn={fork.any} {...older}
       beforeItems={<>{prefix}{!page.hasOlder && line}{!page.hasOlder && folded && <HandoverBoundary api={api} thread={thread} part={segment.part} agentLabel={agentLabel} turnId={timeline.items.find(item => item.kind === 'user' && item.handoverCollapsed)?.turnId ?? (segment.part === 'before' ? page.events.find(event => event.type === 'turn.started')?.turnId : undefined) ?? undefined} />}
         {!timeline.items.length && <div className="row chain-beginning">{t('handover.chain.empty')}</div>}</>} />
-    {segment.followups > 0 && <div className="row chain-followups">
-      {t('handover.chain.followups', thread.title, segment.followups)} · <button type="button" className="text-btn" onClick={() => onOpenSegment?.(thread, true)}>{t('handover.chain.followupsOpen')}</button>
-    </div>}
+    {segment.followups > 0 && <FollowupsTail segment={segment} api={api} fork={fork} onFork={onFork} onQuote={onQuote}
+      onMessageContext={onMessageContext} onHandToAssistant={onHandToAssistant} onAutoHandover={onAutoHandover} onOpenFile={onOpenFile} onPreview={onPreview} />}
+  </div>;
+}
+
+/**
+ * What a thread did on its own after it handed over: one hairline with the count, and the turns
+ * themselves read on beneath it. Nothing has to be opened; they are already part of the page, paged
+ * forward from the handover the same way a segment read from its start is.
+ */
+function FollowupsTail({ segment, api, fork, onFork, onQuote, onMessageContext, onHandToAssistant, onAutoHandover, onOpenFile, onPreview }: {
+  segment: Segment; api: Api; fork: ReturnType<Props['canFork']>; onFork: (id: string) => void;
+  onOpenFile: (path: string) => Promise<void>; onPreview: (path: string) => void;
+  onQuote?: ViewProps['onQuote']; onMessageContext?: ViewProps['onMessageContext']; onHandToAssistant?: ViewProps['onHandToAssistant']; onAutoHandover?: ViewProps['onAutoHandover'];
+}) {
+  const { thread, clip, part, followups } = segment;
+  // What was counted as a follow-up runs from the handover to a later return to the same thread, and the read keeps to that range.
+  const until = clip !== undefined && thread.handback ? thread.handback.afterSeq : undefined;
+  const [events, setEvents] = useState<HistoryPage['events']>([]);
+  const [phase, setPhase] = useState<'reading' | 'more' | 'done' | 'failed'>(clip !== undefined ? 'reading' : 'done');
+  const [busy, setBusy] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  const cursor = useRef<number | null>(clip !== undefined ? clip - 1 : null);
+  const sentinel = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const at = cursor.current;
+    if (clip === undefined || at === null) return;
+    let alive = true;
+    setBusy(true);
+    void api.historyPage(thread.id, until, at, true, undefined, true, part === 'before' || thread.handback ? 'before' : undefined)
+      .then(page => {
+        if (!alive) return;
+        cursor.current = page.nextCursor;
+        setEvents(previous => [...previous, ...page.events]);
+        setPhase(page.nextCursor === null ? 'done' : 'more');
+      })
+      .catch(() => { if (alive) setPhase('failed'); })
+      .finally(() => { if (alive) setBusy(false); });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api, thread.id, clip, until, attempt]);
+  useEffect(() => {
+    const node = sentinel.current;
+    if (!node || phase !== 'more' || busy) return;
+    const observer = new IntersectionObserver(entries => { if (entries.some(entry => entry.isIntersecting)) setAttempt(value => value + 1); },
+      { root: node.closest<HTMLElement>('.scroller') ?? null, rootMargin: '0px 0px 600px 0px' });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }); // eslint-disable-line react-hooks/exhaustive-deps
+  const timeline = useMemo(() => buildTimeline(events), [events]);
+  // A background turn opens with its own hairline note; under the count line the first one would
+  // repeat it, so it gives way — the turns after it still keep note from note apart.
+  const items = timeline.items[0]?.kind === 'user' && timeline.items[0].background ? timeline.items.slice(1) : timeline.items;
+  const roots = useMemo(() => [thread.cwd, thread.cwdReal], [thread.cwd, thread.cwdReal]);
+  const loadImage = useMemo(() => (id: string) => api.attachment(thread.id, id), [api, thread.id]);
+  const loadFile = useMemo(() => (path: string) => api.threadFile(thread.id, path), [api, thread.id]);
+  return <div className="chain-followups">
+    <div className="row chain-line">{t('handover.chain.followups', followups)}</div>
+    {phase === 'failed' && <div className="history-status" role="alert">{t('handover.chain.laterFailed')} <button className="text-btn" onClick={() => setAttempt(value => value + 1)}>{t('common.retry')}</button></div>}
+    {items.length > 0 && <ThreadView chain historyApi={api} historyThreadId={thread.id} items={items} roots={roots} loadImage={loadImage} loadFile={loadFile}
+      onOpenFile={onOpenFile} onPreview={onPreview} onFork={fork.enabled ? onFork : undefined} forkAnyTurn={fork.any} observeOlder={false}
+      onQuote={onQuote} onMessageContext={onMessageContext} onHandToAssistant={onHandToAssistant} onAutoHandover={onAutoHandover} />}
+    {(phase === 'reading' || phase === 'more') && <div ref={sentinel} className="chain-later" role={busy ? 'status' : undefined}>{busy ? t('common.loading') : null}</div>}
   </div>;
 }
 
