@@ -274,6 +274,91 @@ test('no successor stops queued work, and a previously exhausted source is not s
   } finally { await h.close(); }
 });
 
+test('send now releases a queue paused after a successful near-quota turn', async () => {
+  const h = await setup();
+  try {
+    h.config([]);
+    const id = h.thread.id;
+    await h.manager.startTurn(id, { text: 'quota-near' });
+    await h.manager.startTurn(id, { text: 'later', queue: true });
+    const urgent = await h.manager.startTurn(id, { text: 'urgent', queue: true });
+    assert.ok('queued' in urgent);
+    await h.done();
+    assert.equal(h.manager.autoHandover.view(id).reason, 'near');
+    assert.equal(h.manager.autoHandover.view(id).state, 'stopped');
+    assert.deepEqual(h.manager.threadView(id).queued.map(message => message.text), ['later', 'urgent']);
+
+    writeFileSync(join(h.dir, 'agy.json'), JSON.stringify({ 'Gemini Models': 10 }));
+    assert.equal((await h.api(`/api/threads/${id}/queue/${urgent.id}/now`, 'POST')).status, 204);
+    await h.done();
+    const events = h.store.listEvents(id, 0, -1);
+    assert.deepEqual(events.filter(e => e.type === 'turn.started').map(e => e.data.displayText ?? e.data.text), ['quota-near', 'urgent', 'later']);
+    assert.equal(events.filter(e => e.type === 'turn.done').length, 3);
+    assert.deepEqual(h.manager.threadView(id).queued, []);
+    assert.equal(h.manager.autoHandover.view(id).enabled, true);
+  } finally { await h.close(); }
+});
+
+test('send now releases a queue paused after a failed or exhausted-stopped automatic handover', async () => {
+  const h = await setup();
+  try {
+    h.config([]);
+    const id = h.thread.id;
+    await h.manager.startTurn(id, { text: 'quota-exhausted' });
+    const queued = await h.manager.startTurn(id, { text: 'continue', queue: true });
+    assert.ok('queued' in queued);
+    await h.done();
+    assert.equal(h.manager.autoHandover.view(id).state, 'stopped');
+    assert.equal(h.manager.autoHandover.view(id).reason, 'exhausted');
+    assert.deepEqual(h.manager.threadView(id).queued.map(m => m.text), ['continue']);
+
+    // Switching to another model and clicking "Send now" must clear the stopped notice and send.
+    await h.manager.updateThread(id, { model: 'claude-sonnet' });
+    assert.equal((await h.api(`/api/threads/${id}/queue/${queued.id}/now`, 'POST')).status, 204);
+    await h.done();
+    assert.deepEqual(h.manager.threadView(id).queued, []);
+    assert.equal(h.manager.autoHandover.view(id).state, undefined);
+
+    // Same when automatic handover left a failed notice (e.g. a conflict during handover).
+    const failedQueued = await h.manager.startTurn(id, { text: 'after-fail' });
+    assert.ok('turnId' in failedQueued);
+    await h.done();
+    (h.manager.autoHandover as any).notices.set(id, { state: 'failed', error: 'a turn is already running in this thread' });
+    h.manager.notifyHandover(id);
+    // Simulate a message waiting in the queue while the failed notice pauses draining.
+    (h.manager as any).setQueue(id, [{ id: 'queued-after-fail', text: 'retry-me', displayText: 'retry-me', images: [], workMode: 'execute', fromUser: true }]);
+    assert.equal(h.manager.autoHandover.queuePaused(id), true);
+    assert.equal((await h.api(`/api/threads/${id}/queue/queued-after-fail/now`, 'POST')).status, 204);
+    await h.done();
+    assert.deepEqual(h.manager.threadView(id).queued, []);
+    assert.equal(h.manager.autoHandover.view(id).state, undefined);
+    const texts = h.store.listEvents(id, 0, -1).filter(e => e.type === 'turn.started').map(e => e.data.displayText ?? e.data.text);
+    assert.ok(texts.includes('retry-me'));
+  } finally { await h.close(); }
+});
+
+test('automatic handover stops an autonomous background turn instead of failing with a turn-running conflict', async () => {
+  const h = await setup();
+  try {
+    h.config([{ agent: 'agy', model: 'claude-sonnet' }]);
+    const id = h.thread.id;
+    await h.manager.startTurn(id, { text: 'quota-exhausted-background' });
+    await h.done();
+    assert.equal(h.manager.autoHandover.view(id).state, undefined);
+    assert.equal(h.manager.threadView(id).model, 'claude-sonnet');
+    assert.equal(h.manager.threadView(id).status, 'idle');
+    const events = h.store.listEvents(id, 0, -1);
+    const backgroundStarted = events.find(e => e.type === 'turn.started' && e.data.source === 'background');
+    assert.ok(backgroundStarted, 'expected an autonomous background turn during the countdown');
+    const backgroundDone = events.find(e => e.turnId === backgroundStarted.turnId && e.type === 'turn.done');
+    assert.equal(backgroundDone?.data.stopReason, 'cancelled');
+    const retried = events.filter(e => e.type === 'turn.started' && (e.data.displayText ?? e.data.text) === 'quota-exhausted-background');
+    assert.equal(retried.length, 2, 'exhausted turn should be retried on the new model');
+    const retryDone = events.find(e => e.turnId === retried[1].turnId && e.type === 'turn.done');
+    assert.equal(retryDone?.data.stopReason, 'end_turn');
+  } finally { await h.close(); }
+});
+
 test('the default order skips a bridge without a plan; an order that names it still uses it', async () => {
   const h = await setup();
   try {

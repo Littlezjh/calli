@@ -196,11 +196,17 @@ function runTurn(text) {
     result({ status: 'ERROR', error: body.slice('provider-error:'.length).trim() });
     return;
   }
-  const exhaustTrigger = model !== 'claude-sonnet' && (body === 'quota-exhausted' || body.startsWith('[协作消息') && body.endsWith('quota-exhausted'));
+  const exhaustTrigger = model !== 'claude-sonnet' && (body === 'quota-exhausted' || body === 'quota-exhausted-background' || body.startsWith('[协作消息') && body.endsWith('quota-exhausted'));
   // FAKE_HANDOVER_EXHAUST_ONCE names a marker file of conversation ids: the quota error happens
   // once per conversation, so a test can watch the daemon retry the same ask after the "reset".
   // FAKE_HANDOVER_EXHAUST_DELAY_MS stalls the failure so a follow-up can queue behind it.
-  const exhaustFail = () => result({ status: 'ERROR', error: 'You have exhausted your quota on this model.' });
+  const exhaustFail = () => {
+    result({ status: 'ERROR', error: 'You have exhausted your quota on this model.' });
+    // Simulates an autonomous background update arriving during the handover countdown with no cost report.
+    if (body === 'quota-exhausted-background') {
+      setTimeout(() => update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'autonomous follow-up' } }), 25);
+    }
+  };
   const exhaustDelay = Number(process.env.FAKE_HANDOVER_EXHAUST_DELAY_MS ?? 0);
   const exhaustNow = () => { if (exhaustDelay) setTimeout(exhaustFail, exhaustDelay); else exhaustFail(); };
   if (exhaustTrigger && process.env.FAKE_HANDOVER_EXHAUST_ONCE) {

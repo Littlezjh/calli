@@ -3193,11 +3193,28 @@ export class ThreadManager {
     const run = this.running.get(id);
     if (run && this.store.listTurnEvents(id, run.turnId).some(e => e.type === 'turn.started' && e.data.handover)) await this.stopTurn(id).catch(() => undefined);
   }
+  /** Cancels an autonomous background turn on this thread so automatic handover can proceed without colliding with it. */
+  async stopBackgroundTurn(threadId: string): Promise<void> {
+    const run = this.running.get(threadId);
+    const nativeTurns = this.nativeTurns.get(threadId);
+    if (!run || !nativeTurns || ![...nativeTurns.values()].includes(run.turnId)) return;
+    if (!this.store.listTurnEvents(threadId, run.turnId).some(e => e.type === 'turn.started' && e.data.source === 'background')) return;
+    await this.stopTurn(threadId).catch(() => undefined);
+    if (this.running.get(threadId)?.turnId === run.turnId) {
+      await new Promise<void>((resolve) => {
+        const finish = () => { clearTimeout(timer); off(); resolve(); };
+        const off = this.subscribe(e => { if (e.threadId === threadId && e.type === 'thread.updated' && !this.running.has(threadId)) finish(); });
+        const timer = setTimeout(finish, 2000);
+        if (!this.running.has(threadId)) finish();
+      });
+    }
+  }
   /** `unnamed`: the brief does not say who reads it (an older conversation may take it back instead of the named target). */
   async autoHandoverSummary(id: string, target: string, exhausted: boolean, unnamed = false): Promise<string> {
     let summaryTurn: string | null = null;
     if (!exhausted) {
       try {
+        await this.stopBackgroundTurn(id);
         const started = await this.startHandover(id, target, true, unnamed);
         summaryTurn = started.turnId;
         await new Promise<void>((resolve) => {
@@ -3219,6 +3236,7 @@ export class ThreadManager {
     throw new HttpError(409, 'handover summary unavailable');
   }
   async retryAutoHandoverTurn(id: string, failedTurn: string): Promise<void> {
+    await this.stopBackgroundTurn(id);
     const failed = this.store.listTurnEvents(id, failedTurn).find(e => e.type === 'turn.started');
     if (!failed) throw new HttpError(409, 'failed turn not found');
     const images = ((failed.data.images ?? []) as Array<{ id: string }>).map(img => {
@@ -3525,6 +3543,9 @@ export class ThreadManager {
     if (!chosen) throw new HttpError(404, 'no such waiting message');
     delete chosen.error;
     this.setQueue(threadId, [chosen, ...queue.filter((q) => q !== chosen)]);
+    const handover = this.autoHandover.view(threadId);
+    // Send now lets the user continue after a stopped or failed automatic handover notice.
+    if (handover.state === 'stopped' || handover.state === 'failed') this.autoHandover.clearNotice(threadId);
     if (this.running.has(threadId)) await this.cancelTurn(threadId, { keepQueue: true });
     else this.startNextQueued(threadId);
   }
