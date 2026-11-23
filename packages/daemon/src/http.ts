@@ -836,6 +836,9 @@ export function createHttpServer(deps: HttpDeps): Server {
     // GET /api/config: the project roots, and whether threads can work outside a project
     if (method === 'GET' && path === '/api/config') return sendJson(res, 200, manager.workdirsConfig());
 
+    // An authenticated caller can copy a portable pointer without creating a grant or reading history.
+    if (method === 'GET' && path === '/api/context-references/machine') return sendJson(res, 200, { machineId: manager.references.machineId });
+
     // Browse candidate project folders without widening file access or allowed working directories.
     if (method === 'POST' && path === '/api/context-references') {
       return sendJson(res, 201, manager.references.create((await readJson(req)) ?? {}));
@@ -1109,7 +1112,7 @@ export function createHttpServer(deps: HttpDeps): Server {
       if (id && sub === 'export' && method === 'GET') return sendJson(res, 200, teams.export(id));
       if (id && sub === 'tasks' && method === 'POST') {
         const body = await readJson(req, MAX_TURN_BODY);
-        return sendJson(res, 202, await teams.dispatch({ teamId: id, text: body.text, images: body.images, cwd: body.cwd, source: { kind: body.source?.kind === 'web' ? 'web' : body.source?.kind === 'cli' ? 'cli' : 'http' } }));
+        return sendJson(res, 202, await teams.dispatch({ teamId: id, text: body.text, images: body.images, references: body.references, cwd: body.cwd, source: { kind: body.source?.kind === 'web' ? 'web' : body.source?.kind === 'cli' ? 'cli' : 'http' } }, true));
       }
       throw new HttpError(404, 'not found');
     }
@@ -1344,7 +1347,7 @@ export function createHttpServer(deps: HttpDeps): Server {
       }
       if (method === 'POST' && sub === 'takeover') {
         const body = await readJson(req);
-        return sendJson(res, 201, await manager.takeOver(threadId, body.agent, body.model, body.note, body.summary, body.returnTo));
+        return sendJson(res, 201, await manager.takeOver(threadId, body.agent, body.model, body.note, body.summary, body.returnTo, body.references, true));
       }
       if (method === 'DELETE' && sub === 'handover-link') {
         return sendJson(res, 200, manager.detachHandover(threadId));
@@ -1385,7 +1388,7 @@ export function createHttpServer(deps: HttpDeps): Server {
         }
         await manager.coordination?.previewMentions(threadId, typeof body.text === 'string' ? body.text : '', body.mentions, body.collaboration);
         await manager.coordination?.userSpoke(threadId);
-        return sendJson(res, 202, await manager.startTurn(threadId, { text: body.text, images: body.images, videos: body.videos, queue: body.queue, mentions: body.mentions, collaboration: body.collaboration, workMode: body.workMode, fromUser: true }));
+        return sendJson(res, 202, await manager.startTurn(threadId, { text: body.text, images: body.images, videos: body.videos, references: body.references, queue: body.queue, mentions: body.mentions, collaboration: body.collaboration, workMode: body.workMode, fromUser: true }));
       }
 
       if (method === 'POST' && sub === 'videos' && !parts[4]) {
@@ -1595,7 +1598,7 @@ export function createHttpServer(deps: HttpDeps): Server {
     }
 
     if (method === 'POST' && parts[1] === 'inputs' && parts[2] && parts.length === 3) {
-      if (!manager.inputs.answer(parts[2], await readJson(req))) throw new HttpError(404, '问题已结束或已经回答');
+      if (!manager.inputs.answer(parts[2], await readJson(req), true)) throw new HttpError(404, '问题已结束或已经回答');
       res.writeHead(204).end();
       return;
     }

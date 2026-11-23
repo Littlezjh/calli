@@ -17,6 +17,7 @@ import { HistoryStore } from './history.js';
 import type { Answer, DiffEvent } from './outputs.js';
 import { ToolJobs } from './tool-jobs.js';
 import { MessageEdits } from './message-edits.js';
+import { ToolHistory } from './tool-history.js';
 import type { MeetingReference, SignalMaterial, SignalMaterialRead } from './channels/lark-material.js';
 
 /** Storage cap for one tool snapshot's output; see docs/tool-output-storage-design.md. */
@@ -468,6 +469,7 @@ export class Store {
   readonly telemetry: Telemetry;
   readonly activity: Activity;
   readonly history: HistoryStore;
+  readonly toolHistory: ToolHistory;
   readonly toolJobs: ToolJobs;
   /** The event that records an edit and hides what came before it in the current conversation. */
   readonly messageEdits: MessageEdits;
@@ -695,8 +697,9 @@ export class Store {
     this.mcpEntries = new McpRegistry(this.db);
     this.extensions = new ExtensionStore(this.db);
     this.history = new HistoryStore(this.db);
+    this.toolHistory = new ToolHistory(this.db);
     this.toolJobs = new ToolJobs(this.db);
-    this.messageEdits = new MessageEdits(this.db);
+    this.messageEdits = new MessageEdits(this.db, this.toolHistory);
   }
 
   /** The MCP registry: business line and purpose notes, plus manually registered servers. */
@@ -991,6 +994,10 @@ export class Store {
     return handoverFollowups(this.db, thread.handover, thread.createdAt, source?.handback?.afterSeq);
   }
 
+  setHandover(id: string, link: HandoverLink | null): void {
+    this.db.prepare('UPDATE threads SET handover = ? WHERE id = ?').run(link ? JSON.stringify(link) : null, id);
+  }
+
   setHandback(id: string, link: HandbackLink | null): void {
     this.db.prepare('UPDATE threads SET handback = ? WHERE id = ?').run(link ? JSON.stringify(link) : null, id);
   }
@@ -1035,6 +1042,7 @@ export class Store {
         'INSERT INTO events (thread_id, seq, turn_id, type, ts, data) SELECT ?, seq, turn_id, type, ts, data FROM events WHERE thread_id = ? AND seq <= ?',
       )
       .run(toThreadId, fromThreadId, upToSeq);
+    this.toolHistory.copy(fromThreadId, toThreadId, upToSeq);
     this.indexText(toThreadId);
   }
 
@@ -1560,11 +1568,13 @@ export class Store {
     this.db.exec('SAVEPOINT history_event');
     try {
       const ts = new Date().toISOString();
+      const fullData = data;
       data = this.collapseToolSnapshot(threadId, turnId, type, data);
       const row = this.db
         .prepare('SELECT MAX(COALESCE((SELECT MAX(seq) FROM events WHERE thread_id=?),0), COALESCE((SELECT last_seq FROM event_sequences WHERE thread_id=?),0)) + 1 AS next')
         .get(threadId, threadId) as { next: number };
       const seq = row.next;
+      this.toolHistory.record(threadId, turnId, seq, type, fullData);
       this.db
         .prepare('INSERT INTO events (thread_id, seq, turn_id, type, ts, data) VALUES (?, ?, ?, ?, ?, ?)')
         .run(threadId, seq, turnId, type, ts, JSON.stringify(data));

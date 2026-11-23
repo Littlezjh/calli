@@ -437,7 +437,7 @@ function EarlierSegment({ segment, api, agentLabel, line, fork, onFork, onQuote,
   // made from) is the fold; the part after the return opens with what it was handed back.
   const folded = segment.part === 'after' ? Boolean(thread.handback) : segment.part === 'before' ? handedOver(thread) : handedOver(thread) || Boolean(thread.handback);
   return <div data-history-thread={thread.id} data-history-part={segment.part} className="history-segment">
-    <ThreadView onQuote={onQuote} onMessageContext={onMessageContext} onHandToAssistant={onHandToAssistant} onAutoHandover={onAutoHandover} historyApi={api} historyThreadId={thread.id} items={timeline.items} roots={roots} loadImage={loadImage} loadFile={loadFile}
+    <ThreadView onQuote={onQuote} onMessageContext={onMessageContext} onHandToAssistant={onHandToAssistant} onAutoHandover={onAutoHandover} historyApi={api} historyThreadId={thread.id} historyTitle={thread.title} items={timeline.items} roots={roots} loadImage={loadImage} loadFile={loadFile}
       onOpenFile={onOpenFile} onPreview={onPreview} onFork={fork.enabled ? onFork : undefined} forkAnyTurn={fork.any} {...older}
       beforeItems={<>{prefix}{!page.hasOlder && line}{!page.hasOlder && folded && <HandoverBoundary api={api} thread={thread} part={segment.part} agentLabel={agentLabel} turnId={timeline.items.find(item => item.kind === 'user' && item.handoverCollapsed)?.turnId ?? (segment.part === 'before' ? page.events.find(event => event.type === 'turn.started')?.turnId : undefined) ?? undefined} />}
         {!timeline.items.length && <div className="row chain-beginning">{t('handover.chain.empty')}</div>}</>} />

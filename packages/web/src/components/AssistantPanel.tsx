@@ -95,6 +95,7 @@ export function AssistantHome({ api, todos, loading, error, threads, threadsKnow
   const [events, setEvents] = useState<StoredEvent[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [error_, setError] = useState('');
+  const [restore, setRestore] = useState<{ text: string; nonce: number } | null>(null);
   const [retryBusy, setRetryBusy] = useState(false);
   const [cursor, setCursor] = useState<number | null>(null);
   const [loadingOlder, setLoadingOlder] = useState(false);
@@ -431,13 +432,13 @@ export function AssistantHome({ api, todos, loading, error, threads, threadsKnow
     onEffort={effort => updateModel({ effort })} /> : null;
 
   const composer = <div className="chat-composer">
-    <Composer attachBlocked={null} attachmentsBlocked={threadId ? undefined : t('desk.chatAttachFirst')} restore={null} note={null}
+    <Composer attachBlocked={null} attachmentsBlocked={threadId ? undefined : t('desk.chatAttachFirst')} restore={restore} note={null}
       draftKey={threadId ? `assistant-home:${threadId}` : 'assistant-home:new'} running={running} placeholder={handingTo ? t('desk.handingOver', agentLabel(handingTo)) : t('desk.chatPlaceholder')} disabled={Boolean(handingTo)}
       onSend={async (text, images, _mentions, videos = []) => {
         await send(text, images.map(({ data, mimeType }) => ({ data, mimeType })),
           await Promise.all(videos.map(async video => (await api.uploadVideo(threadId!, video.file)).id)));
       }}
-      onStop={() => threadId && void api.cancel(threadId).catch(report)} onError={setError}
+      onStop={() => threadId && void api.cancel(threadId).then(result => { if (result.dropped.length) setRestore({ text: result.dropped.join('\n\n'), nonce: Date.now() }); refresh(); }).catch(report)} onError={setError}
       header={null} left={composerLeft} right={composerRight} commands={[]} actions={[]} hiddenCommands={[]} onAction={() => undefined}
       queued={thread?.queued ?? []}
       onRemoveQueued={id => threadId && void api.removeQueued(threadId, id).then(refresh).catch(report)}
@@ -459,7 +460,7 @@ export function AssistantHome({ api, todos, loading, error, threads, threadsKnow
             {!loaded && !threadError && <div className="loading-note">{t('common.loading')}</div>}
             {/* After an agent switch the earlier talk is one tap away, at the top where it would have been. */}
             {loaded && cursor === null && thread?.handover?.sourceId && <button className="chat-earlier" onClick={() => onOpenThread(thread.handover!.sourceId)}>{t('desk.earlierWith', agentLabel(thread.handover.agent))}</button>}
-            {loaded && <ThreadView historyApi={api} historyThreadId={threadId!}
+            {loaded && <ThreadView historyApi={api} historyThreadId={threadId!} historyTitle={thread?.title}
               threads={threads} onOpenThread={openPreview}
               items={timeline.items} roots={thread ? [thread.cwd, thread.cwdReal] : []} loadImage={loadImage} loadFile={loadFile}
               autoRetry={!api.demo && thread?.autoRetry ? {

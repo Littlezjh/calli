@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import { ApiError, type AgentInfo, type Api, type HandoverTarget, type Section, type Thread, type Todo } from '../api';
-import { copyText } from '../clipboard';
+import { conversationPointer, copyText } from '../clipboard';
+import { referenceMachine, useReferenceMachine } from '../reference-input';
 import { folderName } from '../paths';
 import { cancellableHandover } from '../handover';
 import { ChoiceDialog, Dialog } from './Dialog';
@@ -102,6 +103,12 @@ export function forkBlocked(thread: Thread, turnId?: string): string | null {
  */
 export function useThreadActions(deps: Deps) {
   const { api, agents, sections, todos, chain, onTodosChange, onThreadChange, onThreadRemove, onThreadOpen, onMarkedUnread, onSectionsChange, onOpenTerminal, onOpenDesktop, onNewBeside, onOpenFiles, onOpenGit, onOpenTrace, onError, onBusy, onArchived, markdownOf, autotitle, board } = deps;
+  const machineId = useReferenceMachine(api?.demo ? null : api);
+  const warmReferenceMachine = () => { if (api && !api.demo) void referenceMachine(api).catch(() => {}); };
+  const copyReference = async (thread: Thread) => {
+    if (!machineId) { warmReferenceMachine(); onError(t('references.copyUnavailable')); return; }
+    if (!await copyText(conversationPointer(thread, undefined, machineId))) onError(t('actions.copyFailed'));
+  };
   /** The chain record when this thread belongs to any handover chain, automatic or manual. */
   const chainOf = (thread: Thread) => chain && (thread.handover
     || chain.threads.some(x => x.handover?.sourceId === thread.id)) ? chain : undefined;
@@ -317,6 +324,7 @@ export function useThreadActions(deps: Deps) {
       label: t('common.copy'),
       icon: IconCopy,
       submenu: [
+        { id: 'copy-reference', label: t('actions.copyReference'), onSelect: () => void copyReference(thread) },
         { id: 'copy-md', label: t('actions.copyMarkdown'), onSelect: () => void copy(markdownOf(thread)) },
         {
           id: 'copy-resume',
@@ -580,7 +588,7 @@ export function useThreadActions(deps: Deps) {
   return {
     openThreadMenu: (thread: Thread, x: number, y: number) => setMenu({ thread, x, y, where: 'list' }),
     /** Opens the open thread's own "…": the conversation's tools, without the list's management. */
-    openPageMenu: (thread: Thread, x: number, y: number) => setMenu({ thread, x, y, where: 'page' }),
+    openPageMenu: (thread: Thread, x: number, y: number) => { warmReferenceMachine(); setMenu({ thread, x, y, where: 'page' }); },
     openSectionMenu: (section: Section, x: number, y: number) => setMenu({ section, x, y, where: 'list' }),
     copyConversation: (thread: Thread) => void copy(markdownOf(thread)),
     newSection: () => setDialog({ kind: 'new-section', thread: null }),
@@ -597,10 +605,10 @@ export function useThreadActions(deps: Deps) {
      * place, with its queue and collaboration lead. For when the thread's own agent cannot go on, so
      * it is not asked. `note` is what the person adds for the successor.
      */
-    takeOver: async (thread: Thread, target: string | HandoverTarget, note?: string, returnTo?: string) => {
+    takeOver: async (thread: Thread, target: string | HandoverTarget, note?: string, returnTo?: string, references: string[] = []) => {
       if (!api) return;
       try {
-        onThreadOpen(await api.takeOver(thread.id, target, note, undefined, returnTo));
+        onThreadOpen(await api.takeOver(thread.id, target, note, undefined, returnTo, references));
       } catch (e) {
         onError(e);
         throw e;

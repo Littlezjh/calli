@@ -105,7 +105,11 @@ for (const scenario of ['TEAM_FLOW', 'TEAM_REWORK']) test(`scripted ${scenario}:
     assert.equal(view.team!.deliveries, scenario === 'TEAM_FLOW' ? 4 : 8);
     assert.deepEqual(view.members.map(m => m.name), ['dev', 'reviewer']);
     for (const id of [threadId, ...view.members.map(m => m.id)]) {
-      assert.equal(h.coordination.environment(id), undefined);
+      // No collaboration credentials; the reader credentials every thread holds say nothing
+      // about chain membership, authorization is judged per call.
+      const env = h.coordination.environment(id);
+      assert.equal(env?.CALLI_TEAM_SOCKET, undefined);
+      assert.equal(env?.CALLI_TEAM_KEY, undefined);
       assert.match(h.coordination.instructions(id, 'x'), /<calli-team>/);
       await assert.rejects(h.coordination.command(id, { op: 'spawn' }), /@/);
     }

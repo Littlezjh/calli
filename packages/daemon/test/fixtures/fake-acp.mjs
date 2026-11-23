@@ -11,6 +11,7 @@ if (process.argv.includes('--version')) { process.stdout.write('fixture 1.2.3\n'
 import { claudeUsage } from './live-usage.mjs';
 import { personalFixture } from './personal.mjs';
 import { coordinationFixture } from './coordination.mjs';
+import { contextReaderFixture } from './context-reader.mjs';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -229,7 +230,10 @@ rl.on('line', async (line) => {
         currentMode = modes[msg.result.outcome.optionId];
         update({ sessionUpdate: 'current_mode_update', currentModeId: currentMode });
       }
-      update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `answer:${JSON.stringify(msg.result)};mode:${currentMode}` } });
+      // Read only the commands the adapter delivered in this native answer, inside this same process.
+      const context = input.context ? JSON.parse(contextReaderFixture(`CONTEXT_READ\n${Object.values(msg.result?.content ?? {}).flat().filter(value => typeof value === 'string').join('\n')}`)) : null;
+      update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: input.context
+        ? JSON.stringify({ ...context, native: msg.result }) : `answer:${JSON.stringify(msg.result)};mode:${currentMode}` } });
       out({ jsonrpc: '2.0', id: input.prompt, result: { stopReason: 'end_turn' } });
       pendingPrompt = null; return;
     }
@@ -424,6 +428,11 @@ rl.on('line', async (line) => {
       if (!process.env.FAKE_CLAUDE_RECORD_TURNS) recordSession(dsh ? 'dsh' : traex ? 'traex' : 'claude', msg.params.sessionId);
       const blocks = msg.params.prompt;
       const text = blocks.filter((p) => p.type === 'text').map((p) => p.text).join('');
+      const contextRead = contextReaderFixture(text);
+      if (contextRead !== null) {
+        update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: contextRead } });
+        out({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } }); return;
+      }
       if (process.env.FAKE_CLAUDE_RECORD_TURNS && !dsh && !traex && !text.includes('out of plan') && !text.includes('flaky')) {
         appendClaudeTurn(msg.params.sessionId, text, text.split('\n')[0] === 'rate-limit-tell' ? 'told' : `echo:${text}`, text.includes('mid-compact'));
       }
@@ -500,6 +509,18 @@ rl.on('line', async (line) => {
       }
       if (text === 'plan-draft') { update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `mode:${currentMode};model:${currentModel};effort:${currentEffort}` } }); out({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } }); return; }
       const planCommand = text.split('\n')[0];
+      if (planCommand === 'reference-question' || planCommand === 'reference-question-steps' || planCommand === 'reference-question-free') {
+        pendingPrompt = msg;
+        const id = nextAgentRequestId++;
+        awaitingInput.set(id, { prompt: msg.id, kind: 'question', context: true });
+        const choices = [{ const: 'both-targets', title: '桌面和手机' }, { const: 'desktop-first', title: '先做桌面' }];
+        const properties = planCommand === 'reference-question-free'
+          ? { detail: { type: 'string', title: '补充要求' } }
+          : { question_0: { type: 'string', description: '优先支持哪一端？', oneOf: choices }, question_0_custom: { type: 'string', title: '补充回答' },
+              ...(planCommand === 'reference-question-steps' ? { question_1: { type: 'array', description: '需要哪些验证？', items: { enum: ['截图', '测试'] } }, question_1_custom: { type: 'string', title: '验证说明' } } : {}) };
+        out({ jsonrpc: '2.0', id, method: 'elicitation/create', params: { sessionId, mode: 'form', toolCallId: 'reference-ask', message: '补充这轮要求', requestedSchema: { type: 'object', properties } } });
+        return;
+      }
       if (planCommand === 'plan-question' || planCommand === 'plan-approval') {
         pendingPrompt = msg;
         const id = nextAgentRequestId++;

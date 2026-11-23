@@ -1318,7 +1318,7 @@ export class Api {
   /** The desk's companion: whether its frames are here yet. Always this hub's own, never another machine's. */
   pet(): Promise<PetStatus> { return this.send('GET', `${this.base}/api/pets`); }
   installPet(): Promise<PetStatus> { return this.send('POST', `${this.base}/api/pets/install`); }
-  petSay(text: string): Promise<{ threadId: string }> { return this.request('POST', '/api/personal/say', { text }); }
+  petSay(text: string, references: string[] = []): Promise<{ threadId: string }> { return this.request('POST', '/api/personal/say', { text, references }); }
   petRouter(): Promise<{ threadId: string | null; status: 'idle' | 'running' | 'error' | null; lastReply: string | null; lastReplyAt: string | null }> {
     return this.request('GET', '/api/personal/router');
   }
@@ -1526,7 +1526,7 @@ export class Api {
   deleteTeam(id: string): Promise<void> { return this.request('DELETE', `/api/teams/${id}`); }
   importTeam(value: unknown): Promise<TeamDefinition> { return this.request('POST', '/api/teams/import', value); }
   exportTeam(id: string): Promise<TeamDefinition> { return this.request('GET', `/api/teams/${id}/export`); }
-  dispatchTeam(id: string, text: string, cwd: string, images: OutgoingImage[] = []): Promise<{ taskId: string; threadId: string }> { return this.request('POST', `/api/teams/${id}/tasks`, { text, ...(images.length ? { images } : {}), cwd, source: { kind: 'web' } }); }
+  dispatchTeam(id: string, text: string, cwd: string, images: OutgoingImage[] = [], references: string[] = []): Promise<{ taskId: string; threadId: string }> { return this.request('POST', `/api/teams/${id}/tasks`, { text, ...(images.length ? { images } : {}), references, cwd, source: { kind: 'web' } }); }
 
   coordination(id: string): Promise<Coordination | null> { return this.request('GET', `/api/threads/${id}/coordination`); }
   /** Turns of any thread on this machine, archived ones too, in which the words were said. */
@@ -1568,7 +1568,7 @@ export class Api {
     threadId: string,
     text: string,
     images: OutgoingImage[] = [],
-    opts: { queue?: boolean; collaboration?: { directories?: string[]; defaults?: Record<string, MemberDefault>; permission?: string }; mentions?: AgentMention[]; videos?: string[]; workMode?: WorkMode } = {},
+    opts: { queue?: boolean; collaboration?: { directories?: string[]; defaults?: Record<string, MemberDefault>; permission?: string }; mentions?: AgentMention[]; videos?: string[]; workMode?: WorkMode; references?: string[] } = {},
   ): Promise<{ turnId: string } | { queued: true; id: string }> {
     return this.request('POST', `/api/threads/${threadId}/turns`, {
       text,
@@ -1578,6 +1578,7 @@ export class Api {
       ...(opts.mentions?.length ? { mentions: opts.mentions } : {}),
       ...(opts.videos?.length ? { videos: opts.videos } : {}),
       ...(opts.workMode ? { workMode: opts.workMode } : {}),
+      ...(opts.references !== undefined ? { references: opts.references } : {}),
     });
   }
 
@@ -1880,8 +1881,8 @@ export class Api {
     return this.request('POST', `/api/threads/${threadId}/handover-thread`, { agent, model, mode, ...(takeTeam === false ? { takeTeam: false } : {}) });
   }
   /** Hands the thread to `target` now: its conversation, queue and any collaboration lead. */
-  takeOver(threadId: string, target: string | HandoverTarget, note?: string, summary?: 'source' | HandoverTarget, returnTo?: string): Promise<Thread> {
-    const body: HandoverTarget & { note?: string; summary?: 'source' | HandoverTarget; returnTo?: string } = typeof target === 'string' ? { agent: target } : { ...target };
+  takeOver(threadId: string, target: string | HandoverTarget, note?: string, summary?: 'source' | HandoverTarget, returnTo?: string, references: string[] = []): Promise<Thread> {
+    const body: HandoverTarget & { note?: string; summary?: 'source' | HandoverTarget; returnTo?: string; references: string[] } = { ...(typeof target === 'string' ? { agent: target } : target), references };
     // An older conversation of the chain takes the work back instead of a new one starting.
     if (returnTo) body.returnTo = returnTo;
     if (note !== undefined) body.note = note;
@@ -2207,7 +2208,11 @@ export class Api {
     return this.request('GET', `/api/directories?path=${encoded}`);
   }
 
-  createReference(input: { kind: 'thread'; sourceId: string } | { kind: 'directory'; path: string }
+  referenceMachine(): Promise<{ machineId: string }> {
+    return this.request('GET', '/api/context-references/machine');
+  }
+
+  createReference(input: { kind: 'thread'; sourceId: string; machineId?: string; portable?: boolean; pointer?: boolean; turnId?: string } | { kind: 'directory'; path: string }
     | { kind: 'message'; text: string; title: string; path: string; sourceId?: string; turnId?: string }): Promise<ContextReference> {
     return this.request('POST', '/api/context-references', input);
   }

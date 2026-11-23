@@ -34,11 +34,12 @@ export function HandoverComposer({ api, thread, hostId, mark, attachBlocked, onR
       header={null} left={null} marker={mark} right={null}
       commands={[]} actions={[]} hiddenCommands={[]} onAction={() => {}} attachBlocked={attachBlocked}
       note={note} onNotesChange={onNotesChange} restore={restore} onError={onError}
-      onSend={async (text, images, mentions, videos = []) => {
+      referenceSource={{ api, cwd: thread.cwd, threadId: thread.id }}
+      onSend={async (text, images, mentions, videos = [], references = []) => {
         if (thread.terminalActivity) await new Promise<void>((resolve, reject) => setConfirm({ resolve, reject }));
         try {
           await api.startTurn(thread.id, text, images.map(({ data, mimeType }) => ({ data, mimeType })), {
-            queue: true, mentions, videos: await Promise.all(videos.map(async video => (await api.uploadVideo(thread.id, video.file)).id)),
+            queue: true, mentions, references, videos: await Promise.all(videos.map(async video => (await api.uploadVideo(thread.id, video.file)).id)),
           });
           onRefresh();
         } catch (error) { onError(error); throw error; }

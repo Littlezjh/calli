@@ -39,6 +39,12 @@ A → B → … 链的最新一段要交接时（自动额度交接、额度报�
 - 遍历防环：daemon 的 `chainSegments` 与 web 的 `chainEntries` 每个线程最多访问两次（接回过的才有两段），A→B→A 或坏数据互相接回都会终止；web 的 `latestHandoverThread` 把「接回前交给别人的边」不算作续接，所以 A 接回后仍是链头，A 之后再交接出去则 A 又成为父节点。
 - 局限：同一线程只记一次接回；接回后再从 A 交接出新对话没问题，但再次交回 A 不提供。
 
+## 交接边界的快照与引用授权（2026-11-23）
+
+- **链段带事件边界**：`chainSegments`（`handover.ts`）为每段算 `lowerSeq/upperSeq`（排他下界、含上界）。交回把一段线程切成「交出前 / 接回后」两段时，边界来自 `handback.afterSeq`；交接边（`handover.segments`）在建立时冻结整条路由，之后来源再被别人交回也不改写已冻结的路由。daemon 的 `handoverChain` 同样按 seq 给段，`calli history/references` 的 `--segment` 只读一段，快照越界（超出授权历史）报 403。
+- **引用授权随边界整体迁移**：发起交接时先记下来源线程当时的引用授权集合（`threads.ts` 的 `HandoverBoundary`，`references.ids(source)`），接收线程首轮被接受后才在一个事务里同时落交接关系并继承授权（`acceptHandoverBoundary`）；失败用 `coordination.handoverCheckpoint` 回滚协作席位。授权冻结在发起那一刻：交接之后来源新拿到的引用不会追着接力链跑。
+- 验证：daemon `auto-handover.test.ts`、`handover-return.test.ts`、`one-context.test.ts`（A→B→A 交回后 A 自己的存活进程可读自己交回后的对话）。
+
 ## 参考与取舍
 
 - Claude Code `/compact` + fork：压缩自己的会话继续，或 fork 出新会话；我们的「新对话」只带摘要像 `/compact` 的产物，不复制原生会话，「老对话」像回到被 fork 的父会话。

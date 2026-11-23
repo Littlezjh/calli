@@ -78,6 +78,7 @@ export function SideChat({
   const [models, setModels] = useState(cachedModels);
   const [modelsStatus, setModelsStatus] = useState<'loading' | 'ready' | 'error'>(cachedModels.length ? 'ready' : 'loading');
   const [events, setEvents] = useState<StoredEvent[]>([]);
+  const [restore, setRestore] = useState<{ text: string; nonce: number } | null>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
   // Where a fork's inherited history ends: the panel shows only what is asked here. Written before
@@ -158,10 +159,10 @@ export function SideChat({
     if (el) stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
   };
 
-  const send = async (text: string, images: PreparedImage[], _mentions?: AgentMention[], videos: PreparedVideo[] = []) => {
+  const send = async (text: string, images: PreparedImage[], _mentions?: AgentMention[], videos: PreparedVideo[] = [], references: string[] = []) => {
     const outgoing = images.map(({ data, mimeType }) => ({ data, mimeType }));
     if (threadId) {
-      await api.startTurn(threadId, text, outgoing, { queue: true, videos: await Promise.all(videos.map(async video => (await api.uploadVideo(threadId, video.file)).id)) });
+      await api.startTurn(threadId, text, outgoing, { queue: true, references, videos: await Promise.all(videos.map(async video => (await api.uploadVideo(threadId, video.file)).id)) });
       return;
     }
     const title = t('sideChat.threadTitle', quoteText.replace(/\s+/g, ' ').slice(0, 24));
@@ -192,7 +193,7 @@ export function SideChat({
     }
     setThread(created);
     onThreadCreated(created);
-    await api.startTurn(created.id, firstText, outgoing, { queue: true, videos: await Promise.all(videos.map(async video => (await api.uploadVideo(created.id, video.file)).id)) });
+    await api.startTurn(created.id, firstText, outgoing, { queue: true, references, videos: await Promise.all(videos.map(async video => (await api.uploadVideo(created.id, video.file)).id)) });
   };
 
   const loadImage = (attachmentId: string) =>
@@ -256,6 +257,7 @@ export function SideChat({
             <ThreadView
               historyApi={api}
               historyThreadId={thread.id}
+              historyTitle={thread.title}
               items={timeline.items}
               roots={roots}
               loadImage={loadImage}
@@ -276,7 +278,7 @@ export function SideChat({
           running={running}
           placeholder={running ? t('sideChat.queuePlaceholder') : t('sideChat.placeholder')}
           onSend={send}
-          onStop={() => threadId && api.cancel(threadId).catch(onError)}
+          onStop={() => threadId && api.cancel(threadId).then(result => { if (result.dropped.length) setRestore({ text: result.dropped.join('\n\n'), nonce: Date.now() }); }).catch(onError)}
           header={null}
           left={null}
           right={modelPicker}
@@ -294,7 +296,8 @@ export function SideChat({
             return { ...taken, videos: await restoreVideos(api, threadId, taken.videos) };
           }}
           onSendQueuedNow={(id) => threadId && api.sendQueuedNow(threadId, id).catch(onError)}
-          restore={null}
+          restore={restore}
+          referenceSource={{ api, cwd: thread?.cwd ?? cwd, threadId: threadId ?? undefined }}
           note={{ id: 'side-chat-passage', quote: quoteText, comment: '', nonce: 1 }}
         />
       </aside>

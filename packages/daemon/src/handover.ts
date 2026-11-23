@@ -117,6 +117,9 @@ export interface ChainSegment {
   preview?: string | null;
   /** For a thread the chain came back to: which of its two parts this entry is. */
   part?: 'before' | 'after';
+  /** Exclusive lower and inclusive upper event boundaries for this stretch of conversation. */
+  lowerSeq?: number;
+  upperSeq?: number;
 }
 
 /**
@@ -128,21 +131,43 @@ export interface ChainSegment {
  * leads back to the thread that handed over, and its earlier part, which leads on through its own
  * handover link. Each thread is visited at most twice, so a loop A → B → A ends the walk.
  */
-export function chainSegments<M extends { id: string; title: string; updatedAt: string; archivedAt?: string | null; preview?: string | null; handover?: { sourceId: string; detached?: boolean } | null; handback?: { sourceId: string } | null }>(
+export function chainSegments<M extends { id: string; title: string; updatedAt: string; createdAt?: string; archivedAt?: string | null; preview?: string | null; handover?: { sourceId: string; detached?: boolean; sourceSeq?: number; segments?: ChainSegment[] } | null; handback?: { sourceId: string; afterSeq?: number; sourceSeq?: number; segments?: ChainSegment[] } | null }>(
   thread: M,
   byId: (id: string) => M | undefined,
+  latest?: (id: string) => number,
+  legacyBoundary?: (id: string, at: string) => number,
 ): ChainSegment[] {
   const segments: ChainSegment[] = [];
   const visits = new Map<string, number>();
+  let upper = latest?.(thread.id);
   for (let at: M | undefined = thread; at !== undefined;) {
     const count: number = visits.get(at.id) ?? 0;
-    const returned: boolean = Boolean(at.handback) && count === 0;
-    if (count >= (at.handback ? 2 : 1)) break;
+    const back = at.handback;
+    // A source frozen before a later handback belongs to its earlier part, not that new route.
+    const returned: boolean = Boolean(back) && count === 0 && (upper === undefined || back?.afterSeq === undefined || upper > back.afterSeq);
+    if (count >= (back ? 2 : 1)) break;
     visits.set(at.id, count + 1);
-    segments.unshift({ id: at.id, title: at.title, updatedAt: at.updatedAt, archived: Boolean(at.archivedAt), preview: at.preview ?? null, ...(at.handback ? { part: returned ? 'after' as const : 'before' as const } : {}) });
-    const link: M['handover'] = at.handover;
-    const next: string | undefined = returned ? at.handback!.sourceId : link && !link.detached ? link.sourceId : undefined;
-    at = next ? byId(next) : undefined;
+    const boundedUpper = !returned && back?.afterSeq !== undefined ? Math.min(upper ?? back.afterSeq, back.afterSeq) : upper;
+    const lower = returned ? back?.afterSeq ?? 0 : 0;
+    segments.unshift({ id: at.id, title: at.title, updatedAt: at.updatedAt, archived: Boolean(at.archivedAt), preview: at.preview ?? null,
+      ...(back ? { part: returned ? 'after' as const : 'before' as const } : {}),
+      ...(latest ? { lowerSeq: lower, upperSeq: boundedUpper ?? latest(at.id) } : {}) });
+    const link = returned ? back : at.handover && !at.handover.detached ? at.handover : null;
+    if (!link) break;
+    if (link.segments) {
+      // New edges preserve their route. Do not follow the source's current mutable handback. The
+      // returning thread's own entry in that route is its before-part by construction, whatever
+      // later events extended it past the edge that froze the route.
+      const frozen = link.segments.filter(segment => byId(segment.id)).map(segment => returned && segment.id === at!.id ? { ...segment, part: 'before' as const } : segment);
+      const current = segments[0];
+      if (returned && frozen.some(segment => segment.id === at!.id)) {
+        segments[0] = { ...current, part: 'after' };
+      }
+      return [...frozen, ...segments];
+    }
+    const next = byId(link.sourceId);
+    upper = link.sourceSeq ?? (next && legacyBoundary && at.createdAt ? legacyBoundary(next.id, at.createdAt) : latest?.(link.sourceId));
+    at = next;
   }
   return segments;
 }

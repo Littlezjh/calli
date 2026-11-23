@@ -93,3 +93,16 @@
 - 来自本机另一个线程时，注释带一行 `来源：另一个会话，原文和上下文用 calli history THREAD --turn TURN 读`，接手的 agent 能读到原文与上下文；同一线程内的引用不加。
 - 参考：Persona 的引用是输入框上方的引用条（谁说的、时间、两行摘要），发出时仍是 `> ` 块；它不处理粘贴。这里沿用已有的注释条，补上粘贴入口。
 - 验证：`packages/web/test/pasted-quote.test.ts`；`packages/e2e/quote-paste-shots.mjs` 用真实 daemon 与无头 Chromium 拍桌面/手机 × 亮/暗，并发出一条确认 agent 收到来源行。粘贴用合成的 paste 事件，未在实体手机上用系统剪贴板试过。
+
+## 一个上下文：对话指针与可携带引用（2026-11-23）
+
+目标是「人把一个对话带到另一个对话」时不丢上下文：给出去的东西必须真的可读，且只读授权跟随发送，不跟随复制出的文字本身。
+
+- **对话指针**：线程菜单「复制 → 复制对话引用」得到两行可读文本 `Calli: 标题` + `calli://thread/<hub线程id>?machine=<机器id>`（`clipboard.ts` 的 `conversationPointer`）。机器 id 由 hub 设置 `contextMachineId` 提供（`GET /api/context-references/machine`），首次使用时落库；指针占一行，进首条提示不展开。
+- **粘贴成标签**：在任一输入框整体粘贴指针（`reference-input.ts` 的 `useReferencePaste`），文字本身被消费，输入框上方出现可删除的会话标签；随消息发送时才创建引用并授予读取。中途编辑、删掉或出现重复指针则保持普通文字，不误转。
+- **「在此目录新建线程」带「来自：」标签**：从线程菜单在旁边新建，草稿自动带一个「来自：来源标题」标签（可删除）。只有导航产生的自动标签会被下一次导航替换，手动加的引用不动；删掉的标签刷新后不复活。普通「新线程」永远不带。
+- **「复制为引用」升级**：复制整条回复现在带上对话指针（首两行同上，其后 `> ` 引文）。粘贴到别的对话仍是注释条（同 2026-11-16 的形态），但来源行不再是让 agent 自行 `calli history` 的提示，而是随发送创建的消息引用；agent 用 `calli references ID --turn …` 读原文与上下文。上一节的「来源：另一个会话」提示行由本节取代。
+- **@ 选择器排序**：无搜索词时会话按 来源线程 → 同目录 → 其他 排，超过 8 个截断；搜索仍覆盖全部（`Pickers.tsx` 的 `referenceThreads`）。
+- **新的读取方式**：`calli references/history` 增加 `--user-inputs`（只列人说的话，`--cursor` 翻页）、`--input TURN`（该轮的人的输入全文）、`--answer INPUT_ID`（按输入 id 读已应答的人的话）、`--tools TURN`（列出工具调用 id）、`--segment`（交接链中只读一段）；续读统一要求 `--snapshot`（快照 id）。详见 `bin/calli`、`bin/calli-tools.mjs` 的帮助文本。内容一律取 hub 已有事件并诚实标注截断，不重读 agent 原生会话文件。
+- **授权收紧**：`prepare` 区分「已认证的人显式附加的引用 id」与「线上文本里扫到的引用」；后者只有在来源线程已授予过时才放行。交给助手改为显式携带引用 id（`MessageActions.tsx`），纯文本不再构成授权。跨线程指针创建（`portable: true`）只登记元数据，读取授权仍在线程上；来源删除或历史重写会明确报错。
+- 验证：daemon `one-context.test.ts`、`context-tool-history.test.ts`、`context-tool-state.test.ts`；web `reference-drafts.test.ts`、`composer-drafts.test.ts`；e2e `one-context.spec.mjs`（真实 Chromium，桌面/手机 × 亮/暗，覆盖复制指针→粘贴→发送→agent 提示含 `calli references --user-inputs`、删标签刷新、引用粘贴、@ 排序与搜索）。

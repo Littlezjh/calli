@@ -22,6 +22,7 @@ export function ThreadPeek({ api, initial, draftKey, returnFocus, onClose, onOpe
   const [events, setEvents] = useState<StoredEvent[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState('');
+  const [restore, setRestore] = useState<{ text: string; nonce: number } | null>(null);
   const [cursor, setCursor] = useState<number | null>(null);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const scroll = useRef<HTMLDivElement>(null);
@@ -115,18 +116,18 @@ export function ThreadPeek({ api, initial, draftKey, returnFocus, onClose, onOpe
     {error && <p className="thread-peek-error" role="alert">{error} <button className="ghost" onClick={() => setRetry(value => value + 1)}>{t('common.retry')}</button></p>}
     {thread?.waiting && waiting.length === 0 && <button className="thread-peek-attention ghost" onClick={onOpen}>{t('threadPeek.needsAction')}</button>}
     <div className={side ? "agent-panel-body" : "thread-peek-body"} ref={scroll} tabIndex={0} onScroll={() => { const el = scroll.current; if (el) stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120; }}>
-      {!loaded || !thread ? (!error && <div className="loading-note">{t('common.loading')}</div>) : <ThreadView historyApi={api} historyThreadId={thread.id}
+      {!loaded || !thread ? (!error && <div className="loading-note">{t('common.loading')}</div>) : <ThreadView historyApi={api} historyThreadId={thread.id} historyTitle={thread.title}
         items={timeline.items} roots={[thread.cwd, thread.cwdReal]} loadImage={loadImage} loadFile={loadFile}
         observeOlder={false} hasOlder={cursor !== null} loadingOlder={loadingOlder} onLoadOlder={() => void loadOlder()} />}
     </div>
-    {thread && <Composer attachBlocked={null} restore={null} note={null} draftKey={draftKey} running={timeline.running || thread?.status === 'running'}
+    {thread && <Composer attachBlocked={null} restore={restore} note={null} draftKey={draftKey} running={timeline.running || thread?.status === 'running'}
       placeholder={timeline.running ? t('sideChat.queuePlaceholder') : t('app.placeholder.continue')}
       onSend={async (text, images, _mentions, videos = []) => {
         await api.startTurn(thread.id, text, images.map(({ data, mimeType }) => ({ data, mimeType })),
           { queue: true, videos: await Promise.all(videos.map(async video => (await api.uploadVideo(thread.id, video.file)).id)) });
         await refresh();
       }}
-      onStop={() => void api.cancel(thread.id).catch(reportError)} onError={setError}
+      onStop={() => void api.cancel(thread.id).then(result => { if (result.dropped.length) setRestore({ text: result.dropped.join('\n\n'), nonce: Date.now() }); void refresh(); }).catch(reportError)} onError={setError}
       header={null} left={null} right={null} commands={[]} actions={[]} hiddenCommands={[]} onAction={() => undefined}
       queued={thread.queued} onRemoveQueued={id => void api.removeQueued(thread.id, id).then(refresh).catch(reportError)}
       onEditQueued={async id => { const taken = await api.removeQueued(thread.id, id); return { ...taken, videos: await restoreVideos(api, thread.id, taken.videos) }; }}

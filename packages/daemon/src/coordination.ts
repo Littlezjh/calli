@@ -11,6 +11,7 @@ import { HttpError } from './errors.js';
 import { turnOutcome } from './lifecycle.js';
 import { TeamsManager, parseTeamMentions, type TeamDefinition, type TeamSource, type TeamTask } from './teams.js';
 import { isWithinWorkdirs } from './workdirs.js';
+import { askedText } from './util.js';
 import { HandoverReader } from './handover-reader.js';
 import type { InjectionGate } from './injections.js';
 import {
@@ -349,6 +350,21 @@ export class CoordinationManager {
     this.changed(t);
     this.manager.notifyCoordination(source);
     return true;
+  }
+
+  /** Restore the seat's in-memory half when its enclosing store transaction refuses acceptance. */
+  handoverCheckpoint(source: string): () => void {
+    const team = this.team(source);
+    if (!team) return () => {};
+    const saved = structuredClone(team);
+    const credentials = new Map(this.credentials), moved = new Map(this.moved);
+    return () => {
+      for (const [id, value] of this.teams) if (value === team) this.teams.delete(id);
+      for (const key of Object.keys(team)) delete (team as unknown as Record<string, unknown>)[key];
+      Object.assign(team, saved);
+      this.teams.set(team.rootId, team);
+      this.credentials = credentials; this.moved = moved;
+    };
   }
 
   /** Called synchronously in the successor turn's store transaction, before its runtime starts.
@@ -1205,14 +1221,15 @@ export class CoordinationManager {
     return { taskId: randomUUID(), teamId: snapshot.id, snapshot: structuredClone(snapshot), entry: snapshot.entry, source,
       status: 'running', resultTurnId: null, deliveries: 0, delegations: [], processed: [], history: [], createdAt: new Date().toISOString() };
   }
-  async startTeam(snapshot: TeamDefinition, text: string, cwd: string, source: TeamSource, images: unknown[] = []) {
+  async startTeam(snapshot: TeamDefinition, text: string, cwd: string, source: TeamSource, images: unknown[] = [], authenticatedHuman = false, references: string[] = []) {
     return this.serial(async () => {
       const entry = snapshot.members.find(m => m.name === snapshot.entry)!;
       const t: Team = { rootId: '', paused: false, directories: this.manager.dirs.all(), agents: [...new Set(snapshot.members.map(m => m.agent))], members: [], deliveries: [], team: this.newTask(snapshot, source) };
+      const title = askedText(text).split('\n')[0].slice(0, 70);
       const root = await this.manager.createThread({ agent: entry.agent, cwd, model: entry.model, effort: entry.effort,
-        permissionMode: await this.permissionFor(t, entry.agent), title: text ? `${snapshot.name} · ${text.split('\n')[0].slice(0, 70)}` : snapshot.name });
+        permissionMode: await this.permissionFor(t, entry.agent), title: title ? `${snapshot.name} · ${title}` : snapshot.name });
       t.rootId = root.id; this.teams.set(root.id, t); this.changed(t);
-      try { await this.manager.startTurn(root.id, { text, images }); }
+      try { await this.manager.startTurn(root.id, { text, images, ...(authenticatedHuman ? { fromUser: true, references } : {}) }); }
       catch (err) { this.attention(t, err instanceof Error ? err.message : String(err)); this.changed(t); }
       return { taskId: t.team!.taskId, threadId: root.id };
     });

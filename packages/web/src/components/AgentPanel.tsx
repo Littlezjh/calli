@@ -197,7 +197,7 @@ export function AgentPanel({ api, memberApi, team, agents, leadAgent, memberMode
           <p>{m.latest?.result?.split(/<(?:calli|limi)-(?:coordination|team)>/)[0].slice(-160) || m.latest?.text.slice(0, 160) || t('team.waitingTask')}</p>
           {m.thread?.unread && <span className="coord-unread">{t('team.newOutput')}</span>}
         </button>)}
-      </> : thread ? <ThreadView historyApi={threadApi} historyThreadId={thread.id} items={timeline.items} roots={[thread.cwd, thread.cwdReal]} loadImage={id => threadApi.attachment(thread.id, id)} loadFile={path => threadApi.threadFile(thread.id, path)} hasOlder={older} loadingOlder={loadingOlder} onLoadOlder={() => void loadOlder()} /> : <div className="agent-panel-empty">{t('team.childGone')}</div>}
+      </> : thread ? <ThreadView historyApi={threadApi} historyThreadId={thread.id} historyTitle={thread.title} items={timeline.items} roots={[thread.cwd, thread.cwdReal]} loadImage={id => threadApi.attachment(thread.id, id)} loadFile={path => threadApi.threadFile(thread.id, path)} hasOlder={older} loadingOlder={loadingOlder} onLoadOlder={() => void loadOlder()} /> : <div className="agent-panel-empty">{t('team.childGone')}</div>}
     </div>
     {memberId && !atBottom && <button className="agent-panel-latest" onClick={() => { stick.current = true; if (body.current) body.current.scrollTop = body.current.scrollHeight; }}>{t('team.latest')}</button>}
     {/* A member is written to directly, in a box like the lead's; going through the lead instead is

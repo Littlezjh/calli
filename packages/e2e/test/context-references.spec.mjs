@@ -105,6 +105,11 @@ test('compact references coexist with notes, survive reload/failure/queue editin
       assert.match(started.data.text, /calli references/);
       assert.match(started.data.text, /\[注释 1\]/);
       assert.ok(!started.data.displayText.includes('calli-reference-reader'));
+      const sent = page.locator('.row.user').last();
+      await sent.locator('.notes-chip').waitFor();
+      assert.doesNotMatch(await sent.locator('.bubble').last().innerText(), /\[注释|calli-references|来源：/);
+      await sent.locator('.notes-chip').click();
+      assert.equal(await sent.locator('.note-strip').count(), 1, 'canonical history displays preserve the visible note too');
       await idle(thread.id);
       await page.locator('.row.user').last().getByRole('button', { name: '编辑这条消息', exact: true }).click();
       const edit = page.locator('.message-edit');

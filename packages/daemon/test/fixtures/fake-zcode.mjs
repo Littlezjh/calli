@@ -7,6 +7,7 @@ import { appendFileSync, readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 import { coordinationFixture } from './coordination.mjs';
+import { contextReaderFixture } from './context-reader.mjs';
 const output = (value) => process.stdout.write(JSON.stringify(value) + '\n');
 const reply = (id, result) => output({ id, result });
 const error = (id, message) => output({ id, error: { code: -32602, message } });
@@ -159,7 +160,18 @@ async function handle(message) {
         if (turn === activeTurn) done();
         return;
       }
+      const contextRead = contextReaderFixture(typeof p.content === 'string' ? p.content : '');
+      if (contextRead !== null) { done('success', contextRead); return; }
       const planCommand = typeof p.content === 'string' ? p.content.split('\n')[0] : '';
+      if (planCommand === 'reference-plan') {
+        const question = 'Review this implementation plan.';
+        const answer = await request('interaction/requestUserInput', { sessionId, requestId: 'reference-plan', prompt: question, questions: [{ question, options: [{ value: 'approve', label: 'Approve' }] }], schema: { interaction: 'plan_approval' }, input: { plan: '## 实施计划\n\n1. 阅读代码\n2. 完成验证' } });
+        if (turn !== activeTurn) return;
+        if (answer.content?.answers?.[question] === 'approve') { mode = 'build'; emit('session.updated', { mode: 'build', planEnabled: false }); }
+        // Execute only the commands actually returned by the adapter, in the pending native turn.
+        const read = JSON.parse(contextReaderFixture(`CONTEXT_READ\n${Object.values(answer.content?.answers ?? {}).join('\n')}`));
+        done('success', JSON.stringify({ ...read, native: answer, mode })); return;
+      }
       if (planCommand === 'plan-question' || planCommand === 'plan-approval') {
         const plan = planCommand === 'plan-approval';
         const question = plan ? 'Review this implementation plan.' : '优先支持哪一端？';

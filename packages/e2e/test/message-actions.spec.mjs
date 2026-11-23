@@ -29,6 +29,10 @@ test('message actions keep fork visible, attach snapshots, select passages and h
       await idle(thread.id);
       const context = await browser.newContext({ viewport: mobile ? { width: 390, height: 844 } : { width: 1440, height: 1000 }, isMobile: mobile, hasTouch: mobile });
       const page = await context.newPage();
+      // Exercise both optional states without downloading artwork or changing the hub.
+      const petInstalled = mobile && theme === 'dark';
+      await page.route('**/api/pets', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ id: 'test', commit: 'test', installed: petInstalled, installing: false, error: null, clips: { idle: 1 }, frameMs: 84 }) }));
+      await page.route('**/pets/test/**', route => route.fulfill({ contentType: 'image/png', body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64') }));
       const errors = [];
       page.on('pageerror', error => errors.push(error.message));
       await openUi(page, daemon);
@@ -37,6 +41,7 @@ test('message actions keep fork visible, attach snapshots, select passages and h
       const composer = page.locator('.composer');
       const input = composer.locator('textarea').last();
       await toolbar.getByRole('button', { name: '分叉', exact: true }).waitFor();
+      if (petInstalled) await page.locator('.pet').waitFor({ state: 'attached' });
       await input.fill('Keep my unsent question @');
       // Dismiss the @ picker before exercising an external message action.
       await page.locator('.reference-picker').waitFor();
@@ -90,7 +95,8 @@ test('message actions keep fork visible, attach snapshots, select passages and h
         assert.ok(noteBounds.width > 300 && noteBounds.height < 80, 'notes keep their compact bottom input');
         assert.equal(await page.locator('.dialog-scrim').count(), 0, 'adding a note does not open a modal');
         assert.equal(await page.locator('.composer-box').evaluate(element => getComputedStyle(element).visibility), 'hidden');
-        assert.equal(await page.locator('.pet').evaluate(element => getComputedStyle(element).visibility), 'hidden', 'the assistant cannot cover the note controls');
+        if (petInstalled) assert.equal(await page.locator('.pet').evaluate(element => getComputedStyle(element).visibility), 'hidden', 'the rendered assistant cannot cover the note controls');
+        else assert.equal(await page.locator('.pet').count(), 0, 'an uninstalled assistant stays absent on the thread');
         if (shots) await page.screenshot({ path: join(shots, `mobile-${theme}-note.png`) });
         await note.getByRole('button').tap();
         await composer.locator('.note-strip').nth(2).waitFor();
