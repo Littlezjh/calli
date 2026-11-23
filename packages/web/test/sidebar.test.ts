@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { ExternalSession, Section, Thread } from '../src/api.js';
-import { boardStage, buildActivity, buildMerged, buildSidebar, clampSidebarWidth, externalThreadRow, handoverGroups, markTerms, ownRows, navOverflow, defaultSidebarWidth, savedSidebarWidth, searchTerms, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH, taggedAgents, threadAttention, withExternalSessions, type HostSource } from '../src/sidebar.js';
+import { boardStage, buildActivity, buildMerged, buildSidebar, clampSidebarWidth, externalThreadRow, forkGroupsByRoot, handoverGroups, markTerms, ownRows, navOverflow, defaultSidebarWidth, savedSidebarWidth, searchTerms, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH, taggedAgents, threadAttention, withExternalSessions, type HostSource } from '../src/sidebar.js';
 import { threadMark } from '../src/notices.js';
 
 let clock = 0;
@@ -374,4 +374,35 @@ test('a lead handed over keeps its earlier segments in the list; its members sta
   assert.deepEqual(new Set(ids(handoverGroups(rows)[0].members)), new Set([a.id, b.id, c.id]));
   const merged = buildMerged([{ hostId: null, threads: [a, b, c, member, oldMember] } as HostSource], '', new Date('2030-01-02'), null);
   assert.deepEqual(new Set(merged.groups.flatMap((g) => g.items.map((i) => i.thread.id))), new Set([a.id, b.id, c.id]));
+});
+
+test('grouped forks fold under their root (including across root handovers) and collapse internal handovers into one row', () => {
+  const root1 = thread('root-1', { createdAt: '2026-11-23T01:00:00Z', updatedAt: '2026-11-23T01:00:00Z' });
+  const root2 = thread('root-2', {
+    createdAt: '2026-11-23T02:00:00Z',
+    updatedAt: '2026-11-23T02:00:00Z',
+    handover: { sourceId: root1.id, title: root1.title, agent: root1.agent, mode: 'continue' },
+  });
+  const forkA = thread('fork-a', { forkGroup: root1.id, forkTag: '分析 one page', updatedAt: '2026-11-23T03:00:00Z' });
+  const forkB1 = thread('fork-b1', { forkGroup: root1.id, forkTag: '写代码', createdAt: '2026-11-23T03:10:00Z', updatedAt: '2026-11-23T03:10:00Z' });
+  const forkB2 = thread('fork-b2', {
+    forkGroup: root1.id,
+    forkTag: '写代码',
+    createdAt: '2026-11-23T04:00:00Z',
+    updatedAt: '2026-11-23T04:00:00Z',
+    handover: { sourceId: forkB1.id, title: forkB1.title, agent: forkB1.agent, mode: 'continue' },
+  });
+  const orphanFork = thread('orphan', { forkGroup: 'archived-root', forkTag: '独立保留' });
+
+  const all = [root1, root2, forkA, forkB1, forkB2, orphanFork];
+  // Grouped forks with a visible root stay out of top-level rows; an orphan whose root is archived stays visible.
+  assert.deepEqual(new Set(ids(ownRows(all))), new Set([root1.id, root2.id, orphanFork.id]));
+
+  const map = forkGroupsByRoot(all);
+  const items = map.get(root1.id) ?? [];
+  assert.equal(items.length, 2);
+  const itemB = items.find((i) => i.thread.id === forkB2.id);
+  const itemA = items.find((i) => i.thread.id === forkA.id);
+  assert.ok(itemA && !itemA.handedOver);
+  assert.ok(itemB && itemB.handedOver);
 });

@@ -8,6 +8,7 @@ const args = process.argv.slice(2);
 if (!args.length || (args[0] !== 'browser' && args.includes('--help'))) {
   console.log(`calli agents | status | result ID | stop NAME
 calli spawn --agent ID --name NAME [--cwd DIR] [--model ID] [--effort LEVEL] --message-file FILE [--handoff-file FILE] --request-id KEY
+calli spawn --fork --name NAME [--worktree] --message-file FILE --request-id KEY
 calli send NAME --message-file FILE [--handoff-file FILE] --request-id KEY
 calli dirs MACHINE [PATH]
 calli remote ls MEMBER [PATH]
@@ -204,6 +205,10 @@ try {
     const names = readonly ? { '--before': 'before', '--turns': 'turns', '--turn': 'turn', '--offset': 'offset', '--snapshot': 'snapshot', '--tool': 'tool', '--tools': 'tools', '--input': 'input', '--answer': 'answer', '--cursor': 'cursor', '--segment': 'segment' } : { '--agent': 'agent', '--name': 'name', '--cwd': 'cwd', '--model': 'model', '--effort': 'effort', '--request-id': 'requestId', '--message-file': 'file', '--handoff-file': 'handoffFile' };
     while (rest.length) {
       const flag = rest.shift();
+      if (op === 'spawn' && (flag === '--fork' || flag === '--worktree')) {
+        if (input[flag.slice(2)]) throw new Error(`Duplicate argument: ${flag}`);
+        input[flag.slice(2)] = true; continue;
+      }
       if (readonly && flag === '--user-inputs') {
         if (input.userInputs) throw new Error(`Duplicate argument: ${flag}`);
         input.userInputs = true; continue;

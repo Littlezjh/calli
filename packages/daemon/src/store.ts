@@ -66,6 +66,10 @@ export interface ThreadRecord {
   sectionId: string | null;
   /** The thread this one was forked from. Kept even if that thread is later deleted. */
   forkedFrom: string | null;
+  /** Root thread id of a grouped fork family (same-workspace sub-conversations that can read each other on demand). */
+  forkGroup?: string | null;
+  /** Short purpose label for a forked sub-conversation (e.g. "analyze one-pager", "write code"). */
+  forkTag?: string | null;
   handover?: HandoverLink | null;
   /** Set when the chain came back to this thread: see `HandbackLink`. */
   handback?: HandbackLink | null;
@@ -375,6 +379,8 @@ interface ThreadRow {
   archived_at: string | null;
   section_id: string | null;
   forked_from: string | null;
+  fork_group: string | null;
+  fork_tag: string | null;
   handover: string | null;
   handback: string | null;
   worktree: string | null;
@@ -415,6 +421,8 @@ const toThread = (r: ThreadRow): ThreadRecord => ({
   archivedAt: r.archived_at,
   sectionId: r.section_id,
   forkedFrom: r.forked_from,
+  forkGroup: r.fork_group ?? null,
+  forkTag: r.fork_tag ?? null,
   handover: r.handover ? JSON.parse(r.handover) : null,
   handback: r.handback ? JSON.parse(r.handback) : null,
   worktree: r.worktree ? (JSON.parse(r.worktree) as ThreadWorktree) : null,
@@ -555,6 +563,8 @@ export class Store {
     // Migration: the chain came back to this thread (a handover to an older conversation), as JSON.
     if (!cols.some((c) => c.name === 'handback')) this.db.exec('ALTER TABLE threads ADD COLUMN handback TEXT');
     if (!cols.some((c) => c.name === 'forked_from')) this.db.exec('ALTER TABLE threads ADD COLUMN forked_from TEXT');
+    if (!cols.some((c) => c.name === 'fork_group')) this.db.exec('ALTER TABLE threads ADD COLUMN fork_group TEXT');
+    if (!cols.some((c) => c.name === 'fork_tag')) this.db.exec('ALTER TABLE threads ADD COLUMN fork_tag TEXT');
     // Migration: the git worktree a forked thread stands in, as JSON.
     if (!cols.some((c) => c.name === 'worktree')) this.db.exec('ALTER TABLE threads ADD COLUMN worktree TEXT');
     // Migration: unread marker.
@@ -950,6 +960,8 @@ export class Store {
       | 'schedule'
     > & {
       forkedFrom?: string | null;
+      forkGroup?: string | null;
+      forkTag?: string | null;
       worktree?: ThreadWorktree | null;
       sectionId?: string | null;
       schedule?: { id: string; name: string } | null;
@@ -958,7 +970,7 @@ export class Store {
     const now = new Date().toISOString();
     this.db
       .prepare(
-        'INSERT INTO threads (id, agent, cwd, title, status, pinned, permission_mode, model, effort, forked_from, worktree, section_id, created_at, updated_at, handover, schedule, work_mode, speed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO threads (id, agent, cwd, title, status, pinned, permission_mode, model, effort, forked_from, fork_group, fork_tag, worktree, section_id, created_at, updated_at, handover, schedule, work_mode, speed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       )
       .run(
         t.id,
@@ -971,6 +983,8 @@ export class Store {
         t.model,
         t.effort,
         t.forkedFrom ?? null,
+        t.forkGroup ?? null,
+        t.forkTag ?? null,
         t.worktree ? JSON.stringify(t.worktree) : null,
         t.sectionId ?? null,
         now,
@@ -1093,6 +1107,8 @@ export class Store {
         | 'preview'
         | 'hubTurnAt'
         | 'externalAt'
+        | 'forkGroup'
+        | 'forkTag'
       >
     >,
     /**
@@ -1106,7 +1122,7 @@ export class Store {
     const next = { ...current, ...patch, updatedAt: opts.touch ? new Date().toISOString() : current.updatedAt };
     this.db
       .prepare(
-        'UPDATE threads SET title = ?, status = ?, agent_session_id = ?, pinned = ?, permission_mode = ?, model = ?, effort = ?, archived_at = ?, section_id = ?, unread = ?, preview = ?, hub_turn_at = ?, external_at = ?, updated_at = ?, work_mode = ?, speed = ? WHERE id = ?',
+        'UPDATE threads SET title = ?, status = ?, agent_session_id = ?, pinned = ?, permission_mode = ?, model = ?, effort = ?, archived_at = ?, section_id = ?, unread = ?, preview = ?, hub_turn_at = ?, external_at = ?, updated_at = ?, work_mode = ?, speed = ?, fork_group = ?, fork_tag = ? WHERE id = ?',
       )
       .run(
         next.title,
@@ -1125,6 +1141,8 @@ export class Store {
         next.updatedAt,
         next.workMode ?? 'execute',
         next.speed ?? null,
+        next.forkGroup ?? null,
+        next.forkTag ?? null,
         id,
       );
   }

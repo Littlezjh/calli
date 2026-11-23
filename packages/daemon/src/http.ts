@@ -1195,6 +1195,7 @@ export function createHttpServer(deps: HttpDeps): Server {
             unread: body.unread,
             done: body.done,
             stage: body.stage,
+            forkTag: body.forkTag,
           }),
         );
       }
@@ -1588,6 +1589,9 @@ export function createHttpServer(deps: HttpDeps): Server {
             ...(typeof body?.turnId === 'string' ? { turnId: body.turnId } : {}),
             worktree: body?.worktree === true,
             ...(typeof body?.agent === 'string' && body.agent ? { agent: body.agent } : {}),
+            ...(body?.grouped === true ? { grouped: true } : {}),
+            ...(typeof body?.forkTag === 'string' ? { forkTag: body.forkTag } : {}),
+            ...(typeof body?.firstMessage === 'string' ? { firstMessage: body.firstMessage } : {}),
           }),
         );
       }

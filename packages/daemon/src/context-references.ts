@@ -229,6 +229,19 @@ export class ContextReferences {
       const allowed = this.segments(reference).filter(segment => segment.id === input.target);
       if (allowed.length) { this.check(reference); segments.push(...allowed); }
     }
+    if (!segments.length && this.manager.forkFamilyIds(owner).has(input.target)) {
+      const targetThread = this.store.getThread(input.target);
+      if (targetThread) {
+        segments.push({
+          id: targetThread.id,
+          title: targetThread.title,
+          updatedAt: targetThread.updatedAt,
+          archived: Boolean(targetThread.archivedAt),
+          lowerSeq: 0,
+          upperSeq: this.store.history.latest(targetThread.id),
+        });
+      }
+    }
     if (!segments.length) throw new HttpError(403, 'thread outside handover chain or attached references');
     // Merge overlapping grants, without filling a gap between disjoint authorized stretches.
     segments = segments.sort((a, b) => (a.lowerSeq ?? 0) - (b.lowerSeq ?? 0)).reduce<ChainSegment[]>((out, segment) => {

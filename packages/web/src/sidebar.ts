@@ -286,6 +286,52 @@ export function buildActivity(threads: Thread[], search: string, now: Date, sele
  * segments are retired members of the team the handover moved along, but they are the lead's own
  * conversations, so they stay in the list and fold into its handover chain.
  */
+export interface ForkSubchatItem {
+  thread: Thread;
+  /** True when this forked branch itself underwent handover(s) and still occupies one row. */
+  handedOver: boolean;
+}
+
+/**
+ * Grouped forks folded by their `forkGroup` root id. If a forked branch itself handed over, its
+ * handover chain collapses into a single row (`handedOver: true`) so the sidebar never nests two levels.
+ */
+export function forkGroupsByRoot(threads: Thread[]): Map<string, ForkSubchatItem[]> {
+  const byId = new Map(threads.map((t) => [t.id, t]));
+  const hasVisibleRoot = (groupId: string): boolean => {
+    if (byId.has(groupId)) return true;
+    // The original root may have handed over to a newer segment that is visible.
+    for (const t of threads) {
+      if (t.forkGroup) continue;
+      let cur: Thread | undefined = t;
+      const seen = new Set<string>();
+      while (cur?.handover && !cur.handover.detached && !seen.has(cur.id)) {
+        seen.add(cur.id);
+        if (cur.handover.sourceId === groupId) return true;
+        cur = byId.get(cur.handover.sourceId);
+      }
+    }
+    return false;
+  };
+  const buckets = new Map<string, Thread[]>();
+  for (const t of threads) {
+    if (!t.forkGroup || t.forkGroup === t.id) continue;
+    // Skip active collaboration members here so they are not shown twice.
+    if (t.coordination && !t.coordination.retired && t.coordination.rootId !== t.id) continue;
+    if (!hasVisibleRoot(t.forkGroup)) continue;
+    buckets.set(t.forkGroup, [...(buckets.get(t.forkGroup) ?? []), t]);
+  }
+  const result = new Map<string, ForkSubchatItem[]>();
+  for (const [groupId, list] of buckets) {
+    const collapsed = handoverGroups(list).map(({ latest, members }) => ({
+      thread: latest,
+      handedOver: members.length > 1,
+    }));
+    result.set(groupId, collapsed);
+  }
+  return result;
+}
+
 export function ownRows(threads: Thread[]): Thread[] {
   const byId = new Map(threads.map((t) => [t.id, t]));
   const chains = new Map<string, Set<string>>();
@@ -297,8 +343,24 @@ export function ownRows(threads: Thread[]): Thread[] {
     chains.set(rootId, chain);
     return chain;
   };
-  return threads.filter((t) => !t.coordination || t.coordination.rootId === t.id || !byId.has(t.coordination.rootId)
-    || Boolean(t.coordination.retired) && chainOf(t.coordination.rootId).has(t.id));
+  const groupedForkIds = new Set<string>();
+  const visibleRootIds = new Set<string>();
+  for (const t of threads) {
+    if (!t.forkGroup) {
+      visibleRootIds.add(t.id);
+      for (const s of chainOf(t.id)) visibleRootIds.add(s);
+    }
+  }
+  for (const t of threads) {
+    if (t.forkGroup && t.forkGroup !== t.id && visibleRootIds.has(t.forkGroup)) {
+      groupedForkIds.add(t.id);
+    }
+  }
+  return threads.filter((t) => {
+    if (groupedForkIds.has(t.id)) return false;
+    return !t.coordination || t.coordination.rootId === t.id || !byId.has(t.coordination.rootId)
+      || Boolean(t.coordination.retired) && chainOf(t.coordination.rootId).has(t.id);
+  });
 }
 
 export function handoverGroups(threads: Thread[], keepOrder = false): Array<{ key: string; latest: Thread; members: Thread[] }> {

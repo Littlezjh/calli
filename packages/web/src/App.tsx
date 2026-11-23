@@ -111,7 +111,7 @@ import { machineSummaries, threadMachine, parseThreadLink } from './extensions/p
 import { createThreadFeed } from './extensions/thread-feed';
 import { cachedAgentMarks, cachedThreads, rememberAgentMarks, rememberThreads } from './thread-cache';
 import { cachedAgents, cachedDraft, cachedModels, cachedPet, rememberAgents, rememberDraft, rememberModels, rememberPetBust, rememberPetStatus, type BesideDraft } from './host-cache';
-import { clampSidebarWidth, defaultSidebarWidth, handoverGroups, ownRows, projectDir, savedSidebarWidth, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH, type HostSource } from './sidebar';
+import { clampSidebarWidth, defaultSidebarWidth, forkGroupsByRoot, handoverGroups, ownRows, projectDir, savedSidebarWidth, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH, type HostSource } from './sidebar';
 import { enabledViews, extensionHash, looksLikeExtensionRoute, resolveExtensionRoute } from './extensions/routes';
 import { AgentPicker, type DiscoveredAccount, type DiscoveredAgent, effortsForModel, imagesBlocked, imagesNote, modelName, resolveModel, speedsForModel, ModelPicker, PermissionPicker, UsageMeter, WorkspacePicker } from './components/Pickers';
 import { Sidebar, SIDEBAR_SHORTCUT } from './components/Sidebar';
@@ -1142,6 +1142,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
     }
     return byLead;
   }, [threads]);
+  const forkMembers = useMemo(() => forkGroupsByRoot(threads), [threads]);
 
   // A takeover under way, from the button on a turn that failed because the plan ran out.
   const [takingOver, setTakingOver] = useState(false);
@@ -2920,6 +2921,8 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           showEmptySections={!showcase}
           threads={listedThreads}
           members={teamMembers}
+          forks={forkMembers}
+          onForkSubchat={threadActions.forkSubchat}
           sections={sections}
           agents={sidebarAgents}
           selectedId={selectedId}

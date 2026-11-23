@@ -294,6 +294,10 @@ export interface Thread {
   sectionId: string | null;
   /** The thread this one was forked from, if it is a fork. */
   forkedFrom: string | null;
+  /** Root thread id of a grouped fork family, if this thread is a grouped sub-conversation. */
+  forkGroup?: string | null;
+  /** Short purpose tag for a forked sub-conversation (e.g. "analyze one-pager", "write code"). */
+  forkTag?: string | null;
   handover?: { sourceId: string; title: string; agent: string; mode?: 'continue' | 'branch'; automatic?: boolean; detached?: boolean; method?: 'resume' | 'summary'; sourceMoved?: boolean; sourceSeq?: number; /** Turns the source took on its own after the handover. */ followups?: number } | null;
   /** Set when the chain came back to this thread: `afterSeq` ends its earlier part, `sourceSeq` ends what the handing-over thread contributed. */
   handback?: { sourceId: string; afterSeq: number; sourceSeq: number; at: string } | null;
@@ -1779,6 +1783,8 @@ export class Api {
       done?: boolean;
       /** Places the thread on the board by hand; clears done. */
       stage?: ProgressReport['stage'];
+      /** Short purpose tag for a grouped forked sub-conversation. */
+      forkTag?: string | null;
     },
   ): Promise<Thread> {
     return this.request('PATCH', `/api/threads/${threadId}`, updates);
@@ -1825,11 +1831,17 @@ export class Api {
    * the copy ends where that turn ended.
    */
   /** With `turnId` the copy ends where that turn ended; with `worktree` it runs in a git worktree of its own. */
-  forkThread(threadId: string, opts: { turnId?: string; worktree?: boolean; agent?: string } = {}): Promise<Thread> {
+  forkThread(
+    threadId: string,
+    opts: { turnId?: string; worktree?: boolean; agent?: string; grouped?: boolean; forkTag?: string | null; firstMessage?: string } = {},
+  ): Promise<Thread> {
     const body = {
       ...(opts.turnId ? { turnId: opts.turnId } : {}),
       ...(opts.worktree ? { worktree: true } : {}),
       ...(opts.agent ? { agent: opts.agent } : {}),
+      ...(opts.grouped ? { grouped: true } : {}),
+      ...(typeof opts.forkTag === 'string' && opts.forkTag.trim() ? { forkTag: opts.forkTag.trim() } : {}),
+      ...(typeof opts.firstMessage === 'string' && opts.firstMessage.trim() ? { firstMessage: opts.firstMessage.trim() } : {}),
     };
     return this.request('POST', `/api/threads/${threadId}/fork`, Object.keys(body).length ? body : undefined);
   }

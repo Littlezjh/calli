@@ -5,6 +5,7 @@ import { referenceMachine, useReferenceMachine } from '../reference-input';
 import { folderName } from '../paths';
 import { cancellableHandover } from '../handover';
 import { ChoiceDialog, Dialog } from './Dialog';
+import { ForkSubchatDialog } from './ForkSubchatDialog';
 import { HandoverChainDialog } from './HandoverTrail';
 import { HandoverDialog } from './HandoverDialog';
 import { TakeoverDialog } from './TakeoverDialog';
@@ -74,6 +75,10 @@ type DialogState =
   | { kind: 'delete-worktree'; thread: Thread; agentSession: boolean; changes: number; commits: number }
   /** Where the copy should run: beside the original, or in a git worktree of its own. */
   | { kind: 'fork'; thread: Thread; turnId?: string; branch: string | null; changes: number }
+  /** One-step grouped sub-conversation fork in the current directory (optional tag, first message, worktree). */
+  | { kind: 'fork-subchat'; thread: Thread; turnId?: string; worktreeAvailable: boolean }
+  /** Edit the short purpose tag of a grouped forked sub-conversation. */
+  | { kind: 'fork-tag'; thread: Thread }
   | { kind: 'fork-agent'; thread: Thread }
   | { kind: 'new-section'; thread: Thread | null }
   | { kind: 'rename-section'; section: Section }
@@ -85,7 +90,7 @@ type DialogState =
   /** The audit trail of a handover chain this thread belongs to. */
   | { kind: 'chain'; thread: Thread };
 
-export type ThreadAction = 'rename' | 'pin' | 'fork' | 'archive' | 'restore' | 'delete';
+export type ThreadAction = 'rename' | 'pin' | 'fork' | 'fork-subchat' | 'fork-tag' | 'archive' | 'restore' | 'delete';
 
 /** Why a thread cannot be forked right now, or null when it can. */
 export function forkBlocked(thread: Thread, turnId?: string): string | null {
@@ -187,10 +192,23 @@ export function useThreadActions(deps: Deps) {
     }
   };
 
+  const openForkSubchat = async (thread: Thread, turnId?: string) => {
+    if (!api) return;
+    const blocked = forkBlocked(thread, turnId);
+    if (blocked) return onError(blocked);
+    const wants = Boolean(agents.find((a) => a.id === thread.agent)?.capabilities.forkInto);
+    const options = wants ? await api.forkOptions(thread.id).catch(() => null) : null;
+    setDialog({ kind: 'fork-subchat', thread, turnId, worktreeAvailable: Boolean(options?.worktree.available) });
+  };
+
   const run = (action: ThreadAction, thread: Thread) => {
     switch (action) {
       case 'fork':
         return void fork(thread);
+      case 'fork-subchat':
+        return void openForkSubchat(thread);
+      case 'fork-tag':
+        return setDialog({ kind: 'fork-tag', thread });
       case 'rename':
         return setDialog({ kind: 'rename', thread });
       case 'pin':
@@ -243,6 +261,7 @@ export function useThreadActions(deps: Deps) {
         onSelect: () => void patch(thread, { unread: !thread.unread }, thread.unread ? undefined : () => onMarkedUnread(thread)),
       },
       { id: 'rename', label: t('actions.rename'), icon: IconEdit, onSelect: () => run('rename', thread) },
+      ...(thread.forkGroup ? [{ id: 'fork-tag', label: t('actions.editForkTag'), icon: IconFork, onSelect: () => run('fork-tag', thread) }] : []),
       ...(autotitle ? [{ id: 'autotitle', label: t('actions.autotitle'), icon: IconSparkle, onSelect: () => void autoName(thread) }] : []),
       ...(board ? [{ id: 'board', label: t('actions.board'), icon: IconBoard, submenu: (['backlog', 'doing', 'blocked', 'review', 'done'] as const).map(place) }] : []),
       {
@@ -343,8 +362,12 @@ export function useThreadActions(deps: Deps) {
     },
     { id: 'continuation', label: t('actions.forkAndHandover'), icon: IconHand, submenu: [
       ...(agents.find((a) => a.id === thread.agent)?.capabilities.fork
-        ? [{ id: 'fork', label: t('sidebar.fork'), icon: IconFork, disabled: forkBlocked(thread) !== null, onSelect: () => run('fork', thread) }]
+        ? [
+            { id: 'fork-subchat', label: t('actions.forkSubchat'), icon: IconFork, disabled: forkBlocked(thread) !== null, onSelect: () => run('fork-subchat', thread) },
+            { id: 'fork', label: t('sidebar.fork'), icon: IconFork, disabled: forkBlocked(thread) !== null, onSelect: () => run('fork', thread) },
+          ]
         : []),
+      ...(thread.forkGroup ? [{ id: 'fork-tag', label: t('actions.editForkTag'), icon: IconEdit, onSelect: () => run('fork-tag', thread) }] : []),
       { id: 'handover', label: t('handover.title'), icon: IconHand, onSelect: () => setDialog({ kind: 'handover', thread }) },
       ...(chainOf(thread) ? [{ id: 'chain', label: t('handover.trail.title'), icon: IconHandover, onSelect: () => setDialog({ kind: 'chain', thread }) }] : []),
     ] },
@@ -442,6 +465,37 @@ export function useThreadActions(deps: Deps) {
           confirmLabel={t('actions.deleteAnyway')}
           danger
           onConfirm={() => void removeThread(thread, { agentSession, worktree: true, force: true })}
+          onCancel={close}
+        />
+      );
+    } else if (dialog.kind === 'fork-subchat') {
+      const { thread, turnId, worktreeAvailable } = dialog;
+      dialogNode = (
+        <ForkSubchatDialog
+          worktreeAvailable={worktreeAvailable}
+          onConfirm={({ forkTag, firstMessage, worktree }) => {
+            close();
+            onBusy({ threadId: thread.id, message: worktree ? t('actions.forkingWorktree') : t('actions.forking') });
+            void api
+              .forkThread(thread.id, { turnId, worktree, grouped: true, forkTag, firstMessage })
+              .then((copy) => {
+                if (firstMessage) onThreadChange(copy);
+                else onThreadOpen(copy);
+              })
+              .catch(onError)
+              .finally(() => onBusy(null));
+          }}
+          onCancel={close}
+        />
+      );
+    } else if (dialog.kind === 'fork-tag') {
+      const { thread } = dialog;
+      dialogNode = (
+        <Dialog
+          title={t('actions.editForkTagTitle')}
+          input={{ initial: thread.forkTag ?? '', label: t('actions.forkTagLabel') }}
+          confirmLabel={t('actions.save')}
+          onConfirm={(value) => void guard(async () => onThreadChange(await api.updateThread(thread.id, { forkTag: (value ?? '').trim() || null })))}
           onCancel={close}
         />
       );
@@ -616,6 +670,8 @@ export function useThreadActions(deps: Deps) {
     },
     /** Forks so that the copy ends with the given turn. */
     forkAt: (thread: Thread, turnId: string) => void fork(thread, turnId),
+    /** Opens the one-step grouped sub-conversation fork dialog. */
+    forkSubchat: (thread: Thread, turnId?: string) => void openForkSubchat(thread, turnId),
     run,
     layer,
   };

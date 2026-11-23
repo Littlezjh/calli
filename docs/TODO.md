@@ -53,6 +53,7 @@
 - [x] 导入 Claude Code 历史：列出允许目录里已有的会话（ACP `session/list`），选中后回放历史写入本地（`session/load`）。导入的线程和终端用的是同一个会话
 - [x] 导入 pi 历史：读 `sessions/<目录>/*.jsonl` 的头信息列出，用 `--session` 打开并取消息
 - [x] 分叉整个线程：复制记录和图片，agent 侧用 `session/fork`（Claude）或 `clone`（pi）。分叉出来的线程在侧边栏带标记
+- [x] 同目录分叉子对话与按需感知（方案 A / 纵横二元侧边栏并存）：线程菜单「分叉与交接 → 分叉为子对话」弹出轻卡片（可选用途标签如 `分析 one page` / `写代码`、可选首句留空即进入／填字后台开跑、可选独立 worktree），同时主控支持 `calli spawn --fork`。侧边栏按纵轴「交接」× 横轴「并行（分叉 + 子智能体合一）」互斥折叠，主对话交接后分叉不丢、分叉内交接仍占一行不套娃，对话页零多余按钮。同分叉族通过 `<calli-forks>` 轻量目录块与只读 `calli history <id> --user-inputs` 实现双向按需互读，无关会话严格拒绝。*daemon `fork-subchat.test.ts`、`one-context.test.ts`、`util.test.ts` 及前端 `sidebar.test.ts`、`ui-budget.test.ts`、`i18n.test.ts` 与全量 web 547 项通过；Chromium 桌面 1400／手机 390 × 亮／暗截图验看通过，未测实体手机。*
 - [x] 从某一轮分叉：每条回答下面都有分叉，副本到那一轮为止。hub 读 agent 自己的历史，按每轮的提问对齐，找到那一轮在 agent 那边的位置：Codex 用 `thread/fork` 的 `lastTurnId`，Claude 用 `session/fork` 的 `_meta`（指定保留到哪条消息），pi 用 `fork entryId`（从下一轮的用户消息分）。对不上的轮次（没到过 agent 的）不能从那里分，会提示改从最后一条分。能力 `forkAt`，TRAE 和 agy 没有。*pi 和 Claude 用真实会话的副本验证过截断点；Codex 只验证了真实 app-server 接受这个参数*
 [~] 导入的会话跟着终端更新：打开线程时和每 30 秒（页面可见时）比对 agent 那边的历史，多出的轮次补进来并带"终端"标记；`POST /api/threads/:id/sync` 也能手动拉。实时跟随（读会话文件）还没做
 [x] 同一个会话在终端里用过之后，网页发送前弹确认（"仍然发送"/取消，取消把文字退回输入框）；hub 再发一轮后警告自动解除。检测粒度跟着同步走，不是实时

@@ -747,7 +747,10 @@ export class ThreadManager {
    * conversation; the hub copies the event log and the images. With `turnId` the copy ends where
    * that turn ended, on both sides; without it, or when that turn is the last, it is the whole thread.
    */
-  async forkThread(id: string, opts: { turnId?: string; worktree?: boolean; agent?: string } = {}): Promise<ThreadView> {
+  async forkThread(
+    id: string,
+    opts: { turnId?: string; worktree?: boolean; agent?: string; grouped?: boolean; forkTag?: string | null; firstMessage?: string } = {},
+  ): Promise<ThreadView> {
     const thread = this.getThread(id);
     const adapter = this.adapters.get(thread.agent);
     // A fork to another agent carries the whole conversation over, the way a resume handover does,
@@ -831,19 +834,30 @@ export class ThreadManager {
     const chainLink = thread.handover && !thread.handover.detached
       ? { sourceId: thread.id, title: thread.title, agent: thread.agent, mode: 'branch' as const, method: 'resume' as const, sourceSeq }
       : undefined;
+    const grouped = opts.grouped === true;
+    const rawTag = typeof opts.forkTag === 'string' ? opts.forkTag.trim() : '';
+    if (rawTag.length > 40) throw new HttpError(400, 'forkTag must be at most 40 characters');
+    const forkTag = grouped && rawTag ? rawTag : null;
+    const forkGroup = grouped ? this.forkGroupRoot(thread) : null;
+    const firstMessage = typeof opts.firstMessage === 'string' ? opts.firstMessage.trim() : '';
+    const copyTitle = grouped
+      ? (firstMessage ? firstMessage.slice(0, 40) : forkTag || `${thread.title}（分叉）`)
+      : `${thread.title}（分叉）`;
     try {
       this.store.transaction(() => {
         this.store.createThread({
           id: copyId,
           agent: across ? opts.agent! : thread.agent,
           cwd,
-          title: `${thread.title}（分叉）`,
+          title: copyTitle,
           permissionMode: thread.permissionMode,
           workMode: thread.workMode,
           speed: thread.speed,
           model: acrossModel,
           effort: across ? null : thread.effort,
           forkedFrom: thread.id,
+          forkGroup,
+          forkTag,
           ...(chainLink ? { handover: chainLink } : {}),
           worktree,
         });
@@ -856,8 +870,94 @@ export class ThreadManager {
       throw err;
     }
     // The last event of the copy: what comes before it was copied, what comes after is its own.
-    this.emitThreadEvent(copyId, null, 'thread.updated', { forkedFrom: thread.id, ...(added ? { worktree: { branch: added.tree.branch } } : {}) });
+    this.emitThreadEvent(copyId, null, 'thread.updated', { forkedFrom: thread.id, ...(forkGroup ? { forkGroup } : {}), ...(forkTag ? { forkTag } : {}), ...(added ? { worktree: { branch: added.tree.branch } } : {}) });
+    if (grouped && firstMessage) {
+      void this.startTurn(copyId, { text: firstMessage, fromUser: true }).catch(() => undefined);
+    }
     return this.threadView(copyId);
+  }
+
+  /**
+   * Canonical root thread ID of a grouped fork family. If a thread is already a grouped fork,
+   * reuse its root so forks never nest; otherwise use the earliest segment of its handover chain
+   * so automatic handovers on the main thread keep the same family.
+   */
+  private forkGroupRoot(thread: ThreadRecord): string {
+    if (thread.forkGroup) return thread.forkGroup;
+    const chain = this.handoverChain(thread);
+    return chain[0]?.id ?? thread.id;
+  }
+
+  /**
+   * Every thread ID in the same grouped fork family (and any collaboration on it), including
+   * handover segments of both the main thread and each forked sub-conversation.
+   */
+  forkFamilyIds(threadId: string): Set<string> {
+    const out = new Set<string>();
+    const self = this.store.getThread(threadId);
+    if (!self) return out;
+    const selfChain = this.handoverChain(self).map((s) => s.id);
+    const roots = new Set<string>(self.forkGroup ? [self.forkGroup] : selfChain);
+    const all = [...this.store.listThreads(), ...this.store.listThreads({ archived: true })];
+    // Expand roots to include the root thread's full handover chain (if self is a grouped fork).
+    if (self.forkGroup) {
+      const rootThread = this.store.getThread(self.forkGroup);
+      if (rootThread) {
+        for (const s of this.handoverChain(rootThread)) roots.add(s.id);
+      }
+      for (const t of all) {
+        if (t.handover?.sourceId && roots.has(t.handover.sourceId)) roots.add(t.id);
+      }
+    }
+    // Collect the root chain and every thread whose forkGroup points into it.
+    const hasForks = Boolean(self.forkGroup) || all.some((t) => Boolean(t.forkGroup && roots.has(t.forkGroup)));
+    if (hasForks) {
+      for (const r of roots) out.add(r);
+      for (const t of all) {
+        if (t.forkGroup && roots.has(t.forkGroup)) {
+          out.add(t.id);
+          for (const s of this.handoverChain(t)) out.add(s.id);
+        }
+      }
+    }
+    // Also allow lead and collaboration members to read each other on demand.
+    for (const cid of this.coordination?.familyIds(threadId) ?? []) out.add(cid);
+    out.delete(threadId);
+    return out;
+  }
+
+  /** Compact, on-demand directory of sibling conversations in the same grouped fork family. */
+  private forkDirectoryBlock(thread: ThreadRecord): string | null {
+    const selfChain = this.handoverChain(thread).map((s) => s.id);
+    const roots = new Set<string>(thread.forkGroup ? [thread.forkGroup] : selfChain);
+    const all = this.store.listThreads();
+    if (thread.forkGroup) {
+      const rootThread = this.store.getThread(thread.forkGroup);
+      if (rootThread) {
+        for (const s of this.handoverChain(rootThread)) roots.add(s.id);
+      }
+      for (const t of all) {
+        if (t.handover?.sourceId && roots.has(t.handover.sourceId)) roots.add(t.id);
+      }
+    }
+    const grouped = all.filter((t) => Boolean(t.forkGroup && roots.has(t.forkGroup)));
+    if (!grouped.length) return null;
+    const ids = new Set<string>([...roots, ...grouped.map((t) => t.id)]);
+    ids.delete(thread.id);
+    const active = all.filter((t) => ids.has(t.id));
+    if (!active.length) return null;
+    // Collapse handover chains so only the latest segment of each sibling conversation is listed.
+    const superseded = new Set<string>();
+    for (const t of active) {
+      if (t.handover && !t.handover.detached) superseded.add(t.handover.sourceId);
+    }
+    const peers = active.filter((t) => !superseded.has(t.id)).slice(0, 12);
+    if (!peers.length) return null;
+    const lines = peers.map((t) => {
+      const label = !t.forkGroup ? `主会话「${t.title}」` : t.forkTag ? `[${t.forkTag}] ${t.title}` : t.title;
+      return `- ${label}（id: ${t.id}，状态: ${t.status === 'running' ? '运行中' : '空闲'}）`;
+    });
+    return `<calli-forks>\n同工作区关联会话（按需只读；平时不要主动读取，仅在用户提及或需要对照时用 \`calli history <id> --user-inputs\` 查阅）：\n${lines.join('\n')}\n</calli-forks>`;
   }
 
   /** What forking this thread can offer. Asked when the user reaches for the fork button, not before. */
@@ -1883,6 +1983,8 @@ export class ThreadManager {
       done?: boolean;
       /** The person places the thread on the board; it stands until a later turn reports again. */
       stage?: ProgressStage;
+      /** Short purpose tag for a forked sub-conversation. */
+      forkTag?: string | null;
     },
   ): Promise<ThreadView> {
     const thread = this.getThread(id);
@@ -1906,6 +2008,12 @@ export class ThreadManager {
       if (updates.done !== undefined) throw new HttpError(400, 'set done or stage, not both');
       if (!PROGRESS_STAGES.includes(updates.stage)) throw new HttpError(400, 'stage must be backlog, doing, blocked or review');
       this.store.setThreadProgress(id, { doneAt: null, report: { stage: updates.stage, note: '', at: new Date().toISOString(), by: 'user' } });
+    }
+    if (updates.forkTag !== undefined) {
+      if (updates.forkTag !== null && typeof updates.forkTag !== 'string') throw new HttpError(400, 'forkTag must be a string or null');
+      const trimmed = typeof updates.forkTag === 'string' ? updates.forkTag.trim() : '';
+      if (trimmed.length > 40) throw new HttpError(400, 'forkTag must be at most 40 characters');
+      patch.forkTag = trimmed || null;
     }
     if (updates.speed !== undefined) {
       patch.speed = updates.speed === null ? (thread.speed ? 'default' : null) : await this.validateSpeed(thread.agent, updates.model === undefined ? thread.model : updates.model, updates.speed);
@@ -2481,6 +2589,9 @@ export class ThreadManager {
     schedule?: { id: string; name: string } | null;
     /** A fresh conversation where this thread works: its exact directory, sharing its worktree. */
     besideThread?: string;
+    /** Inherited grouped fork family & tag (e.g. when a forked sub-conversation hands over). */
+    forkGroup?: string | null;
+    forkTag?: string | null;
   }, inheritedWorktree?: ThreadWorktree | null, handover?: ThreadRecord['handover']): Promise<ThreadView> {
     const adapter = this.adapters.get(input.agent);
     if (!adapter) throw new HttpError(400, `unknown agent: ${input.agent}`);
@@ -2533,6 +2644,8 @@ export class ThreadManager {
         model,
         effort,
         handover,
+        forkGroup: input.forkGroup ?? null,
+        forkTag: input.forkTag ?? null,
         schedule: input.schedule ?? null,
         ...(input.sectionId ? { sectionId: input.sectionId } : {}),
         ...(added ? { worktree: { root: added.tree.root, branch: added.tree.branch, of: cwd } } : inheritedWorktree ? { worktree: inheritedWorktree } : {}),
@@ -2643,6 +2756,8 @@ export class ThreadManager {
       model: chosen,
       effort,
       sectionId: source.sectionId,
+      forkGroup: source.forkGroup ?? null,
+      forkTag: source.forkTag ?? null,
     }, source.worktree);
     this.handoverBoundaries.set(successor, boundary);
     if (deferAcceptance) return successor;
@@ -3011,8 +3126,10 @@ export class ThreadManager {
     // back to earlier segments never vanishes, whatever became of the handover brief itself.
     const chain = !bare && !slashCommand && Boolean(rawText) && (boundary || thread.handback || thread.handover && !thread.handover.detached) ? this.handoverChain(thread, boundary) : [];
     const chained = chain.length > 1 ? handoverChainInstructions(written, handoverChainBlock(chainOutlineText(chain, thread.id)), gate) : written;
+    const forkBlock = !bare && !slashCommand && Boolean(rawText) ? this.forkDirectoryBlock(thread) : null;
+    const withForks = forkBlock && (!gate || gate('forks', forkBlock)) ? `${chained}\n\n${forkBlock}` : chained;
     const askProgress = !bare && !slashCommand && Boolean(rawText) && this.progressWanted();
-    const text = askProgress ? progressInstructions(chained, gate) : chained;
+    const text = askProgress ? progressInstructions(withForks, gate) : withForks;
 
     if (rawImages.length > 0) {
       await this.checkImages(thread.agent, thread.model, rawImages);
