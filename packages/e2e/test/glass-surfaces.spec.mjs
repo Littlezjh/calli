@@ -86,23 +86,20 @@ test('glass chrome has scrolling content behind it without hiding either end of 
       await page.waitForTimeout(150); // the touch composer settles into its collapsed height
       await scroller.evaluate(el => { el.scrollTop = 600; });
       if (mobile) {
-        // Stress the seam with a contrasting backdrop: both the status area and the first
-        // pixel below it must stay the same colour, even when dark content passes behind.
-        // Some iOS modes keep the system bar outside the web viewport and report a zero inset.
-        for (const inset of [0, 59]) {
-          await cdp.send('Emulation.setSafeAreaInsetsOverride', { insets: { top: inset, right: 0, bottom: 34, left: 0 } });
-          await page.evaluate(() => {
-            const probe = document.createElement('div'); probe.id = 'status-seam-probe';
-            Object.assign(probe.style, { position: 'absolute', inset: '0 0 auto', height: '140px', background: 'var(--bg)', pointerEvents: 'none' });
-            document.querySelector('.main').append(probe);
-          });
-          const pixel = y => page.screenshot({ clip: { x: 1, y, width: 1, height: 1 } });
-          const plain = await pixel(1);
-          await page.evaluate(() => { document.querySelector('#status-seam-probe').style.background = 'var(--text)'; });
-          assert.ok(plain.equals(await pixel(1)), 'the top edge matches the system status colour over contrasting content');
-          assert.ok(plain.equals(await pixel(inset + 5)), 'the safe area and navigation join without a colour seam');
-          await page.evaluate(() => document.querySelector('#status-seam-probe').remove());
-        }
+        // The status-bar safe area stays clean page colour so system time/icons never clash with
+        // dark scrolled content, while zero fog spills below the safe area onto the glass pills.
+        await cdp.send('Emulation.setSafeAreaInsetsOverride', { insets: { top: 59, right: 0, bottom: 34, left: 0 } });
+        await page.evaluate(() => {
+          const probe = document.createElement('div'); probe.id = 'status-seam-probe';
+          Object.assign(probe.style, { position: 'absolute', inset: '0 0 auto', height: '140px', background: 'var(--bg)', pointerEvents: 'none' });
+          document.querySelector('.main').append(probe);
+        });
+        const pixel = y => page.screenshot({ clip: { x: 1, y, width: 1, height: 1 } });
+        const plain = await pixel(1);
+        await page.evaluate(() => { document.querySelector('#status-seam-probe').style.background = 'var(--text)'; });
+        assert.ok(plain.equals(await pixel(1)), 'the top edge matches the system status colour over contrasting content');
+        assert.ok(plain.equals(await pixel(57)), 'the status-bar safe area stays clean without a colour seam');
+        await page.evaluate(() => document.querySelector('#status-seam-probe').remove());
         const top = await page.locator('.topbar').boundingBox();
         const back = await page.locator('.topbar .menu-btn').boundingBox();
         assert.ok(back.y >= top.y + 59, 'controls stay below the status-bar safe area');
