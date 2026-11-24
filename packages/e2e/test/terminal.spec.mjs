@@ -44,14 +44,31 @@ async function openTerminalMenu(page) {
 }
 
 test('the header button opens a terminal that runs commands and survives closing', async () => {
-  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  const ctx = await browser.newContext({ viewport: { width: 1440, height: 800 } });
   const page = await ctx.newPage();
   try {
     await openThreadWithTerminalButton(page, '终端桌面');
+    // At wide dock width the standing overview card starts open; opening the terminal must make
+    // it step aside instead of floating on top of the terminal, then bring it back on close.
+    await page.locator('.overview-panel.overview-dock').waitFor();
     await openTerminalMenu(page);
     await page.locator('.term-panel').waitFor();
+    assert.equal(await page.locator('.overview-panel.overview-dock').count(), 0, 'standing overview steps aside while the docked terminal is open');
+    const align = await page.evaluate(() => {
+      const pill = document.querySelector('.topbar-actions').getBoundingClientRect();
+      const dock = document.querySelector('.dock-panel').getBoundingClientRect();
+      const head = document.querySelector('.dock-panel .term-panel .panel-head').getBoundingClientRect();
+      return {
+        pillTop: pill.top,
+        dockTop: dock.top,
+        pillCenterY: pill.top + pill.height / 2,
+        headCenterY: head.top + head.height / 2,
+      };
+    });
+    assert.ok(Math.abs(align.dockTop - align.pillTop) <= 1.5, `dock top (${align.dockTop}) aligns with topbar pill (${align.pillTop})`);
+    assert.ok(Math.abs(align.headCenterY - align.pillCenterY) <= 1.5, `terminal header center (${align.headCenterY}) aligns with topbar pill center (${align.pillCenterY})`);
     const termBox = await page.locator('.term-panel').boundingBox();
-    assert.ok(termBox && termBox.x > 100 && termBox.width < 1200, 'desktop terminal opens in the right side dock, not full-screen');
+    assert.ok(termBox && termBox.x > 100 && termBox.width < 1300, 'desktop terminal opens in the right side dock, not full-screen');
 
     await page.locator('.term-body').click();
     await page.keyboard.type('echo e2e-ok');
@@ -71,9 +88,18 @@ test('the header button opens a terminal that runs commands and survives closing
     await page.waitForTimeout(300);
     typed.length = 0; // the live answer above was asked for
 
-    // Closing the panel hides the terminal; reopening reattaches and replays what already ran.
+    // Closing the panel hides the terminal and restores the standing overview; reopening reattaches and replays what already ran.
     await page.getByLabel('关闭').click();
     assert.equal(await page.locator('.term-panel').count(), 0);
+    await page.locator('.overview-panel.overview-dock').waitFor();
+    await openTerminalMenu(page);
+    await page.locator('.term-panel').waitFor();
+    assert.equal(await page.locator('.overview-panel.overview-dock').count(), 0, 'standing overview steps aside again on reopen');
+    assert.equal(await page.locator('.topbar-overview').getAttribute('aria-pressed'), 'false', 'overview button reflects stepped-aside state while terminal is open');
+    // Clicking the overview button while a side panel is open closes the side panel and restores overview.
+    await page.locator('.topbar-overview').click();
+    await page.locator('.overview-panel.overview-dock').waitFor();
+    assert.equal(await page.locator('.term-panel').count(), 0, 'clicking overview closes the docked terminal');
     await openTerminalMenu(page);
     await page.locator('.term-panel').waitFor();
     await termShows(page, 'e2e-ok');

@@ -1788,6 +1788,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
     setPreview(null);
     setDiffFile(null);
     setPicture(null);
+    setTermOpen(false);
     setDesktop('open');
   };
   // Auxiliary panels share one edge. Putting the desktop away preserves its connection.
@@ -1807,14 +1808,14 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   const [picture, setPicture] = useState<{ threadId: string; path: string; name: string } | null>(null);
   /** A side panel takes the same edge as the overview, so the panel steps aside while one is open —
    *  but the person's own switch is left alone: it comes back when the side panel closes. */
-  const dockOpen = !compact && Boolean(activeOverviewDetail || preview || diffFile || picture);
+  const dockOpen = !compact && Boolean(activeOverviewDetail || preview || diffFile || picture || termOpen);
   const sideOpen = Boolean(agentsOpen && coordination) || Boolean(files) || traceOpen || gitOpen || dockOpen;
   // One panel at a time in the column: whichever opens last takes it, and the other steps out.
   const sideKeys = Boolean(agentsOpen && coordination) || Boolean(files) || traceOpen || gitOpen;
   const wasSide = useRef(false);
   const wasDock = useRef(false);
   useEffect(() => {
-    if (sideKeys && !wasSide.current) { setPreview(null); setDiffFile(null); setPicture(null); setOverviewDetail(null); }
+    if (sideKeys && !wasSide.current) { setPreview(null); setDiffFile(null); setPicture(null); setOverviewDetail(null); setTermOpen(false); }
     if (dockOpen && !wasDock.current) { setFiles(null); setTraceOpen(false); setAgentsOpen(false); setGitOpen(false); }
     if (dockOpen && !wasDock.current) setDesktop(value => value === 'open' ? 'minimized' : value);
     wasSide.current = sideKeys; wasDock.current = dockOpen;
@@ -1841,6 +1842,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
             setFilesThreadId(targetId);
             setFilesDraftKey(draftKey ?? null);
             setAgentsOpen(false);
+            setTraceOpen(false);
             setFiles({ path: null, folder: listing.path, seq: ++filesSeq.current });
             return;
           } catch {
@@ -1852,6 +1854,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
       setFilesThreadId(targetId);
       setFilesDraftKey(draftKey ?? null);
       setAgentsOpen(false);
+      setTraceOpen(false);
       setFiles({ path: file.path, line: ref.line, file, seq: ++filesSeq.current });
     },
     [api, selectedId],
@@ -2143,6 +2146,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
     if (!compact && diffFile) { setDiffFile(null); return true; }
     if (!compact && preview) { setPreview(null); return true; }
     if (!compact && picture) { setPicture(null); return true; }
+    if (termOpen) { setTermOpen(false); setTerminalTarget(null); return true; }
     if (activeOverviewDetail) { closeOverviewDetail(); return true; }
     if (onSettings) {
       if (settingsPath.includes('/')) openSettings(settingsPath.slice(0, settingsPath.lastIndexOf('/')));
@@ -2271,11 +2275,22 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
 
   const openAgents = () => { openSettings('agents'); void reloadAgents().catch(handleError); };
 
-  const openTerminal = () => { setTerminalTarget(null); setTermOpen(true); };
+  const openTerminal = () => {
+    setPreview(null);
+    setDiffFile(null);
+    setPicture(null);
+    setOverviewDetail(null);
+    setTerminalTarget(null);
+    setTermOpen(true);
+  };
 
   /** Starts an instance's CLI login in a fresh terminal and shows that terminal. */
   const openAgentLogin = async (agent: AgentInfo) => {
     const { terminalId } = await api.loginAgentTerminal(agent.id);
+    setPreview(null);
+    setDiffFile(null);
+    setPicture(null);
+    setOverviewDetail(null);
     setTerminalTarget(terminalId);
     setTermOpen(true);
   };
@@ -3098,14 +3113,28 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
               {api && hostUp && (overviewDock ? (
                 <button
                   type="button"
-                  className={`icon-btn topbar-overview${overviewOpen ? ' on' : ''}${teamNeeds ? ' attention' : ''}`}
+                  className={`icon-btn topbar-overview${overviewShown ? ' on' : ''}${teamNeeds ? ' attention' : ''}`}
                   aria-label={t('overview.label')}
-                  aria-pressed={overviewOpen}
+                  aria-pressed={overviewShown}
                   aria-busy={overviewLoading}
                   title={teamNeeds ? t('overview.needsYou', teamNeeds) : t('overview.label')}
                   onClick={() => {
-                    if (desktop === 'open') { setDesktop('minimized'); setOverviewOpen(true); }
-                    else setOverviewOpen(!overviewOpen);
+                    if (desktop === 'open' || sideOpen) {
+                      if (desktop === 'open') setDesktop('minimized');
+                      setFiles(null);
+                      setTraceOpen(false);
+                      setGitOpen(false);
+                      setAgentsOpen(false);
+                      setOverviewDetail(null);
+                      setPreview(null);
+                      setDiffFile(null);
+                      setPicture(null);
+                      setTermOpen(false);
+                      setTerminalTarget(null);
+                      setOverviewOpen(true);
+                    } else {
+                      setOverviewOpen(!overviewOpen);
+                    }
                   }}
                 >
                   <IconOverview />

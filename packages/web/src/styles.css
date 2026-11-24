@@ -13965,7 +13965,7 @@ body:has(.app.drawer-open) .pet { visibility: hidden; }
    z-index inside .app's stacking context, below her in the page's root context — so she steps
    away instead. A desk spread pile is modal too, but portaled out and below her on purpose. */
 /* Selection controls need the same clear space, including the inline note's submit button. */
-body:has(.dialog-scrim, .preview-scrim, .app .selection-menu, .dock-panel) .pet { visibility: hidden; }
+body:has(.dialog-scrim, .preview-scrim, .app .selection-menu, .dock-panel, .files-panel, .git-panel, .trace-side, .agent-panel) .pet { visibility: hidden; }
 .pet-back { --pet-w: 68px; }
 /* Where she stands, as her own left edge and how high her feet ride above the visual viewport bottom:
    outside .app, so with a phone keyboard up she rides above it too. */

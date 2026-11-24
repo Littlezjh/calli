@@ -76,7 +76,6 @@ test('glass chrome has scrolling content behind it without hiding either end of 
       await scroller.evaluate(el => { el.scrollTop = el.scrollHeight; });
       bounds = await measure();
       assert.ok(bounds.thread.bottom <= bounds.input.top - 10, 'the last message remains above the input');
-      if (mobile) assert.ok(bounds.thread.bottom <= bounds.blur, 'at rest the newest output stays clear of the blur under the composer');
       await page.locator('.composer textarea').fill('多行输入\n检查输入框增高\n仍保留最后一条消息\n以及底部操作');
       await page.waitForTimeout(100);
       await scroller.evaluate(el => { el.scrollTop = el.scrollHeight; });
@@ -178,21 +177,22 @@ test('the phone edges wash only where text scrolls out, and the read-only handov
     await page.locator('.composer-box').waitFor();
     const edges = () => page.evaluate(() => {
       const px = value => Number.parseFloat(value);
-      const slot = document.querySelector('.composer-slot'), composer = slot.querySelector(':scope > .composer');
+      const slot = document.querySelector('.composer-slot');
       const wash = getComputedStyle(slot, '::after'), blur = getComputedStyle(slot, '::before');
-      const bar = document.querySelector('.main > .topbar'), barWash = getComputedStyle(bar, '::after');
+      const bar = document.querySelector('.main > .topbar'), barWash = getComputedStyle(bar, '::after'), barBlur = getComputedStyle(bar, '::before');
       return {
-        slot: slot.getBoundingClientRect().height, composer: composer.getBoundingClientRect().height,
-        washHeight: px(wash.height), washBottom: px(wash.bottom), washTint: wash.backgroundImage, blurFilter: blur.backdropFilter,
-        bar: bar.getBoundingClientRect().height, barWashHeight: px(barWash.height),
+        washDisplay: wash.display,
+        blurDisplay: blur.display,
+        bar: bar.getBoundingClientRect().height,
+        barWashHeight: px(barWash.height),
+        barBlurDisplay: barBlur.display,
       };
     });
     const plain = await edges();
-    assert.equal(plain.washBottom, 0, 'the bottom wash runs down to the screen edge');
-    assert.ok(Math.abs(plain.washHeight - (plain.composer + 40)) <= 1, 'the bottom wash is the composer plus 40px of fade above its box');
-    assert.ok(!/rgba\(0, 0, 0, 0\.\d*[1-9]/.test(plain.washTint), 'the bottom wash is the page colour, not a grey scrim');
-    assert.notEqual(plain.blurFilter, 'none', 'the fade above the composer is blurred');
-    assert.ok(plain.barWashHeight <= plain.bar, 'the top edge wash stays strictly inside the top bar and never hangs over the first line');
+    assert.equal(plain.washDisplay, 'none', 'phones draw no opaque bottom wash curtain behind or above the floating glass composer');
+    assert.equal(plain.blurDisplay, 'none', 'phones draw no bottom blur curtain above the floating glass composer');
+    assert.equal(plain.barBlurDisplay, 'none', 'phones draw no top blur haze dipping between the floating pills');
+    assert.ok(plain.barWashHeight <= plain.bar, 'the top status-bar edge stays strictly inside the top bar and never hangs over the first line');
     await context.close();
   } finally { await browser.close(); await daemon.stop(); }
 });

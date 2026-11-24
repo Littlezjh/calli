@@ -163,34 +163,34 @@
 
 /* ---------- Chat topbar: Option A floating liquid glass capsules ---------- */
 
-/* Remove the hanging -30px / -16px muddy wash curtain; keep only a tight micro top-edge
-   blur strictly inside the top of the bar (and solid status-bar coverage in safe-area on phones). */
-.app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar::before,
+/* Remove the hanging -30px / -16px muddy wash curtain; on phones keep only crisp status-bar
+   safe-area coverage (no blur haze dipping into the pill gaps). */
+.app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar::before {
+  display: none;
+}
+
 .app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar::after {
   inset: 0 0 auto;
-  height: calc(env(safe-area-inset-top) + 28px);
-}
-
-.app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar::before {
-  -webkit-backdrop-filter: blur(10px);
-  backdrop-filter: blur(10px);
-  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 calc(env(safe-area-inset-top) + 6px), transparent 100%);
-  mask-image: linear-gradient(to bottom, #000 0%, #000 calc(env(safe-area-inset-top) + 6px), transparent 100%);
-}
-
-.app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar::after {
+  height: calc(env(safe-area-inset-top) + 12px);
   background: linear-gradient(
     to bottom,
     var(--bg) 0%,
-    var(--bg) calc(env(safe-area-inset-top) + 8px),
-    color-mix(in srgb, var(--bg) 72%, transparent) calc(env(safe-area-inset-top) + 15px),
+    var(--bg) calc(env(safe-area-inset-top) + 6px),
     transparent 100%
   );
+}
+
+/* Remove the legacy 40px bottom fog curtain and 92% opaque backing on phones too:
+   scrolling text passes cleanly behind the floating liquid-glass composer and peeks out below it. */
+.main:has(> .composer-slot) > .composer-slot::before,
+.main:has(> .composer-slot) > .composer-slot::after {
+  display: none;
 }
 
 @media (min-width: 900px) {
   .app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar::before,
   .app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar::after {
+    display: block;
     inset: 0 0 auto;
     height: 22px;
   }
@@ -204,6 +204,45 @@
 
   .app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar::after {
     background: linear-gradient(to bottom, color-mix(in srgb, var(--bg) 78%, transparent) 0%, transparent 100%);
+  }
+
+  /* Align right-hand docked panel cards and their headers to the 58px topbar's 40px glass pills
+     (top: 9px, centerY: 29px, bottom: 49px) so the left pills and right panel header share one line. */
+  .app:not(.in-titlebar) .files-panel:not(.phone),
+  .app:not(.in-titlebar) .git-panel:not(.phone),
+  .app:not(.in-titlebar) .trace-side:not(.phone),
+  .app:not(.in-titlebar) .agent-panel {
+    margin-top: 9px;
+  }
+
+  .app:not(.in-titlebar) .files-panel:not(.phone) .files-head,
+  .app:not(.in-titlebar) .git-panel:not(.phone) .git-head,
+  .app:not(.in-titlebar) .dock-panel .term-panel .panel-head,
+  .app:not(.in-titlebar) .dock-panel .preview-bar,
+  .app:not(.in-titlebar) .dock-panel .change-diff-head,
+  .app:not(.in-titlebar) .trace-side:not(.phone) .panel-head {
+    height: 39px;
+    min-height: 39px;
+    padding-top: 0;
+    padding-bottom: 0;
+  }
+
+  .app:not(.in-titlebar) .agent-panel > .agent-panel-head {
+    min-height: 39px;
+    padding-top: 4px;
+    padding-bottom: 4px;
+  }
+
+  .app:not(.in-titlebar) .desktop-side:not(.desktop-side-page) .panel-head {
+    min-height: 58px;
+  }
+
+  /* Drop the 0.3s overview-room padding-right transition the instant a right side panel opens so
+     the narrower main column never momentarily squishes the composer. */
+  .app:has(.dock-panel, .files-panel:not(.phone), .git-panel:not(.phone), .trace-side:not(.phone), .agent-panel) .main,
+  .app:has(.dock-panel, .files-panel:not(.phone), .git-panel:not(.phone), .trace-side:not(.phone), .agent-panel) .main > .topbar,
+  .app:has(.dock-panel, .files-panel:not(.phone), .git-panel:not(.phone), .trace-side:not(.phone), .agent-panel) .main > .scroller {
+    transition: none;
   }
 }
 
