@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ApiError, type AgentInfo, type ModelOption, type Api, type PersonalSettings, type ProactiveAction, type ProactiveRun, type SuperagentTriageItem, type SuperagentTriageView, type Thread, type Todo } from '../api';
-import { historyPage, mergeHistory, mergeHistoryPage, watchHistory } from '../history';
+import { historyPage, mergeHistory, mergeHistoryPage, peekCachedPage, watchHistory } from '../history';
+import { cachedRouterThreadId, rememberRouterThreadId } from '../history-cache';
 import { replaceRun, startConflict, askingPins, needTarget } from '../proactive';
 import { buildDesk, briefStatus, type BriefStatus } from '../desk';
 import { buildTimeline, type StoredEvent } from '../timeline';
@@ -10,6 +11,7 @@ import { useMinWidth } from '../hooks';
 import { t } from '../i18n';
 import { ActionSheet, type SheetTarget } from './ActionSheet';
 import { Composer } from './Composer';
+import { ConversationSkeleton } from './ConversationSkeleton';
 import { AgentPicker, ModelPicker, effortsForModel } from './Pickers';
 import { ThreadView } from './ThreadView';
 import { ThreadPeek } from './ThreadPeek';
@@ -52,21 +54,43 @@ interface Props {
   focusSignal: number;
   /** The app bar's slot for the entries; without one the home draws a bar of its own. */
   headerSlot?: HTMLElement | null;
+  /** Known router thread id from the parent app, if already resolved. */
+  initialThreadId?: string | null;
 }
 
 /** The assistant's home: the conversation itself, with everything else one drawer away. */
-export function AssistantHome({ api, todos, loading, error, threads, threadsKnown, agents, personal, personalError, refreshKey, onReload, onPersonalChange, onPersonalRetry, onOpenThread, onOpenPlans, onConfigure, openFinds, onFindsOpened, onSpreadChange, revealTodoId, onRevealTodo, setupNeeded, onExplore, path, onPathChange, focusSignal, headerSlot }: Props) {
+export function AssistantHome({ api, todos, loading, error, threads, threadsKnown, agents, personal, personalError, refreshKey, onReload, onPersonalChange, onPersonalRetry, onOpenThread, onOpenPlans, onConfigure, openFinds, onFindsOpened, onSpreadChange, revealTodoId, onRevealTodo, setupNeeded, onExplore, path, onPathChange, focusSignal, headerSlot, initialThreadId }: Props) {
   const wide = useMinWidth(1200);
   const agentLabel = useCallback((id: string) => agents.find(agent => agent.id === id)?.label ?? id, [agents]);
 
   // ——— Her thread: this page is it, never a copy ———
-  const [threadId, setThreadId] = useState<string | null>(null);
+  const knownThreadId = api.demo ? null : (initialThreadId ?? cachedRouterThreadId(api.host));
+  const [threadId, setThreadId] = useState<string | null>(() => knownThreadId);
+  const [routerReady, setRouterReady] = useState<boolean>(() => api.demo || Boolean(knownThreadId));
   useEffect(() => {
-    if (api.demo) return;
+    if (api.demo) { setThreadId(null); setRouterReady(true); return; }
     let live = true;
-    void api.petRouter().then(router => { if (live) setThreadId(router.threadId); }).catch(() => undefined);
+    const cached = initialThreadId ?? cachedRouterThreadId(api.host);
+    if (cached) {
+      setThreadId(current => current ?? cached);
+      setRouterReady(true);
+    } else {
+      setRouterReady(false);
+    }
+    void api.petRouter()
+      .then(router => {
+        if (!live) return;
+        rememberRouterThreadId(api.host, router.threadId);
+        setThreadId(router.threadId);
+        setRouterReady(true);
+      })
+      .catch(e => {
+        if (!live) return;
+        setRouterReady(true);
+        if (!cached) setThreadError(message(e));
+      });
     return () => { live = false; };
-  }, [api, refreshKey]);
+  }, [api, refreshKey, initialThreadId]);
 
   // ——— The drawer: closed until an entry names a tab; the desk mounts only once wanted ———
   const drawer: DrawerTab | null = path === 'desk' || path === 'sessions' || path === 'matters' ? path : null;
@@ -88,14 +112,15 @@ export function AssistantHome({ api, todos, loading, error, threads, threadsKnow
   }, [overlay]);
 
   // ——— The conversation stream, as the peek reads it ———
-  const [thread, setThread] = useState<Thread | null>(null);
+  const initialPage = useMemo(() => (threadId ? peekCachedPage(api, threadId)?.page ?? null : null), []); // eslint-disable-line react-hooks/exhaustive-deps
+  const [thread, setThread] = useState<Thread | null>(() => (threadId ? threads.find(item => item.id === threadId) ?? null : null));
   const [threadError, setThreadError] = useState('');
-  const [events, setEvents] = useState<StoredEvent[]>([]);
-  const [loaded, setLoaded] = useState(false);
+  const [events, setEvents] = useState<StoredEvent[]>(() => initialPage?.events ?? []);
+  const [loaded, setLoaded] = useState(() => Boolean(initialPage));
   const [error_, setError] = useState('');
   const [restore, setRestore] = useState<{ text: string; nonce: number } | null>(null);
   const [retryBusy, setRetryBusy] = useState(false);
-  const [cursor, setCursor] = useState<number | null>(null);
+  const [cursor, setCursor] = useState<number | null>(() => (initialPage?.hasOlder ? initialPage.nextCursor : null));
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [needsSetup, setNeedsSetup] = useState(false);
   const scroll = useRef<HTMLDivElement>(null);
@@ -139,12 +164,23 @@ export function AssistantHome({ api, todos, loading, error, threads, threadsKnow
   useEffect(() => {
     if (!threadId) { setThread(null); setEvents([]); setLoaded(false); setCursor(null); return; }
     let live = true;
-    setThreadError(''); setLoaded(false); setEvents([]); setCursor(null);
+    const cached = peekCachedPage(api, threadId)?.page ?? null;
+    setThreadError('');
+    if (cached) {
+      setEvents(cached.events);
+      setCursor(cached.hasOlder ? cached.nextCursor : null);
+      setLoaded(true);
+    } else {
+      setLoaded(false);
+      setEvents([]);
+      setCursor(null);
+    }
     const report = (e: unknown) => { if (live) setError(message(e)); };
     void api.thread(threadId).then(value => { if (live) setThread(value); }).catch(e => { if (live) setThreadError(message(e)); });
     const ctrl = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     void watchHistory(api, threadId, ctrl.signal, {
+      pinned: true,
       page: page => { setEvents(page.events); setCursor(page.hasOlder ? page.nextCursor : null); setLoaded(true); setError(''); },
       events: batch => {
         setEvents(previous => mergeHistory(previous, batch));
@@ -290,6 +326,7 @@ export function AssistantHome({ api, todos, loading, error, threads, threadsKnow
       const targetId = switchPromiseRef.current ? await switchPromiseRef.current : threadId;
       if (!targetId) {
         const started = await api.petSay(text);
+        rememberRouterThreadId(api.host, started.threadId);
         setThreadId(started.threadId);
         return;
       }
@@ -476,7 +513,10 @@ export function AssistantHome({ api, todos, loading, error, threads, threadsKnow
     const promise = api.switchPersonalAgent(agent)
       .then(result => {
         onPersonalChange(result.settings);
-        if (result.threadId) setThreadId(result.threadId);
+        if (result.threadId) {
+          rememberRouterThreadId(api.host, result.threadId);
+          setThreadId(result.threadId);
+        }
         return result.threadId;
       })
       .catch(e => {
@@ -527,14 +567,14 @@ export function AssistantHome({ api, todos, loading, error, threads, threadsKnow
     <div className="chat-main" ref={mainRef}>
       {headerSlot ? createPortal(header, headerSlot) : <header className="chat-top">{header}</header>}
 
-      {threadId || threadError ? <>
+      {threadId || threadError || !routerReady ? <>
         <div className="chat-flow" ref={scroll} tabIndex={0} onScroll={() => { const el = scroll.current; if (el) stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120; }}>
           <div className="chat-reading">
-            {threadError && <p className="chat-error" role="alert">{threadError} <button className="ghost" onClick={() => onOpenThread(threadId!)}>{t('threadPeek.open')}</button></p>}
-            {!loaded && !threadError && <div className="loading-note">{t('common.loading')}</div>}
+            {threadError && <p className="chat-error" role="alert">{threadError} {threadId && <button className="ghost" onClick={() => onOpenThread(threadId)}>{t('threadPeek.open')}</button>}</p>}
+            {(!routerReady || (!loaded && !threadError)) && <ConversationSkeleton />}
             {/* After an agent switch the earlier talk is one tap away, at the top where it would have been. */}
             {loaded && cursor === null && thread?.handover?.sourceId && <button className="chat-earlier" onClick={() => onOpenThread(thread.handover!.sourceId)}>{t('desk.earlierWith', agentLabel(thread.handover.agent))}</button>}
-            {loaded && <ThreadView historyApi={api} historyThreadId={threadId!} historyTitle={thread?.title}
+            {loaded && threadId && <ThreadView historyApi={api} historyThreadId={threadId} historyTitle={thread?.title}
               threads={threads} onOpenThread={openPreview}
               items={timeline.items} roots={thread ? [thread.cwd, thread.cwdReal] : []} loadImage={loadImage} loadFile={loadFile}
               autoRetry={!api.demo && thread?.autoRetry ? {

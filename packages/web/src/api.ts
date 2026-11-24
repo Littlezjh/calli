@@ -24,6 +24,7 @@ import type { HistoryPage, HistoryDetail, HistoryWork } from './history';
 import { cachedQuota, clearQuotaCache, rememberQuota } from './quota-cache';
 import { clearThreadCache } from './thread-cache';
 import { clearHostCache } from './host-cache';
+import { clearHistoryCache } from './history-cache';
 import { localeTag, t } from './i18n';
 import { isSupportedVideo } from './videos';
 
@@ -1141,7 +1142,7 @@ export function loadToken(): string {
 }
 
 export function saveToken(token: string): void {
-  if (!token || token !== loadToken()) { clearQuotaCache(); clearThreadCache(); clearHostCache(); }
+  if (!token || token !== loadToken()) { clearQuotaCache(); clearThreadCache(); clearHostCache(); clearHistoryCache(); }
   try {
     if (token) localStorage.setItem(TOKEN_KEY, token);
     else localStorage.removeItem(TOKEN_KEY);
