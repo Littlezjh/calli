@@ -1473,6 +1473,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
       // The answer is for the thread that asked; another one may be open by now.
       if (shownThread.current !== id || olderRequest.current !== request) return;
       setHasOlder(page.hasOlder); historyCursor.current = page.nextCursor;
+      stickToBottom.current = false;
       const firstTurn = older.find(event => event.type === 'turn.started') ?? older[0];
       readingPosition.preparePrepend(firstTurn?.seq);
       setEvents((prev) => prependHistory(older, prev));

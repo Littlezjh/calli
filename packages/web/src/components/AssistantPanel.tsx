@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { ApiError, type AgentInfo, type ModelOption, type Api, type PersonalSettings, type ProactiveAction, type ProactiveRun, type SuperagentTriageItem, type SuperagentTriageView, type Thread, type Todo } from '../api';
-import { historyPage, mergeHistory, mergeHistoryPage, peekCachedPage, watchHistory } from '../history';
+import { historyPage, mergeHistory, peekCachedPage, prependHistory, watchHistory } from '../history';
 import { cachedRouterThreadId, rememberRouterThreadId } from '../history-cache';
+import { useReadingPosition } from '../use-reading-position';
 import { replaceRun, startConflict, askingPins, needTarget } from '../proactive';
 import { buildDesk, briefStatus, type BriefStatus } from '../desk';
 import { buildTimeline, type StoredEvent } from '../timeline';
@@ -128,9 +129,13 @@ export function AssistantHome({ api, todos, loading, error, threads, threadsKnow
   const [retryBusy, setRetryBusy] = useState(false);
   const [cursor, setCursor] = useState<number | null>(() => (initialPage?.hasOlder ? initialPage.nextCursor : null));
   const [loadingOlder, setLoadingOlder] = useState(false);
+  const [olderError, setOlderError] = useState('');
   const [needsSetup, setNeedsSetup] = useState(false);
   const scroll = useRef<HTMLDivElement>(null);
   const root = useRef<HTMLDivElement>(null);
+  const activeThread = useRef(threadId);
+  activeThread.current = threadId;
+  const olderRequest = useRef<object | null>(null);
   const [previewId, setPreviewId] = useState<string | null>(null);
   const previewOrigin = useRef<{ focus: HTMLElement | null; top: number; offset: number } | null>(null);
   const previewOverlay = !useMinWidth(901);
@@ -161,6 +166,7 @@ export function AssistantHome({ api, todos, loading, error, threads, threadsKnow
   }, [previewId, previewOverlay]);
   useEffect(() => { if (drawer) setPreviewId(null); }, [drawer]);
   const stick = useRef(true);
+  const readingPosition = useReadingPosition(scroll, stick, threadId, events, '', Boolean(previewId));
   const timeline = useMemo(() => buildTimeline(events), [events]);
   const waiting = useMemo(() => timeline.items.flatMap((item): SheetTarget[] =>
     item.kind === 'approval' && item.decision === null ? [{ kind: 'approval', item }]
@@ -168,6 +174,10 @@ export function AssistantHome({ api, todos, loading, error, threads, threadsKnow
   const running = timeline.running || thread?.status === 'running';
 
   useEffect(() => {
+    olderRequest.current = null;
+    setLoadingOlder(false);
+    setOlderError('');
+    stick.current = true;
     if (!threadId) { setThread(null); setEvents([]); setLoaded(false); setCursor(null); return; }
     let live = true;
     const cached = peekCachedPage(api, threadId)?.page ?? null;
@@ -268,19 +278,29 @@ export function AssistantHome({ api, todos, loading, error, threads, threadsKnow
   const loadImage = useCallback((id: string) => threadId ? api.attachment(threadId, id) : Promise.reject(new Error('no thread')), [api, threadId]);
   const loadFile = useCallback((path: string) => threadId ? api.threadFile(threadId, path) : Promise.reject(new Error('no thread')), [api, threadId]);
   const loadOlder = async () => {
-    if (cursor === null || loadingOlder || !threadId) return;
+    const id = threadId;
+    if (cursor === null || loadingOlder || olderRequest.current || !id) return;
+    const request = {};
+    olderRequest.current = request;
+    stick.current = false;
+    setOlderError('');
     setLoadingOlder(true);
-    const element = scroll.current;
-    const height = element?.scrollHeight ?? 0;
-    const top = element?.scrollTop ?? 0;
     try {
-      const page = await historyPage(api, threadId, cursor);
+      const page = await historyPage(api, id, cursor);
+      if (activeThread.current !== id || olderRequest.current !== request) return;
       stick.current = false;
-      setEvents(previous => mergeHistoryPage(previous, page));
+      const firstTurn = page.events.find(event => event.type === 'turn.started') ?? page.events[0];
+      readingPosition.preparePrepend(firstTurn?.seq);
+      setEvents(previous => prependHistory(page.events, previous));
       setCursor(page.hasOlder ? page.nextCursor : null);
-      requestAnimationFrame(() => { if (element) element.scrollTop = top + element.scrollHeight - height; });
-    } catch (e) { setError(message(e)); }
-    finally { setLoadingOlder(false); }
+    } catch (e) {
+      if (olderRequest.current === request) setOlderError(message(e));
+    } finally {
+      if (olderRequest.current === request) {
+        olderRequest.current = null;
+        setLoadingOlder(false);
+      }
+    }
   };
 
   const refresh = useCallback(() => {
@@ -595,7 +615,12 @@ export function AssistantHome({ api, todos, loading, error, threads, threadsKnow
       {headerSlot && !sideBySide ? createPortal(header, headerSlot) : <header className="chat-top">{topLead}<span className="chat-brand">{t('desk.title')}</span><span className="sp" />{header}</header>}
 
       {threadId || threadError || !routerReady ? <>
-        <div className="chat-flow" ref={scroll} tabIndex={0} data-note-target="assistant-home" data-note-thread={threadId ?? ''} onScroll={() => { const el = scroll.current; if (el) stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120; }}>
+        <div className="chat-flow" ref={scroll} tabIndex={0} data-note-target="assistant-home" data-note-thread={threadId ?? ''} onScroll={() => {
+          const el = scroll.current;
+          if (!el || readingPosition.didRestore()) return;
+          stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+          readingPosition.capture();
+        }}>
           <div className="chat-reading">
             {threadError && <p className="chat-error" role="alert">{threadError} {threadId && <button className="ghost" onClick={() => onOpenThread(threadId)}>{t('threadPeek.open')}</button>}</p>}
             {(!routerReady || (!loaded && !threadError)) && <ConversationSkeleton />}
@@ -613,7 +638,7 @@ export function AssistantHome({ api, todos, loading, error, threads, threadsKnow
                     .catch(e => setError(message(e))).finally(() => setRetryBusy(false));
                 },
               } : null}
-              observeOlder={false} hasOlder={cursor !== null} loadingOlder={loadingOlder} onLoadOlder={() => void loadOlder()} />}
+              hasOlder={cursor !== null} loadingOlder={loadingOlder} olderError={olderError || undefined} onLoadOlder={() => void loadOlder()} />}
             {error_ && <p className="chat-error" role="alert">{error_}</p>}
           </div>
         </div>

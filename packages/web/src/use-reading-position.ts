@@ -15,7 +15,7 @@ export function useReadingPosition(scroller: RefObject<HTMLElement | null>, pinn
 
   const capture = () => {
     const el = scroller.current;
-    anchor.current = el && !pinned.current ? captureReadingAnchor(el) : null;
+    anchor.current = el && !pinned.current && !pausedNow.current ? captureReadingAnchor(el) : null;
   };
   const apply = (el: HTMLElement, position = anchor.current) => {
     const delta = restoreReadingAnchor(el, position);
@@ -58,7 +58,7 @@ export function useReadingPosition(scroller: RefObject<HTMLElement | null>, pinn
     restored.current = null;
     if (top !== null && Math.abs(el.scrollTop - top) <= 1) return true;
     // 内容收缩也能改变 scrollTop，程序补偿不能被误认为新的阅读位置。
-    if (!pinned.current && anchor.current && anchor.current.height !== el.scrollHeight && !pending.current) {
+    if (!pinned.current && !pausedNow.current && anchor.current && anchor.current.height !== el.scrollHeight && !pending.current) {
       restore();
       return true;
     }

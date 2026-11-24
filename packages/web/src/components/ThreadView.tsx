@@ -156,6 +156,8 @@ const MAX_DIFF_LINES = 400;
 const RECENT_TURNS = 30;
 /** Scrolling up to within this distance of the top unfolds or fetches the earlier turns. */
 const NEAR_TOP_PX = 600;
+/** Nearest scrollable container for a thread: panel scrollers first, falling back to the main page scroller. */
+const THREAD_SCROLLER = '.chat-flow, .agent-panel-body, .thread-peek-body, .side-chat-body, .scroller';
 
 export function ThreadView({ onOpenFinds, chain = false, observeOlder = true, beforeItems, olderLabel, olderError, revealTurnId, historyApi, historyThreadId, historyTitle, items: originalItems, roots, loadImage, loadFile, onOpenFile, onPreview, hasOlder, loadingOlder, onLoadOlder, onFork, onQuote, onMessageContext, onHandToAssistant, onAutoHandover, forkAnyTurn, onEdit, revision = 0, takeover, resume, autoRetry, advance, memberThreadId, onOpenMemberThread, threads, onOpenThread }: Props) {
   const machineId = useReferenceMachine(historyApi?.demo ? null : historyApi);
@@ -243,7 +245,7 @@ export function ThreadView({ onOpenFinds, chain = false, observeOlder = true, be
   const restoreFromBottom = useRef<number | null>(null);
   const expandAnchor = useRef<ReadingAnchor | null>(null);
   const expand = () => {
-    const scroller = threadRef.current?.closest<HTMLElement>('.scroller');
+    const scroller = threadRef.current?.closest<HTMLElement>(THREAD_SCROLLER);
     if (scroller) { expandAnchor.current = captureReadingAnchor(scroller); restoreFromBottom.current = scroller.scrollHeight - scroller.scrollTop; }
     setExpandedFor({ key: threadKey, value: true });
   };
@@ -255,13 +257,13 @@ export function ThreadView({ onOpenFinds, chain = false, observeOlder = true, be
   };
   // Unfolded turns land above the viewport; keep the same content in view.
   useLayoutEffect(() => {
-    const scroller = threadRef.current?.closest<HTMLElement>('.scroller');
+    const scroller = threadRef.current?.closest<HTMLElement>(THREAD_SCROLLER);
     if (scroller && restoreFromBottom.current !== null && restoreReadingAnchor(scroller, expandAnchor.current) === null) scroller.scrollTop = scroller.scrollHeight - restoreFromBottom.current;
     expandAnchor.current = null;
     restoreFromBottom.current = null;
   }, [expanded]);
   useEffect(() => {
-    const scroller = threadRef.current?.closest<HTMLElement>('.scroller');
+    const scroller = threadRef.current?.closest<HTMLElement>(THREAD_SCROLLER);
     if (!scroller) return;
     let lastTop = scroller.scrollTop;
     let touchY = 0;
@@ -292,7 +294,10 @@ export function ThreadView({ onOpenFinds, chain = false, observeOlder = true, be
     };
     const onTouchStart = (e: TouchEvent) => void (touchY = e.touches[0]?.clientY ?? 0);
     const onTouchMove = (e: TouchEvent) => {
-      if ((e.touches[0]?.clientY ?? 0) <= touchY + 10 || nestedScrollConsumesUp(e.target)) return;
+      const y = e.touches[0]?.clientY;
+      if (y === undefined) return;
+      if (y < touchY) { touchY = y; return; }
+      if (y <= touchY + 10 || nestedScrollConsumesUp(e.target)) return;
       upward = true;
       if (scroller.scrollTop < NEAR_TOP_PX) reach();
     };

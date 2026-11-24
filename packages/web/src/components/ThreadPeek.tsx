@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { MAX_QUEUED, type AgentInfo, type Api, type ModelOption, type SlashCommand, type Thread, type WorkMode } from '../api';
-import { historyPage, refreshHistoryPage, mergeHistory, mergeHistoryPage, peekCachedPage, watchHistory } from '../history';
+import { historyPage, refreshHistoryPage, mergeHistory, mergeHistoryPage, peekCachedPage, prependHistory, watchHistory } from '../history';
 import { buildTimeline, type StoredEvent } from '../timeline';
+import { useReadingPosition } from '../use-reading-position';
 import { restoreVideos, type PreparedVideo } from '../videos';
 import { ActionSheet, type SheetTarget } from './ActionSheet';
 import { Composer, type DraftNote } from './Composer';
@@ -43,8 +44,13 @@ export function ThreadPeek({ api, initial, agents, draftKey, returnFocus, onClos
   const [restore, setRestore] = useState<{ text: string; nonce: number } | null>(null);
   const [cursor, setCursor] = useState<number | null>(() => (initialPage?.hasOlder ? initialPage.nextCursor : null));
   const [loadingOlder, setLoadingOlder] = useState(false);
+  const [olderError, setOlderError] = useState('');
   const scroll = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
+  const activeThread = useRef(id);
+  activeThread.current = id;
+  const olderRequest = useRef<object | null>(null);
+  const readingPosition = useReadingPosition(scroll, stick, id, events, String(retry), false);
   const callbacks = useRef({ onClose, onChange, onNotesChange });
   callbacks.current = { onClose, onChange, onNotesChange };
   const timeline = useMemo(() => buildTimeline(events), [events]);
@@ -130,6 +136,10 @@ export function ThreadPeek({ api, initial, agents, draftKey, returnFocus, onClos
     const ctrl = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     const cached = peekCachedPage(api, id)?.page ?? null;
+    olderRequest.current = null;
+    setLoadingOlder(false);
+    setOlderError('');
+    stick.current = true;
     setThreadError('');
     setHistoryError('');
     if (cached) {
@@ -163,19 +173,29 @@ export function ThreadPeek({ api, initial, agents, draftKey, returnFocus, onClos
   const loadImage = useCallback((attachmentId: string) => api.attachment(id, attachmentId), [api, id]);
   const loadFile = useCallback((path: string) => api.threadFile(id, path), [api, id]);
   const loadOlder = async () => {
-    if (cursor === null || loadingOlder) return;
+    const targetId = id;
+    if (cursor === null || loadingOlder || olderRequest.current) return;
+    const request = {};
+    olderRequest.current = request;
+    stick.current = false;
+    setOlderError('');
     setLoadingOlder(true);
-    const element = scroll.current;
-    const height = element?.scrollHeight ?? 0;
-    const top = element?.scrollTop ?? 0;
     try {
-      const page = await historyPage(api, id, cursor);
+      const page = await historyPage(api, targetId, cursor);
+      if (activeThread.current !== targetId || olderRequest.current !== request) return;
       stick.current = false;
-      setEvents(previous => mergeHistoryPage(previous, page));
+      const firstTurn = page.events.find(event => event.type === 'turn.started') ?? page.events[0];
+      readingPosition.preparePrepend(firstTurn?.seq);
+      setEvents(previous => prependHistory(page.events, previous));
       setCursor(page.hasOlder ? page.nextCursor : null);
-      requestAnimationFrame(() => { if (element) element.scrollTop = top + element.scrollHeight - height; });
-    } catch (error) { reportError(error); }
-    finally { setLoadingOlder(false); }
+    } catch (error) {
+      if (olderRequest.current === request) setOlderError(error instanceof Error ? error.message : String(error));
+    } finally {
+      if (olderRequest.current === request) {
+        olderRequest.current = null;
+        setLoadingOlder(false);
+      }
+    }
   };
   const running = timeline.running || thread?.status === 'running';
   const effortLevels = thread ? effortsForModel(models, thread.model ?? null, caps?.effortLevels ?? []) : [];
@@ -267,11 +287,16 @@ export function ThreadPeek({ api, initial, agents, draftKey, returnFocus, onClos
     </header>
     {error && <p className="thread-peek-error" role="alert">{error} <button className="ghost" onClick={() => setRetry(value => value + 1)}>{t('common.retry')}</button></p>}
     {thread?.waiting && waiting.length === 0 && <button className="thread-peek-attention ghost" onClick={onOpen}>{t('threadPeek.needsAction')}</button>}
-    <div className={side ? "agent-panel-body" : "thread-peek-body"} ref={scroll} tabIndex={0} data-note-target={draftKey} data-note-thread={id} onScroll={() => { const el = scroll.current; if (el) stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120; }}>
+    <div className={side ? "agent-panel-body" : "thread-peek-body"} ref={scroll} tabIndex={0} data-note-target={draftKey} data-note-thread={id} onScroll={() => {
+      const el = scroll.current;
+      if (!el || readingPosition.didRestore()) return;
+      stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+      readingPosition.capture();
+    }}>
       {!loaded || !thread ? (!error && <ConversationSkeleton compact />) : <ThreadView historyApi={api} historyThreadId={thread.id} historyTitle={thread.title}
         items={timeline.items} roots={[thread.cwd, thread.cwdReal]} loadImage={loadImage} loadFile={loadFile}
         onOpenFile={onOpenFile ? path => onOpenFile(path, thread.id, draftKey) : undefined}
-        observeOlder={false} hasOlder={cursor !== null} loadingOlder={loadingOlder} onLoadOlder={() => void loadOlder()} />}
+        hasOlder={cursor !== null} loadingOlder={loadingOlder} olderError={olderError || undefined} onLoadOlder={() => void loadOlder()} />}
     </div>
     {thread && <Composer attachBlocked={attachBlocked} attachNote={imagesNote(models, thread.model ?? null)} restore={restore}
       note={noteSignal?.draftKey === draftKey ? noteSignal.note : null}
