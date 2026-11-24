@@ -823,6 +823,8 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   const composerScope = JSON.stringify([composerDraftKey, draftGeneration]);
   const composerScopeRef = useRef(composerScope); composerScopeRef.current = composerScope;
   const [noteSignal, setNoteSignal] = useState<{ draftKey: string; note: DraftNote & { nonce: number } } | null>(null);
+  const pendingNoteId = useRef<string | null>(null);
+  pendingNoteId.current = noteSignal?.note.id ?? null;
   const [messageReference, setMessageReference] = useState<{ scope: string; value: ContextReference; nonce: number } | null>(null);
   const [assistantMessage, setAssistantMessage] = useState<MessageSnapshot | null>(null);
   const messageAssistantApi = useMemo(() => hostId === null ? api : new Api(token), [api, hostId, token]);
@@ -835,20 +837,32 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   }, []);
   // Where each noted passage stands in the conversation, for as long as its note waits in the box.
   const noteRanges = useRef(new Map<string, Range>());
+  const notesByTarget = useRef(new Map<string, DraftNote[]>());
   const [noteMarks, setNoteMarks] = useState<NoteMark[]>([]);
   // Notes waiting in the box, and a tick each time one is picked out of the file panel — the phone's
   // full-screen page cannot show the box, so it counts them at its foot instead.
   const [noteCount, setNoteCount] = useState(0);
   const [filesNotePulse, setFilesNotePulse] = useState(0);
-  const onNotesChange = useCallback((notes: DraftNote[]) => {
-    const ranges = noteRanges.current;
-    for (const id of [...ranges.keys()]) if (!notes.some((n) => n.id === id)) ranges.delete(id);
-    setNoteCount(notes.length);
-    setNoteMarks(notes.flatMap((n, i) => {
-      const range = ranges.get(n.id);
-      return range ? [{ id: n.id, n: i + 1, range }] : [];
-    }));
+  const onNotesChangeFor = useCallback((target: string, notes: DraftNote[]) => {
+    if (notes.length) notesByTarget.current.set(target, notes);
+    else notesByTarget.current.delete(target);
+    const allIds = new Set<string>();
+    const marks: NoteMark[] = [];
+    let total = 0;
+    for (const list of notesByTarget.current.values()) {
+      total += list.length;
+      list.forEach((n, i) => {
+        allIds.add(n.id);
+        const range = noteRanges.current.get(n.id);
+        if (range) marks.push({ id: n.id, n: i + 1, range });
+      });
+    }
+    for (const id of [...noteRanges.current.keys()]) if (!allIds.has(id) && id !== pendingNoteId.current) noteRanges.current.delete(id);
+    setNoteCount(total);
+    setNoteMarks(marks);
   }, []);
+  const onNotesChange = useCallback((notes: DraftNote[]) => onNotesChangeFor(composerDraftKey, notes), [composerDraftKey, onNotesChangeFor]);
+  useEffect(() => () => onNotesChangeFor(composerDraftKey, []), [composerDraftKey, onNotesChangeFor]);
   // The passage a side chat was opened for, if one is open.
   const [sideAsk, setSideAsk] = useState<{ text: string; nonce: number; source?: Thread } | null>(null);
   // A message waiting for the user to confirm sending into a session the terminal also used.
@@ -1734,15 +1748,17 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
 
   // The file panel may browse any thread; switching the conversation closes it.
   const [filesThreadId, setFilesThreadId] = useState<string | null>(null);
+  const [filesDraftKey, setFilesDraftKey] = useState<string | null>(null);
   const [files, setFiles] = useState<FilesTarget | null>(null);
-  const filesThread = threads.find(thread => thread.id === filesThreadId) ?? selected;
+  const activeFilesThreadId = filesThreadId ?? selected?.id ?? null;
+  const filesThread = threads.find(thread => thread.id === activeFilesThreadId) ?? (activeFilesThreadId === selected?.id ? selected : null);
   /** The thread's trace, beside the conversation on a desktop, a page of its own on a phone. */
   const [traceOpen, setTraceOpen] = useState(false);
   const [gitOpen, setGitOpen] = useState(false);
   useLayoutEffect(() => { setGitOpen(false); }, [selectedId, api]);
   useEffect(() => { if (files || traceOpen || agentsOpen) setGitOpen(false); }, [files, traceOpen, agentsOpen]);
   const filesSeq = useRef(0);
-  useEffect(() => { setFiles(null); setFilesThreadId(null); setTraceOpen(false); }, [selectedId]);
+  useEffect(() => { setFiles(null); setFilesThreadId(null); setFilesDraftKey(null); setTraceOpen(false); }, [selectedId, onDesk]);
 
   // The overview: a popover on narrow screens and the pages, a standing panel beside the
   // conversation on a wide one. Its switch is remembered here, and starts open.
@@ -1800,19 +1816,21 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   /** Only the person turns the standing panel off; the switch above remembers it. */
   const closeOverview = useCallback(() => { if (overviewDock) setOverviewOpen(false); }, [overviewDock, setOverviewOpen]);
   const openFileLink = useCallback(
-    async (raw: string) => {
-      if (!api || !selectedId) throw new Error('no thread');
+    async (raw: string, threadId?: string, draftKey?: string) => {
+      const targetId = threadId ?? selectedId;
+      if (!api || !targetId) throw new Error('no thread');
       const ref = fileRef(raw);
       // Asked first, so a file the thread cannot show falls back to copying its path.
       let file;
       try {
-        file = await api.threadText(selectedId, ref.path);
+        file = await api.threadText(targetId, ref.path);
       } catch (error) {
         // The link may name a folder: stand the file browser's tree in it instead.
         if (error instanceof ApiError && error.status === 404) {
           try {
-            const listing = await api.threadTree(selectedId, ref.path);
-            setFilesThreadId(selectedId);
+            const listing = await api.threadTree(targetId, ref.path);
+            setFilesThreadId(targetId);
+            setFilesDraftKey(draftKey ?? null);
             setAgentsOpen(false);
             setFiles({ path: null, folder: listing.path, seq: ++filesSeq.current });
             return;
@@ -1822,7 +1840,8 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
         }
         throw error;
       }
-      setFilesThreadId(selectedId);
+      setFilesThreadId(targetId);
+      setFilesDraftKey(draftKey ?? null);
       setAgentsOpen(false);
       setFiles({ path: file.path, line: ref.line, file, seq: ++filesSeq.current });
     },
@@ -3208,7 +3227,9 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
             {peek && <ThreadPeek key={`${peek.machine ?? ''}:${peek.thread.id}`} api={peek.api} initial={peek.thread} returnFocus={peek.returnFocus}
               draftKey={peek.machine ? `host:${peek.machine}:${peek.thread.id}` : peek.thread.id}
               onClose={() => setPeek(null)} onOpen={() => openBoardThread(peek.thread.id)}
-              onChange={updated => updateMachineThread(peek.machine, updated)} />}
+              onChange={updated => updateMachineThread(peek.machine, updated)}
+              noteSignal={noteSignal} onNoteConsumed={consumeNote} onNotesChange={onNotesChangeFor}
+              onOpenFile={!peek.machine ? openFileLink : undefined} />}
           </div>
         ) : onMachines ? (
           <div key="machines" className="scroller">
@@ -3282,7 +3303,14 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
               openFinds={deskFinds} onFindsOpened={() => setDeskFinds(false)}
               onSpreadChange={setDeskSpread} revealTodoId={revealTodo} onRevealTodo={() => setRevealTodo(null)}
               path={deskPath} onPathChange={setDeskPath}
-              focusSignal={chatFocus} headerSlot={deskSlot} initialThreadId={routerThreadId} />
+              focusSignal={chatFocus} headerSlot={deskSlot} initialThreadId={routerThreadId}
+              topLead={sidebarHidden && !compact ? (
+                <div className="topbar-lead">
+                  <button className="icon-btn" aria-label={t('app.showSidebar')} title={t('app.showSidebarKey', SIDEBAR_SHORTCUT)} onClick={toggleSidebar}><IconSidebar /></button>
+                  <button className="icon-btn" aria-label={t('sidebar.newThread')} title={t('sidebar.newThread')} onClick={() => newThread()}><IconEdit /></button>
+                </div>
+              ) : undefined}
+              noteSignal={noteSignal} onNoteConsumed={consumeNote} onNotesChange={onNotesChangeFor} onOpenFile={openFileLink} />
           </div>
         ) : onTodos ? (
           // A scroller of its own: the thread's one pins itself to the bottom, a document starts at the top.
@@ -3614,10 +3642,10 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
         const a = agents.find((v) => v.id === thread.agent);
         return a ? <MemberModel part={part} agent={a} models={modelsByAgent[a.id] ?? []} value={{ model: thread.model ?? null, effort: thread.effort ?? null }} onNeed={needModels} onChange={({ model, effort }) => { void api.updateThread(thread.id, { model, effort }).then(() => refreshThreads()).catch(handleError); }}
           permission={a.capabilities.permissionModes.length ? thread.permissionMode : undefined} onPermission={(permissionMode) => { void api.updateThread(thread.id, { permissionMode }).then(() => refreshThreads()).catch(handleError); }} /> : null;
-      }} leadAgent={threads.find((t) => t.id === coordination.rootId)?.agent} phone={compact} onClose={() => setAgentsOpen(false)} onOpen={thread => { openThread(thread); setAgentsOpen(false); }} onAdjust={(name, draft) => { setAgentsOpen(false); setSelectedId(coordination.rootId); setRestore({ text: t('app.adjustTask', name) + draft, nonce: Date.now() }); }} onRefresh={() => { void refreshThreads(); }} onError={handleError} />}
+      }} leadAgent={threads.find((t) => t.id === coordination.rootId)?.agent} phone={compact} onClose={() => setAgentsOpen(false)} onOpen={thread => { openThread(thread); setAgentsOpen(false); }} onAdjust={(name, draft) => { setAgentsOpen(false); setSelectedId(coordination.rootId); setRestore({ text: t('app.adjustTask', name) + draft, nonce: Date.now() }); }} onRefresh={() => { void refreshThreads(); }} onError={handleError} noteSignal={noteSignal} onNoteConsumed={consumeNote} onNotesChange={onNotesChangeFor} onOpenFile={openFileLink} />}
       {/* On a computer what the overview opens goes in the column beside the conversation: the whole list of a group here; a page or a file's changes opened from it take its place, with a way back. */}
       {activeOverviewDetail && !compact && !preview && !picture && !termOpen && !(diffFile && diffFile.threadId === selected?.id) && <DockPanel label={t(activeOverviewDetail.section === 'all' ? 'overview.label' : `overview.${activeOverviewDetail.section}`)}>{overviewBody(closeOverviewDetail, true, activeOverviewDetail.section)}</DockPanel>}
-      {files && filesThread && api && <FilesPanel api={api} threadId={filesThread.id} target={files} phone={compact} revision={filesThread.updatedAt} writingStage={filesThread.writing?.stage ?? null} writingHabits={filesThread.writing?.habits ?? null} noted={{ count: noteCount, nonce: filesNotePulse }} onClose={() => setFiles(null)} />}
+      {files && activeFilesThreadId && api && <FilesPanel api={api} threadId={activeFilesThreadId} target={files} phone={compact} revision={filesThread?.updatedAt} writingStage={filesThread?.writing?.stage ?? null} writingHabits={filesThread?.writing?.habits ?? null} noted={{ count: noteCount, nonce: filesNotePulse }} onClose={() => { setFiles(null); setFilesThreadId(null); setFilesDraftKey(null); }} />}
       {gitOpen && selected && api && <GitPanel key={`${hostId ?? ''}:${selected.id}`} api={api} threadId={selected.id} phone={compact} running={selected.status === 'running'} onClose={() => setGitOpen(false)} />}
       {traceOpen && selected && (
         <ThreadTracePanel
@@ -3743,7 +3771,10 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           agent={sideAgent}
           agentInfo={sideAgentInfo}
           models={modelsByAgent[sideAgent] ?? []}
-          agentLabel={agentLabel(sideAsk.source?.agent ?? activeAgent)}
+          savedPreference={modelPreferences.preferences[sideAgent]}
+          onModelsLoaded={(list) => setModelsByAgent((prev) => ({ ...prev, [sideAgent]: list }))}
+          onPreferenceChanged={() => void modelPreferences.refresh()}
+          agentLabel={agentLabel(sideAgent)}
           cwd={sideAsk.source?.cwd ?? activeCwd}
           permissionMode={sideAsk.source?.permissionMode ?? permission}
           model={sideAsk.source ? sideAsk.source.model : model}
@@ -3751,7 +3782,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           quoteText={sideAsk.text}
           sourceTitle={(sideAsk.source ?? selected)?.title ?? null}
           forkSourceId={sideAsk.source ? (capsOf(sideAsk.source.agent)?.fork && !forkBlocked(sideAsk.source) ? sideAsk.source.id : null) : selected && activeCaps?.fork && !forkBlocked(selected) ? selected.id : null}
-          attachBlocked={sideAsk.source ? (capsOf(sideAsk.source.agent)?.images ? null : t('app.noImages', agentLabel(sideAsk.source.agent))) : attachBlocked}
+          attachBlocked={sideAgentInfo?.capabilities.images === false ? t('app.noImages', agentLabel(sideAgent)) : null}
           onClose={() => setSideAsk(null)}
           onError={handleError}
           onThreadCreated={(t) => setThreads((prev) => [t, ...prev.filter((x) => x.id !== t.id)])}
@@ -3788,9 +3819,14 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
         onNote={(quote, comment, range, file) => {
           const id = `note-${Date.now()}`;
           if (range) noteRanges.current.set(id, range);
+          const startNode = range?.startContainer ?? null;
+          const startEl = startNode instanceof Element ? startNode : startNode?.parentElement ?? null;
+          const targetEl = startEl?.closest<HTMLElement>('[data-note-target]');
+          const targetDraftKey = targetEl?.dataset.noteTarget || (file && filesDraftKey) || composerDraftKey;
+          const receiver = targetEl ? (targetEl.dataset.noteThread || undefined) : (file && filesThreadId) || inputThread?.id || selectedId;
           // Messages go to the chain's latest conversation; a passage from another one says where it is.
-          const source = noteSource(range, inputThread?.id ?? selectedId);
-          setNoteSignal({ draftKey: composerDraftKey, note: { id, quote, comment, nonce: Date.now(), ...(file ? { file } : {}), ...(source ? { source } : {}) } });
+          const source = noteSource(range, receiver);
+          setNoteSignal({ draftKey: targetDraftKey, note: { id, quote, comment, nonce: Date.now(), ...(file ? { file } : {}), ...(source ? { source } : {}) } });
           if (file) setFilesNotePulse((v) => v + 1);
         }}
         onSideAsk={(text, threadId) => {

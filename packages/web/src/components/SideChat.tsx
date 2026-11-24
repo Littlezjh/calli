@@ -9,7 +9,8 @@ import { Composer } from './Composer';
 import { ThreadView } from './ThreadView';
 import { IconClose } from './icons';
 import { t } from '../i18n';
-import { effortsForModel, ModelPicker } from './Pickers';
+import { effortsForModel, imagesBlocked, ModelPicker } from './Pickers';
+import { applyModelPreference, type DraftModelPreference } from '../model-preferences';
 
 interface Props {
   api: Api;
@@ -19,6 +20,10 @@ interface Props {
   agentInfo?: AgentInfo;
   /** Models already known for that agent; the picker refreshes them when opened. */
   models: ModelOption[];
+  /** Saved per-model preferences for this agent, so switching models restores each model's effort. */
+  savedPreference?: DraftModelPreference;
+  onModelsLoaded?: (models: ModelOption[]) => void;
+  onPreferenceChanged?: () => void;
   agentLabel: string;
   cwd: string;
   permissionMode: string;
@@ -60,6 +65,9 @@ export function SideChat({
   permissionMode,
   agentInfo,
   models: cachedModels,
+  savedPreference,
+  onModelsLoaded,
+  onPreferenceChanged,
   model,
   effort,
   quoteText,
@@ -75,8 +83,10 @@ export function SideChat({
   const [thread, setThread] = useState<Thread | null>(null);
   const [draftModel, setDraftModel] = useState(model);
   const [draftEffort, setDraftEffort] = useState(effort);
+  const [draftEdited, setDraftEdited] = useState<{ model: boolean; effort: boolean }>({ model: false, effort: false });
+  const draftPref = useRef<DraftModelPreference>(applyModelPreference(savedPreference, { model, effort }));
   const [models, setModels] = useState(cachedModels);
-  const [modelsStatus, setModelsStatus] = useState<'loading' | 'ready' | 'error'>(cachedModels.length ? 'ready' : 'loading');
+  const [modelsStatus, setModelsStatus] = useState<'loading' | 'ready' | 'error'>(cachedModels.length || agentInfo?.capabilities.modelCatalog === false ? 'ready' : 'loading');
   const [events, setEvents] = useState<StoredEvent[]>([]);
   const [restore, setRestore] = useState<{ text: string; nonce: number } | null>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
@@ -90,26 +100,52 @@ export function SideChat({
   const caps = agentInfo?.capabilities;
   const shownModel = thread ? thread.model : draftModel;
   const shownEffort = thread ? thread.effort : draftEffort;
+  const effectiveAttachBlocked = (caps?.images === false ? t('app.noImages', agentLabel) : attachBlocked) ?? imagesBlocked(models, shownModel);
+
+  useEffect(() => {
+    if (!thread && !draftEdited.model && !draftEdited.effort) {
+      draftPref.current = applyModelPreference(savedPreference, { model: draftModel, effort: draftEffort });
+    }
+  }, [savedPreference, thread, draftEdited.model, draftEdited.effort, draftModel, draftEffort]);
 
   const errorRef = useRef(onError);
   errorRef.current = onError;
+  const modelsLoadedRef = useRef(onModelsLoaded);
+  modelsLoadedRef.current = onModelsLoaded;
+  const modelRequest = useRef(0);
   const loadModels = useCallback((refresh = false) => {
     if (agentInfo?.capabilities.modelCatalog === false) return;
+    const ticket = ++modelRequest.current;
     setModelsStatus(current => current === 'ready' ? 'ready' : 'loading');
     void api.models(agent, refresh).then(list => {
+      if (modelRequest.current !== ticket) return;
       setModels(list);
       setModelsStatus('ready');
+      modelsLoadedRef.current?.(list);
     }).catch(error => {
+      if (modelRequest.current !== ticket) return;
       setModelsStatus(current => current === 'ready' ? 'ready' : 'error');
       errorRef.current(error);
     });
   }, [api, agent, agentInfo?.capabilities.modelCatalog]);
 
   useEffect(() => {
+    if (cachedModels.length > 0) {
+      setModels(cachedModels);
+      setModelsStatus('ready');
+    }
+  }, [cachedModels]);
+
+  useEffect(() => {
     setModels(cachedModels);
+    if (agentInfo?.capabilities.modelCatalog === false) {
+      setModelsStatus('ready');
+      return;
+    }
     setModelsStatus(cachedModels.length ? 'ready' : 'loading');
     // A cached catalog is enough until the person opens the picker; without one, fetch it now.
     if (cachedModels.length === 0) loadModels();
+    return () => { modelRequest.current++; };
     // The catalog belongs to the source agent, not to whichever thread later opens here.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agent, loadModels]);
@@ -168,7 +204,11 @@ export function SideChat({
     const title = t('sideChat.threadTitle', quoteText.replace(/\s+/g, ' ').slice(0, 24));
     let created: Thread;
     let firstText = text;
-    const choiceChanged = draftModel !== model || draftEffort !== effort;
+    const choicePatch = {
+      ...(draftEdited.model || draftModel !== model ? { model: draftModel } : {}),
+      ...(draftEdited.effort || (!draftEdited.model && draftEffort !== effort) ? { effort: draftEffort } : {}),
+    };
+    const choiceChanged = choicePatch.model !== undefined || choicePatch.effort !== undefined;
     if (forkSourceId) {
       // The fork carries the conversation the passage was selected from, so the first question
       // already lands with all its context. The message itself stays just the quote and the
@@ -178,19 +218,19 @@ export function SideChat({
       const forked = await api.forkThread(forkSourceId);
       created = await api.updateThread(forked.id, {
         title,
-        model: draftModel,
-        effort: draftEffort,
-        ...(choiceChanged ? { rememberModelChoice: true } : {}),
+        ...(choiceChanged ? { ...choicePatch, rememberModelChoice: true } : {}),
       });
       baseSeq.current = (await api.historyPosition(created.id)).snapshotSeq;
     } else {
       // A fresh agent seeing a bare snippet has nothing to go on but the words, so the message
       // says which thread the notes were lifted out of.
       created = await api.createThread({ agent, cwd, permissionMode, model: draftModel, effort: draftEffort, title });
-      if (choiceChanged) created = await api.updateThread(created.id, { model: draftModel, effort: draftEffort, rememberModelChoice: true });
+      if (choiceChanged) created = await api.updateThread(created.id, { ...choicePatch, rememberModelChoice: true });
       const { notes, body } = splitNotes(text);
       if (sourceTitle && notes.length) firstText = withNotes(notes, `${t('sideChat.notesFrom', sourceTitle)}\n\n${body}`);
     }
+    if (choiceChanged) onPreferenceChanged?.();
+    draftPref.current = applyModelPreference(draftPref.current, { model: created.model, effort: created.effort });
     setThread(created);
     onThreadCreated(created);
     await api.startTurn(created.id, firstText, outgoing, { queue: true, references, videos: await Promise.all(videos.map(async video => (await api.uploadVideo(created.id, video.file)).id)) });
@@ -203,16 +243,30 @@ export function SideChat({
   const roots = useMemo(() => (thread ? [thread.cwd, thread.cwdReal] : [cwd]), [thread, cwd]);
 
   const updateChoice = (patch: { model?: string | null; effort?: string | null }) => {
+    const nextPref = applyModelPreference(draftPref.current, patch);
+    draftPref.current = nextPref;
+    const nextModel = patch.model !== undefined ? patch.model : shownModel;
+    const levels = effortsForModel(models, nextModel, caps?.effortLevels ?? []);
+    const nextEffort = patch.effort !== undefined ? patch.effort : nextPref.effort && levels.includes(nextPref.effort) ? nextPref.effort : null;
     if (!thread) {
-      if (patch.model !== undefined) setDraftModel(patch.model);
-      if (patch.effort !== undefined) setDraftEffort(patch.effort);
+      if (patch.model !== undefined) {
+        setDraftModel(patch.model);
+        setDraftEffort(nextEffort);
+        setDraftEdited({ model: true, effort: patch.effort !== undefined });
+      } else if (patch.effort !== undefined) {
+        setDraftEffort(patch.effort);
+        setDraftEdited(prev => ({ ...prev, effort: true }));
+      }
       return;
     }
     const before = thread;
     const id = thread.id;
-    setThread({ ...thread, ...patch });
+    setThread({ ...thread, ...patch, effort: nextEffort });
     void api.updateThread(id, { ...patch, rememberModelChoice: true }).then(updated => {
+      draftPref.current = applyModelPreference(draftPref.current, { model: updated.model, effort: updated.effort });
       setThread(current => current?.id === id ? updated : current);
+      onThreadCreated(updated);
+      onPreferenceChanged?.();
     }).catch(error => {
       setThread(current => current?.id === id ? before : current);
       onError(error);
@@ -220,8 +274,7 @@ export function SideChat({
   };
 
   const chooseModel = (next: string | null) => {
-    const levels = effortsForModel(models, next, caps?.effortLevels ?? []);
-    updateChoice({ model: next, effort: shownEffort && levels.includes(shownEffort) ? shownEffort : null });
+    updateChoice({ model: next });
   };
 
   const modelPicker = caps && <ModelPicker
@@ -286,7 +339,7 @@ export function SideChat({
           actions={[]}
           hiddenCommands={[]}
           onAction={() => undefined}
-          attachBlocked={attachBlocked}
+          attachBlocked={effectiveAttachBlocked}
           onError={(message) => onError(new Error(message))}
           queued={thread?.queued ?? []}
           onRemoveQueued={(id) => threadId && api.removeQueued(threadId, id).catch(onError)}

@@ -295,6 +295,12 @@ test('a loading or failed model catalog keeps a stable control and reports its s
   const loading = renderToStaticMarkup(createElement(ModelPicker, { ...props, catalogStatus: 'loading' }));
   assert.match(loading, /class="tool-btn model-control-trigger"/);
   assert.match(loading, /正在加载/);
+  assert.equal(loading.includes('model-trigger-gauge'), false, 'agents without effort levels do not flash a gauge while loading');
+  const loadingWithKnownModel = renderToStaticMarkup(createElement(ModelPicker, {
+    ...props, models: [], model: 'opus', efforts: ['low', 'high'], effort: 'high', catalogStatus: 'loading',
+  }));
+  assert.match(loadingWithKnownModel, />opus</);
+  assert.match(loadingWithKnownModel, /class="model-trigger-gauge"/);
   const failed = renderToStaticMarkup(createElement(ModelPicker, { ...props, catalogStatus: 'error', onRetryCatalog: () => undefined }));
   assert.match(failed, /模型列表读取失败/);
 });

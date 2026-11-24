@@ -113,6 +113,10 @@ test('asking in the side chat opens a thread of its own', async () => {
   assert.equal(await page.locator('.sidebar .thread-row').count(), 1);
 
   // The side chat starts on the source model but can choose its own before the first question.
+  await api(daemon, '/api/draft-model-preferences', {
+    method: 'PATCH',
+    body: JSON.stringify({ agent: 'pi', model: 'fake/think', effort: 'low' }),
+  });
   const sideModel = page.locator('.side-chat .model-control-trigger');
   await sideModel.filter({ hasText: 'Think' }).waitFor({ timeout: 10_000 });
   await sideModel.click();
@@ -144,12 +148,15 @@ test('asking in the side chat opens a thread of its own', async () => {
   const sideThread = (await (await api(daemon, '/api/threads')).json()).find(thread => thread.title === '追问：hi ther');
   assert.equal(sideThread.model, 'fake/plain');
 
-  // After the thread exists, changing the model applies to the same thread rather than a new one.
+  // After the thread exists, changing the model applies to the same thread rather than a new one,
+  // and switching back to a model restores its remembered thinking effort.
   const patched = page.waitForResponse(response => response.request().method() === 'PATCH'
     && new URL(response.url()).pathname === `/api/threads/${sideThread.id}`);
   await sideModel.click();
   await page.getByRole('menuitemradio', { name: /^Think\b/ }).click();
-  assert.equal((await (await patched).json()).model, 'fake/think');
+  const patchedThread = await (await patched).json();
+  assert.equal(patchedThread.model, 'fake/think');
+  assert.equal(patchedThread.effort, 'low');
   assert.equal((await (await api(daemon, '/api/threads')).json()).filter(thread => thread.title === '追问：hi ther').length, 1);
   await page.locator('.side-chat-title').click();
   await page.locator('.model-control-panel').waitFor({ state: 'detached' });

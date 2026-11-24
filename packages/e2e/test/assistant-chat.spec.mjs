@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { startDaemon, launchBrowser, api, openUi, openCollaboration } from '../harness.mjs';
 
 const json = async (daemon, path, method = 'GET', body) => {
@@ -658,5 +658,116 @@ test('superagent triage orb shows top-5 titled decisions, opens thread preview o
     await nextRow.locator('.chat-ask-row.triage-main').tap();
     const panel = page.locator('.chat-home > .agent-panel');
     await panel.locator('.agent-panel-heading', { hasText: nextTitle }).waitFor();
+  } finally { await browser.close(); await daemon.stop(); }
+});
+
+test('assistant replies support selection notes, file links, and single-bar floating side cards', async () => {
+  const daemon = await startDaemon();
+  const browser = await launchBrowser();
+  try {
+    const taskPath = join(daemon.workdir, 'task.toml');
+    writeFileSync(taskPath, 'id = "201-wecom-timeout"\ntitle = "企微超时转人工评测"\n');
+    const target = await json(daemon, '/api/threads', 'POST', { agent: 'pi', cwd: daemon.workdir, title: '侧栏注释目标会话' });
+    await json(daemon, `/api/threads/${target.id}/turns`, 'POST', { text: '侧栏可批注正文片段' });
+    await waitFor(async () => (await json(daemon, `/api/threads/${target.id}`)).status === 'idle', 'target reply');
+    const markdown = [
+      `原对话：[查看目标](thread://${target.id})`,
+      '',
+      `已落盘的评测题：[task.toml](file://${taskPath})`,
+      '',
+      '管家回话里的可注释段落用于验证划词批注。',
+    ].join('\n');
+    await configurePersonal(daemon, `router-fixture-markdown ${JSON.stringify(markdown)}`);
+
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    const errors = []; page.on('pageerror', error => errors.push(error.message));
+    await openUi(page, daemon);
+    await page.evaluate(() => { location.hash = '#/desk'; });
+    const answer = page.locator('.chat-flow .row.assistant');
+    await answer.waitFor();
+
+    // 1. Selection note inside assistant conversation routes to assistant's composer.
+    await answer.locator('p', { hasText: '管家回话里的可注释段落' }).evaluate(el => {
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+      document.dispatchEvent(new Event('selectionchange'));
+    });
+    await page.locator('.selection-menu').getByRole('button', { name: '注释' }).click();
+    await page.locator('.selection-comment').fill('这里需要补充说明');
+    await page.locator('.selection-comment').press('Enter');
+    await page.locator('.chat-composer .note-strip').waitFor();
+    await page.locator('.note-mark').waitFor();
+    assert.equal(await page.locator('.note-mark').count(), 1, 'note mark appears over assistant chat');
+
+    // 2. Opening thread preview uses single topbar, compact floating card, no close-button focus ring, and accepts its own notes.
+    await answer.locator('a.thread-link').click();
+    const panel = page.locator('.chat-home > .agent-panel');
+    await panel.locator('.row.assistant', { hasText: '侧栏可批注正文片段' }).waitFor();
+    assert.equal(await page.locator('.main > .topbar').isVisible(), false, 'global topbar yields on desktop while side panel is open');
+    assert.equal(await page.locator('.chat-main > .chat-top').isVisible(), true, 'chat-main keeps its own aligned topbar');
+    const geom = await page.evaluate(() => {
+      const p = document.querySelector('.chat-home > .agent-panel');
+      const h = p.querySelector('.agent-panel-head');
+      const home = document.querySelector('.chat-home');
+      const closeBtn = h.querySelector('button[aria-label="返回助手"]');
+      return {
+        panelW: p.getBoundingClientRect().width,
+        homeW: home.getBoundingClientRect().width,
+        headH: h.getBoundingClientRect().height,
+        radius: parseFloat(getComputedStyle(p).borderTopLeftRadius),
+        closeFocused: document.activeElement === closeBtn,
+      };
+    });
+    assert.ok(geom.headH <= 50, `compact card header <= 50px, got ${geom.headH}`);
+    assert.ok(geom.panelW <= geom.homeW * 0.46, `restrained side width <= 46%, got ${geom.panelW}/${geom.homeW}`);
+    assert.ok(geom.radius >= 12, `rounded floating card, got radius ${geom.radius}`);
+    assert.equal(geom.closeFocused, false, 'mouse-opening preview does not leave focus ring on close button');
+
+    // Note inside ThreadPeek goes to ThreadPeek's own composer.
+    await panel.locator('.row.assistant').first().evaluate(el => {
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+      document.dispatchEvent(new Event('selectionchange'));
+    });
+    await page.locator('.selection-menu').getByRole('button', { name: '注释' }).click();
+    await page.locator('.selection-comment').fill('侧栏批注');
+    await page.locator('.selection-comment').press('Enter');
+    await panel.locator('.composer .note-strip').waitFor();
+
+    const shotDir = process.env.CALLI_SIDE_SHOTS;
+    if (shotDir) {
+      mkdirSync(shotDir, { recursive: true });
+      await page.screenshot({ path: join(shotDir, 'assistant-peek-notes-desktop-light.png'), animations: 'disabled' });
+    }
+
+    // 3. Clicking a file link in assistant conversation opens FilesPanel with file contents.
+    await answer.locator('a.file-link', { hasText: 'task.toml' }).click();
+    const filesPanel = page.locator('.files-panel');
+    await filesPanel.waitFor();
+    await filesPanel.getByText('201-wecom-timeout').waitFor();
+    assert.equal(await panel.count(), 0, 'opening file panel closes thread preview to avoid 3-column squeeze');
+    if (shotDir) {
+      await page.screenshot({ path: join(shotDir, 'assistant-files-desktop-light.png'), animations: 'disabled' });
+      // Also capture dark theme on desktop (Theme-aware Plan B surface check)
+      await page.emulateMedia({ colorScheme: 'dark' });
+      await page.evaluate(() => {
+        localStorage.setItem('calli.appearance', JSON.stringify({ mode: 'dark', palette: 'paper' }));
+        document.documentElement.dataset.theme = 'dark';
+      });
+      await page.waitForTimeout(200);
+      await page.screenshot({ path: join(shotDir, 'assistant-files-desktop-dark.png'), animations: 'disabled' });
+      await filesPanel.locator('button[title="关闭"]').click();
+      await answer.locator('a.thread-link').click();
+      await panel.locator('.row.assistant').first().waitFor();
+      await page.waitForTimeout(200);
+      await page.screenshot({ path: join(shotDir, 'assistant-peek-desktop-dark.png'), animations: 'disabled' });
+    }
+    assert.deepEqual(errors, []);
   } finally { await browser.close(); await daemon.stop(); }
 });

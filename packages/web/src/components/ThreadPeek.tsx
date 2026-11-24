@@ -4,7 +4,7 @@ import { historyPage, refreshHistoryPage, mergeHistory, mergeHistoryPage, peekCa
 import { buildTimeline, type StoredEvent } from '../timeline';
 import { restoreVideos, type PreparedVideo } from '../videos';
 import { ActionSheet, type SheetTarget } from './ActionSheet';
-import { Composer } from './Composer';
+import { Composer, type DraftNote } from './Composer';
 import { ConversationSkeleton } from './ConversationSkeleton';
 import { effortsForModel, imagesBlocked, imagesNote, ModelPicker, PermissionPicker, speedsForModel, UsageMeter } from './Pickers';
 import { ThreadView } from './ThreadView';
@@ -14,9 +14,13 @@ import { t } from '../i18n';
 import { AgentPanelFrame } from './AgentPanelFrame';
 
 /** A conversation reader: overlay for the board, shared team panel beside the assistant. */
-export function ThreadPeek({ api, initial, agents, draftKey, returnFocus, onClose, onOpen, onChange, side = false }: {
+export function ThreadPeek({ api, initial, agents, draftKey, returnFocus, onClose, onOpen, onChange, side = false, noteSignal, onNoteConsumed, onNotesChange, onOpenFile }: {
   api: Api; initial: Thread | string; agents?: AgentInfo[]; side?: boolean; draftKey: string; returnFocus: HTMLElement | null;
   onClose: () => void; onOpen: () => void; onChange: (thread: Thread) => void;
+  noteSignal?: { draftKey: string; note: DraftNote & { nonce: number } } | null;
+  onNoteConsumed?: (id: string) => void;
+  onNotesChange?: (draftKey: string, notes: DraftNote[]) => void;
+  onOpenFile?: (path: string, threadId: string, draftKey: string) => Promise<void>;
 }) {
   const fullOverlay = side && !useMinWidth(901);
   const id = typeof initial === 'string' ? initial : initial.id;
@@ -40,10 +44,9 @@ export function ThreadPeek({ api, initial, agents, draftKey, returnFocus, onClos
   const [cursor, setCursor] = useState<number | null>(() => (initialPage?.hasOlder ? initialPage.nextCursor : null));
   const [loadingOlder, setLoadingOlder] = useState(false);
   const scroll = useRef<HTMLDivElement>(null);
-  const close = useRef<HTMLButtonElement>(null);
   const stick = useRef(true);
-  const callbacks = useRef({ onClose, onChange });
-  callbacks.current = { onClose, onChange };
+  const callbacks = useRef({ onClose, onChange, onNotesChange });
+  callbacks.current = { onClose, onChange, onNotesChange };
   const timeline = useMemo(() => buildTimeline(events), [events]);
   const waiting = useMemo(() => timeline.items.flatMap((item): SheetTarget[] =>
     item.kind === 'approval' && item.decision === null ? [{ kind: 'approval', item }]
@@ -107,9 +110,11 @@ export function ThreadPeek({ api, initial, agents, draftKey, returnFocus, onClos
     document.addEventListener('visibilitychange', visible);
     return () => document.removeEventListener('visibilitychange', visible);
   }, [refresh]);
+  const handlePeekNotes = useCallback((notes: DraftNote[]) => { callbacks.current.onNotesChange?.(draftKey, notes); }, [draftKey]);
+  useEffect(() => () => { callbacks.current.onNotesChange?.(draftKey, []); }, [draftKey]);
   useEffect(() => {
     const previous = returnFocus;
-    close.current?.focus({ preventScroll: true });
+    panel.current?.focus({ preventScroll: true });
     const escape = (event: KeyboardEvent) => {
       if (event.key === 'Escape' && !event.isComposing && !document.querySelector('.pop-panel, [role=menu], [role=dialog][aria-modal=true]')) { event.preventDefault(); callbacks.current.onClose(); }
       if (side && event.key === 'Tab' && window.matchMedia('(max-width: 900px)').matches) {
@@ -254,20 +259,25 @@ export function ThreadPeek({ api, initial, agents, draftKey, returnFocus, onClos
   const title = thread?.title || t('view.openThread');
   const content = <>
     <header className={side ? "agent-panel-head" : "thread-peek-head"}>
-      {fullOverlay && <button ref={close} className="icon-btn" onClick={onClose} title={t('threadPeek.back')} aria-label={t('threadPeek.back')}><span className="coord-back"><IconChevron /></span></button>}
+      {fullOverlay && <button className="icon-btn" onClick={onClose} title={t('threadPeek.back')} aria-label={t('threadPeek.back')}><span className="coord-back"><IconChevron /></span></button>}
       <div className="agent-panel-heading"><strong title={title}>{title}</strong></div>
       {(running || thread?.status === 'error') && <span className="thread-peek-status" role="status">{t(thread?.status === 'error' ? 'status.error' : 'status.running')}</span>}
       <button disabled={!thread} className="icon-btn" onClick={onOpen} title={t('threadPeek.open')} aria-label={t('threadPeek.open')}><IconExternal /></button>
-      {!fullOverlay && <button ref={close} className="icon-btn" onClick={onClose} title={t(side ? 'threadPeek.back' : 'common.close')} aria-label={t(side ? 'threadPeek.back' : 'common.close')}><IconClose /></button>}
+      {!fullOverlay && <button className="icon-btn" onClick={onClose} title={t(side ? 'threadPeek.back' : 'common.close')} aria-label={t(side ? 'threadPeek.back' : 'common.close')}><IconClose /></button>}
     </header>
     {error && <p className="thread-peek-error" role="alert">{error} <button className="ghost" onClick={() => setRetry(value => value + 1)}>{t('common.retry')}</button></p>}
     {thread?.waiting && waiting.length === 0 && <button className="thread-peek-attention ghost" onClick={onOpen}>{t('threadPeek.needsAction')}</button>}
-    <div className={side ? "agent-panel-body" : "thread-peek-body"} ref={scroll} tabIndex={0} onScroll={() => { const el = scroll.current; if (el) stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120; }}>
+    <div className={side ? "agent-panel-body" : "thread-peek-body"} ref={scroll} tabIndex={0} data-note-target={draftKey} data-note-thread={id} onScroll={() => { const el = scroll.current; if (el) stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120; }}>
       {!loaded || !thread ? (!error && <ConversationSkeleton compact />) : <ThreadView historyApi={api} historyThreadId={thread.id} historyTitle={thread.title}
         items={timeline.items} roots={[thread.cwd, thread.cwdReal]} loadImage={loadImage} loadFile={loadFile}
+        onOpenFile={onOpenFile ? path => onOpenFile(path, thread.id, draftKey) : undefined}
         observeOlder={false} hasOlder={cursor !== null} loadingOlder={loadingOlder} onLoadOlder={() => void loadOlder()} />}
     </div>
-    {thread && <Composer attachBlocked={attachBlocked} attachNote={imagesNote(models, thread.model ?? null)} restore={restore} note={null} draftKey={draftKey}
+    {thread && <Composer attachBlocked={attachBlocked} attachNote={imagesNote(models, thread.model ?? null)} restore={restore}
+      note={noteSignal?.draftKey === draftKey ? noteSignal.note : null}
+      onNoteConsumed={onNoteConsumed}
+      onNotesChange={onNotesChange ? handlePeekNotes : undefined}
+      draftKey={draftKey}
       running={running} disabled={modeBusy}
       placeholder={thread.workMode === 'plan' && !running ? t('composerMenu.planOn') : running ? t('sideChat.queuePlaceholder') : t('app.placeholder.continue')}
       referenceSource={!api.demo ? { api, cwd: thread.cwd, threadId: thread.id, sourceId: thread.handover?.sourceId } : undefined}
@@ -295,5 +305,5 @@ export function ThreadPeek({ api, initial, agents, draftKey, returnFocus, onClos
       onRejectPlan={onOpen} onSkipPlan={onOpen} />}
   </>;
   return side ? <AgentPanelFrame detail panelRef={panel} label={title}>{content}</AgentPanelFrame>
-    : <aside className="thread-peek" role="complementary" aria-label={title}>{content}</aside>;
+    : <aside ref={panel} tabIndex={-1} className="thread-peek" role="complementary" aria-label={title}>{content}</aside>;
 }

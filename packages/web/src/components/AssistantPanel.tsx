@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { ApiError, type AgentInfo, type ModelOption, type Api, type PersonalSettings, type ProactiveAction, type ProactiveRun, type SuperagentTriageItem, type SuperagentTriageView, type Thread, type Todo } from '../api';
 import { historyPage, mergeHistory, mergeHistoryPage, peekCachedPage, watchHistory } from '../history';
@@ -10,7 +10,7 @@ import { restoreVideos } from '../videos';
 import { useMinWidth } from '../hooks';
 import { t } from '../i18n';
 import { ActionSheet, type SheetTarget } from './ActionSheet';
-import { Composer } from './Composer';
+import { Composer, type DraftNote } from './Composer';
 import { ConversationSkeleton } from './ConversationSkeleton';
 import { AgentPicker, ModelPicker, effortsForModel } from './Pickers';
 import { ThreadView } from './ThreadView';
@@ -54,12 +54,18 @@ interface Props {
   focusSignal: number;
   /** The app bar's slot for the entries; without one the home draws a bar of its own. */
   headerSlot?: HTMLElement | null;
+  /** Leading sidebar controls shown when the left sidebar is hidden and the home draws its own top bar. */
+  topLead?: ReactNode;
   /** Known router thread id from the parent app, if already resolved. */
   initialThreadId?: string | null;
+  noteSignal?: { draftKey: string; note: DraftNote & { nonce: number } } | null;
+  onNoteConsumed?: (id: string) => void;
+  onNotesChange?: (draftKey: string, notes: DraftNote[]) => void;
+  onOpenFile?: (path: string, threadId: string, draftKey: string) => Promise<void>;
 }
 
 /** The assistant's home: the conversation itself, with everything else one drawer away. */
-export function AssistantHome({ api, todos, loading, error, threads, threadsKnown, agents, personal, personalError, refreshKey, onReload, onPersonalChange, onPersonalRetry, onOpenThread, onOpenPlans, onConfigure, openFinds, onFindsOpened, onSpreadChange, revealTodoId, onRevealTodo, setupNeeded, onExplore, path, onPathChange, focusSignal, headerSlot, initialThreadId }: Props) {
+export function AssistantHome({ api, todos, loading, error, threads, threadsKnown, agents, personal, personalError, refreshKey, onReload, onPersonalChange, onPersonalRetry, onOpenThread, onOpenPlans, onConfigure, openFinds, onFindsOpened, onSpreadChange, revealTodoId, onRevealTodo, setupNeeded, onExplore, path, onPathChange, focusSignal, headerSlot, topLead, initialThreadId, noteSignal, onNoteConsumed, onNotesChange, onOpenFile }: Props) {
   const wide = useMinWidth(1200);
   const agentLabel = useCallback((id: string) => agents.find(agent => agent.id === id)?.label ?? id, [agents]);
 
@@ -545,9 +551,17 @@ export function AssistantHome({ api, todos, loading, error, threads, threadsKnow
     onModel={model => updateModel({ model, effort: thread.effort && effortsForModel(models, model, caps.effortLevels ?? []).includes(thread.effort) ? thread.effort : null })}
     onEffort={effort => updateModel({ effort })} /> : null;
 
+  const onNotesChangeRef = useRef(onNotesChange);
+  onNotesChangeRef.current = onNotesChange;
+  const handleAssistantNotes = useCallback((notes: DraftNote[]) => { onNotesChangeRef.current?.('assistant-home', notes); }, []);
+  useEffect(() => () => { onNotesChangeRef.current?.('assistant-home', []); }, []);
+
   const composer = <div className="chat-composer">
     {askCards}
-    <Composer attachBlocked={null} attachmentsBlocked={threadId ? undefined : t('desk.chatAttachFirst')} restore={restore} note={null}
+    <Composer attachBlocked={null} attachmentsBlocked={threadId ? undefined : t('desk.chatAttachFirst')} restore={restore}
+      note={noteSignal?.draftKey === 'assistant-home' ? noteSignal.note : null}
+      onNoteConsumed={onNoteConsumed}
+      onNotesChange={onNotesChange ? handleAssistantNotes : undefined}
       draftKey="assistant-home" running={running && !handingTo} placeholder={t('desk.chatPlaceholder')}
       onSend={async (text, images, _mentions, videos = []) => {
         await send(text, images.map(({ data, mimeType }) => ({ data, mimeType })), videos.map(video => video.file));
@@ -563,12 +577,25 @@ export function AssistantHome({ api, todos, loading, error, threads, threadsKnow
       onSendQueuedNow={id => threadId && void api.sendQueuedNow(threadId, id).then(refresh).catch(report)} />
   </div>;
 
-  return <div className={`chat-home${drawer ? ' drawer-open' : ''}${(drawer && wide) || previewId ? ' side-by-side' : ''}`} ref={root}>
+  const sideBySide = Boolean((drawer && wide) || (previewId && !previewOverlay));
+  const openAssistantFile = useCallback(async (filePath: string) => {
+    if (!onOpenFile || !threadId) return;
+    await onOpenFile(filePath, threadId, 'assistant-home');
+    openDrawer(null);
+    setPreviewId(null);
+  }, [onOpenFile, threadId, openDrawer]);
+  const openPeekFile = useCallback(async (filePath: string, targetId: string) => {
+    if (!onOpenFile) return;
+    await onOpenFile(filePath, targetId, 'assistant-home');
+    setPreviewId(null);
+  }, [onOpenFile]);
+
+  return <div className={`chat-home${drawer ? ' drawer-open' : ''}${sideBySide ? ' side-by-side' : ''}`} ref={root}>
     <div className="chat-main" ref={mainRef}>
-      {headerSlot ? createPortal(header, headerSlot) : <header className="chat-top">{header}</header>}
+      {headerSlot && !sideBySide ? createPortal(header, headerSlot) : <header className="chat-top">{topLead}<span className="chat-brand">{t('desk.title')}</span><span className="sp" />{header}</header>}
 
       {threadId || threadError || !routerReady ? <>
-        <div className="chat-flow" ref={scroll} tabIndex={0} onScroll={() => { const el = scroll.current; if (el) stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120; }}>
+        <div className="chat-flow" ref={scroll} tabIndex={0} data-note-target="assistant-home" data-note-thread={threadId ?? ''} onScroll={() => { const el = scroll.current; if (el) stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120; }}>
           <div className="chat-reading">
             {threadError && <p className="chat-error" role="alert">{threadError} {threadId && <button className="ghost" onClick={() => onOpenThread(threadId)}>{t('threadPeek.open')}</button>}</p>}
             {(!routerReady || (!loaded && !threadError)) && <ConversationSkeleton />}
@@ -577,6 +604,7 @@ export function AssistantHome({ api, todos, loading, error, threads, threadsKnow
             {loaded && threadId && <ThreadView historyApi={api} historyThreadId={threadId} historyTitle={thread?.title}
               threads={threads} onOpenThread={openPreview}
               items={timeline.items} roots={thread ? [thread.cwd, thread.cwdReal] : []} loadImage={loadImage} loadFile={loadFile}
+              onOpenFile={onOpenFile && threadId ? openAssistantFile : undefined}
               autoRetry={!api.demo && thread?.autoRetry ? {
                 ...thread.autoRetry, busy: retryBusy,
                 onCancel: () => {
@@ -613,7 +641,9 @@ export function AssistantHome({ api, todos, loading, error, threads, threadsKnow
 
     {previewId && <ThreadPeek key={previewId} side api={api} initial={previewId} agents={agents}
       draftKey={previewId} returnFocus={null} onClose={() => setPreviewId(null)}
-      onOpen={() => onOpenThread(previewId)} onChange={onReload} />}
+      onOpen={() => onOpenThread(previewId)} onChange={onReload}
+      noteSignal={noteSignal} onNoteConsumed={onNoteConsumed} onNotesChange={onNotesChange}
+      onOpenFile={onOpenFile ? openPeekFile : undefined} />}
     {drawer && <aside className={`chat-drawer${wide ? ' side' : ' over'}`} ref={drawerRef} role="dialog" aria-modal={overlay || undefined} aria-label={t('desk.drawerLabel')}>
       <header className="chat-drawer-head">
         <nav className="chat-drawer-tabs">

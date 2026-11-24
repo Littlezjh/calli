@@ -1,11 +1,11 @@
 import { historyPage, mergeHistory, prependHistory, watchHistory } from '../history';
 import { waitingLabel } from '../notices';
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { AgentInfo, Api, Coordination, Thread } from '../api';
 import { buildTalks } from '../coordination';
 import { buildTimeline, clockLabel, deliveredPreview, type StoredEvent } from '../timeline';
 import { Prose, ThreadView } from './ThreadView';
-import { Composer } from './Composer';
+import { Composer, type DraftNote } from './Composer';
 import { restoreVideos } from '../videos';
 import { AgentMark, IconAgents, IconChevron, IconClose, IconExternal, IconFile, IconHandover } from './icons';
 import { downloadBlob } from '../images';
@@ -57,7 +57,7 @@ function Said({ who, to, at, state, text, failed, file }: { who: Speaker; to?: s
   );
 }
 
-export function AgentPanel({ api, memberApi, team, agents, leadAgent, memberModel, start, phone, onClose, onOpen, onAdjust, onRefresh, onError }: {
+export function AgentPanel({ api, memberApi, team, agents, leadAgent, memberModel, start, phone, onClose, onOpen, onAdjust, onRefresh, onError, noteSignal, onNoteConsumed, onNotesChange, onOpenFile }: {
   api: Api; team: Coordination; agents: AgentInfo[]; leadAgent?: string;
   /** How to reach a member that runs on another machine. */
   memberApi?: (host: string) => Api;
@@ -68,6 +68,10 @@ export function AgentPanel({ api, memberApi, team, agents, leadAgent, memberMode
   phone: boolean; onClose: () => void; onOpen: (thread: Thread) => void;
   /** Hands the member over to the lead, with what had been written to it so far. */
   onAdjust: (name: string, draft: string) => void; onRefresh: () => void; onError: (err: unknown) => void;
+  noteSignal?: { draftKey: string; note: DraftNote & { nonce: number } } | null;
+  onNoteConsumed?: (id: string) => void;
+  onNotesChange?: (draftKey: string, notes: DraftNote[]) => void;
+  onOpenFile?: (path: string, threadId: string, draftKey: string) => Promise<void>;
 }) {
   const [memberId, setMemberId] = useState<string | null>(start ?? null);
   const panel = useRef<HTMLElement>(null);
@@ -154,6 +158,11 @@ export function AgentPanel({ api, memberApi, team, agents, leadAgent, memberMode
       requestAnimationFrame(() => { if (el) el.scrollTop += el.scrollHeight - height; });
     } catch (err) { if (olderRequest.current === request) onError(err); } finally { if (olderRequest.current === request) { olderRequest.current = null; setLoadingOlder(false); } }
   };
+  const memberDraftKey = thread ? (remote ? `host:${remote}:${thread.id}` : thread.id) : null;
+  const onNotesChangeRef = useRef(onNotesChange);
+  onNotesChangeRef.current = onNotesChange;
+  const handleMemberNotes = useCallback((notes: DraftNote[]) => { if (memberDraftKey) onNotesChangeRef.current?.(memberDraftKey, notes); }, [memberDraftKey]);
+  useEffect(() => () => { if (memberDraftKey) onNotesChangeRef.current?.(memberDraftKey, []); }, [memberDraftKey]);
   return <AgentPanelFrame panelRef={panel} detail={Boolean(memberId)} label={t('team.panel')}>
     <header className="agent-panel-head">
       {memberId && <button className="icon-btn" aria-label={t('team.back')} onClick={() => setMemberId(null)}><span className="coord-back"><IconChevron /></span></button>}
@@ -164,7 +173,7 @@ export function AgentPanel({ api, memberApi, team, agents, leadAgent, memberMode
     </header>
     {!memberId && <div className="auto-setting-line"><span>{t('auto.members')}</span><button aria-label={t('auto.members')} className="auto-toggle" role="switch" aria-checked={team.autoHandover !== false} onClick={() => { void api.setCollaborationHandover(team.rootId, team.autoHandover === false).then(onRefresh).catch(onError); }}>{t(team.autoHandover !== false ? 'auto.on' : 'auto.off')}</button></div>}
     {!connected && <div className="agent-panel-notice">{t('team.reconnecting')}</div>}
-    <div className="agent-panel-body" ref={body} onScroll={() => {
+    <div className="agent-panel-body" ref={body} data-note-target={memberDraftKey ?? undefined} data-note-thread={thread?.id ?? undefined} onScroll={() => {
       if (!body.current) return;
       if (!memberId) listScroll.current = body.current.scrollTop;
       stick.current = body.current.scrollHeight - body.current.scrollTop - body.current.clientHeight < 80;
@@ -197,18 +206,21 @@ export function AgentPanel({ api, memberApi, team, agents, leadAgent, memberMode
           <p>{m.latest?.result?.split(/<(?:calli|limi)-(?:coordination|team)>/)[0].slice(-160) || m.latest?.text.slice(0, 160) || t('team.waitingTask')}</p>
           {m.thread?.unread && <span className="coord-unread">{t('team.newOutput')}</span>}
         </button>)}
-      </> : thread ? <ThreadView historyApi={threadApi} historyThreadId={thread.id} historyTitle={thread.title} items={timeline.items} roots={[thread.cwd, thread.cwdReal]} loadImage={id => threadApi.attachment(thread.id, id)} loadFile={path => threadApi.threadFile(thread.id, path)} hasOlder={older} loadingOlder={loadingOlder} onLoadOlder={() => void loadOlder()} /> : <div className="agent-panel-empty">{t('team.childGone')}</div>}
+      </> : thread ? <ThreadView historyApi={threadApi} historyThreadId={thread.id} historyTitle={thread.title} items={timeline.items} roots={[thread.cwd, thread.cwdReal]} loadImage={id => threadApi.attachment(thread.id, id)} loadFile={path => threadApi.threadFile(thread.id, path)} onOpenFile={!remote && onOpenFile && memberDraftKey ? path => onOpenFile(path, thread.id, memberDraftKey) : undefined} hasOlder={older} loadingOlder={loadingOlder} onLoadOlder={() => void loadOlder()} /> : <div className="agent-panel-empty">{t('team.childGone')}</div>}
     </div>
     {memberId && !atBottom && <button className="agent-panel-latest" onClick={() => { stick.current = true; if (body.current) body.current.scrollTop = body.current.scrollHeight; }}>{t('team.latest')}</button>}
     {/* A member is written to directly, in a box like the lead's; going through the lead instead is
         the quiet control above it, and carries what was written along. */}
     {member && thread ? <div className="agent-panel-composer">
-      <Composer key={thread.id} draftKey={remote ? `host:${remote}:${thread.id}` : thread.id} running={thread.status === 'running'}
+      <Composer key={thread.id} draftKey={memberDraftKey!} running={thread.status === 'running'}
         placeholder={thread.status === 'running' ? t('sideChat.queuePlaceholder') : t('team.directPlaceholder', member.name)}
         banner={take => <div className="agent-panel-via"><button type="button" className="text-btn" onClick={() => onAdjust(member.name, take())}><IconAgents size={13} />{t('team.adjustViaLead')}</button></div>}
         header={null} left={remote ? null : memberModel?.(thread, 'permission') ?? null} right={remote ? null : memberModel?.(thread, 'model') ?? null} commands={[]} actions={[]} hiddenCommands={[]} onAction={() => {}}
         attachBlocked={agents.find(a => a.id === thread.agent)?.capabilities?.images ? null : t('app.noImages', agents.find(a => a.id === thread.agent)?.label ?? thread.agent)}
-        note={null} restore={restore?.thread === thread.id ? restore : null} onError={onError}
+        note={memberDraftKey && noteSignal?.draftKey === memberDraftKey ? noteSignal.note : null}
+        onNoteConsumed={onNoteConsumed}
+        onNotesChange={onNotesChange && memberDraftKey ? handleMemberNotes : undefined}
+        restore={restore?.thread === thread.id ? restore : null} onError={onError}
         onSend={async (text, images, mentions, videos = []) => {
           try {
             await threadApi.startTurn(thread.id, text, images.map(({ data, mimeType }) => ({ data, mimeType })), {

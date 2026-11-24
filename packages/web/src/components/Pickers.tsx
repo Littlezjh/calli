@@ -222,12 +222,21 @@ export function ModelPicker(props: ModelProps) {
   const { models, model, efforts, effort, openSignal, quietFor } = props;
   const narrow = useIsNarrow();
   if (props.catalog === false) return null;
+  const resolved = resolveModel(models, model);
+  const impliedEffort = !effort && model && resolved && resolved.id !== model && model.startsWith(resolved.id + '-') ? model.slice(resolved.id.length + 1) : null;
+  const effectiveEffort = effort ?? impliedEffort;
+  const levels = effortsForModel(models, model, efforts);
+  const shownEffort = effectiveEffort && levels.includes(effectiveEffort) ? effectiveEffort : null;
   if (props.catalogStatus && props.catalogStatus !== 'ready') {
     const failed = props.catalogStatus === 'error';
     const label = failed ? t('pickers.modelsLoadFailed') : t('common.loading');
     return <Popover label={t('pickers.modelAndEffort')} align="end" panelClassName="model-control-panel"
-      triggerClassName="tool-btn model-control-trigger" triggerLabel={label} triggerTitle={label}
-      trigger={<><span className="model-trigger-name">{t('statusPanel.model')}</span><IconEffortGauge size={narrow ? 20 : 17} level={null} /></>}>
+      triggerClassName={`tool-btn model-control-trigger${narrow && levels.length > 0 ? ' dial-only' : ''}`} triggerLabel={label} triggerTitle={label}
+      trigger={<>
+        {!(narrow && levels.length > 0) && <span className="model-trigger-name">{model ? modelName(models, model) : t('statusPanel.model')}</span>}
+        {levels.length > 0 && <span className="model-trigger-gauge"><IconEffortGauge size={narrow ? 20 : 17} level={shownEffort ? (levels.indexOf(shownEffort) + 1) / levels.length : null} /></span>}
+        {!narrow && <IconChevron size={13} open />}
+      </>}>
       {() => <><div className="pop-title">{label}</div>{failed && <button type="button" className="pop-item compact" onClick={props.onRetryCatalog}>{t('common.retry')}</button>}</>}
     </Popover>;
   }
@@ -257,11 +266,6 @@ export function ModelPicker(props: ModelProps) {
       </Popover>
     );
   }
-  const resolved = resolveModel(models, model);
-  const impliedEffort = !effort && model && resolved && resolved.id !== model && model.startsWith(resolved.id + '-') ? model.slice(resolved.id.length + 1) : null;
-  const effectiveEffort = effort ?? impliedEffort;
-  const levels = effortsForModel(models, model, efforts);
-  const shownEffort = effectiveEffort && levels.includes(effectiveEffort) ? effectiveEffort : null;
   if (quietFor !== undefined) {
     const chosen = [model ? modelName(models, model) : '', shownEffort ? (EFFORT_LABELS[shownEffort] ?? shownEffort) : ''].filter(Boolean).join(' · ');
     // Named even when nothing was chosen: the default model's name, quieter than a choice.
