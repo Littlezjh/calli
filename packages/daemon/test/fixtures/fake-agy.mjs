@@ -289,6 +289,23 @@ function runTurn(text) {
     setTimeout(() => update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '⚠ Individual quota reached.' } }), 20);
     return;
   }
+  if (body === 'background-approval') {
+    step({ step_index: stepIndex++, state: 'DONE', step_type: 'agent_response', text_delta: 'main done' });
+    result({ status: 'SUCCESS', response: 'main done' });
+    setTimeout(async () => {
+      update({ sessionUpdate: 'tool_call', toolCallId: 'bg-approval-1', name: 'run_command', title: 'calli threads --query demo', kind: 'execute', status: 'in_progress' });
+      const id = ++approvalId;
+      const answer = new Promise(resolve => approvals.set(id, resolve));
+      out({ jsonrpc: '2.0', id, method: 'session/request_permission', params: { sessionId: conversation,
+        toolCall: { toolCallId: 'bg-approval-1', title: 'calli threads --query demo' },
+        options: [{ optionId: 'allow', kind: 'allow_once', name: 'Allow' }, { optionId: 'reject', kind: 'reject_once', name: 'Reject' }] } });
+      const res = await answer;
+      const ok = res?.outcome?.optionId === 'allow';
+      update({ sessionUpdate: 'tool_call_update', toolCallId: 'bg-approval-1', status: ok ? 'completed' : 'failed', rawOutput: ok ? 'approved' : 'rejected' });
+      update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: ok ? 'background approved' : 'background rejected' } });
+    }, 20);
+    return;
+  }
   if (body === 'background-tool') {
     step({ step_index: stepIndex++, state: 'DONE', step_type: 'agent_response', text_delta: 'main done' });
     result({ status: 'SUCCESS', response: 'main done' });

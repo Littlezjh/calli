@@ -144,7 +144,27 @@ export interface ThreadSearchResult {
   nextCursor: string | null;
 }
 
+export interface SuperagentTriageItem {
+  id: string;
+  threadId: string | null;
+  title: string;
+  summary: string;
+  kind: 'approval' | 'needs_user' | 'review';
+  urgent: boolean;
+  important: boolean;
+  updatedAt: string;
+}
+
+export interface SuperagentTriageView {
+  items: SuperagentTriageItem[];
+  total: number;
+  overflowCount: number;
+}
+
 const LEDGER_STATE_KEY = 'superagent.ledgerState';
+const TRIAGE_SHELVED_KEY = 'superagent.shelvedTriage';
+const TRIAGE_FRESH_DIRECT_MS = 36 * 3600_000;
+const TRIAGE_DEFAULT_LIMIT = 5;
 const THREAD_OPEN_SOURCES: readonly ThreadOpenSource[] = [
   'sidebar',
   'search',
@@ -617,7 +637,7 @@ export class TaskLedger {
     const runs = this.personal.proactive.runs(todo.id);
     const openDoneProposal = proposals.some(p => p.kind === 'done' && p.state === 'open');
     const readyRun = runs.some(r => r.status === 'ready');
-    const askingRun = runs.find(r => r.status === 'asking');
+    const askingRun = runs.find(r => r.status === 'asking' && r.kind === 'dispatch');
     const activeRecovery = this.personal.supervision.activeRecovery(todo.id);
 
     // 1. Real user-decision boundary wins even when another parallel thread is running.
@@ -793,6 +813,150 @@ export class TaskLedger {
       items: page,
       nextCursor: page.length < combined.length ? `${version}:${page.length}` : null,
     };
+  }
+
+  private triageSignature(view: TaskView, targetThreadId: string | null): string {
+    if (view.pendingRequests.length > 0) {
+      return `req:${view.pendingRequests.map(r => r.requestId).join(',')}`;
+    }
+    const active = view.threads
+      .filter(t => !t.archived && !t.superseded)
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
+    const turnRef = (targetThreadId ? this.store.recentLifecycle(targetThreadId, 1)[0]?.turnId : null) ?? active?.lastTurnId ?? String(view.rev);
+    return `turn:${targetThreadId ?? active?.id ?? view.id}:${turnRef}:${view.phase}`;
+  }
+
+  /**
+   * High-signal SuperAgent triage funnel for the Assistant home chip:
+   * deduplicates by handover chain, drops stale/casual/paused/superseded noise,
+   * suppresses recoverable errors under active supervision, and caps at Top 5.
+   */
+  triage(options: { limit?: number; now?: Date } = {}): SuperagentTriageView {
+    const limit = options.limit === undefined ? TRIAGE_DEFAULT_LIMIT : Number(options.limit);
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 20) throw new HttpError(400, 'limit must be 1–20');
+    const now = options.now ?? new Date();
+    const shelved = this.store.hubSetting<Record<string, string>>(TRIAGE_SHELVED_KEY, {});
+    const supervisionOn = this.personal.supervision.settings().enabled;
+    const allTodos = this.store.listTodos();
+    const openTodos = allTodos.filter(todo => !todo.proposed && !todo.done && todo.state !== 'done' && todo.lane !== 'later');
+
+    const candidates: Array<SuperagentTriageItem & { score: number }> = [];
+    const seenThreads = new Set<string>();
+
+    const views = openTodos
+      .map(todo => this.taskView(todo, now, allTodos))
+      .filter(view => !view.isParentGoal && (view.phase === 'needs_user' || view.phase === 'review'))
+      .sort((a, b) => (b.pendingRequests.length > 0 ? 1 : 0) - (a.pendingRequests.length > 0 ? 1 : 0)
+        || b.priority.score - a.priority.score
+        || (b.threads[0]?.updatedAt ?? b.observedAt).localeCompare(a.threads[0]?.updatedAt ?? a.observedAt));
+
+    for (const view of views) {
+      // Explicit `dispatch` proposals already render their own Start/Decline card in AssistantPanel.
+      if (this.personal.proactive.runs(view.id).some(r => r.status === 'asking' && r.kind === 'dispatch')) continue;
+      const rawThreadId = view.pendingRequests[0]?.threadId ?? view.primaryThreadId;
+      const targetThreadId = rawThreadId ? this.activeSegmentId(rawThreadId) : null;
+      if (targetThreadId && this.isInternalThread(targetThreadId)) continue;
+
+      // If the tip of the handover chain moved past this older blocked segment, or is already done/archived/running unblocked, skip.
+      const tip = targetThreadId ? this.manager.threadView(targetThreadId) : null;
+      if (tip) {
+        if (tip.archivedAt || tip.doneAt) continue;
+        if (tip.status === 'running' && view.pendingRequests.length === 0 && !tip.waiting) continue;
+        if (rawThreadId && targetThreadId !== rawThreadId && view.pendingRequests.length === 0) {
+          const tipBlocked = tip.status === 'error' || (tip.report?.by !== 'user' && tip.report?.stage === 'blocked');
+          if (!tipBlocked && view.phase !== 'review') continue;
+        }
+      }
+
+      const signature = this.triageSignature(view, targetThreadId);
+      if (shelved[view.id] === signature) continue;
+
+      // Under active SuperAgent supervision, unretried runtime errors belong to SuperAgent recovery first, not user nagging.
+      if (supervisionOn && view.granted && view.pendingRequests.length === 0 && tip?.status === 'error') {
+        const hasAttempted = this.personal.supervision.listRecoveries(view.id).some(r => r.threadId === tip.id);
+        if (!hasAttempted) continue;
+      }
+
+      const rawTitle = (tip?.title && tip.title !== 'New thread' ? tip.title : view.title)
+        .replace(/(?:（接手）)+$/gu, '')
+        .trim();
+      if (!rawTitle || /^(?:🏓|.*PingPong|.*Pong reply test|LESSONS 每晚复盘)/iu.test(rawTitle)) continue;
+
+      const rawSummary = (view.pendingRequests[0]?.title ?? tip?.report?.note ?? view.reason)
+        .replace(/^\[进度\]\s*(?:需要你|待验收|进行中|等外部)\s*[：:]\s*/u, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (!rawSummary) continue;
+
+      if (view.pendingRequests.length === 0) {
+        if (/^(?:已暂停|暂停开发|暂不处理|下轮\s*\d+|下周.*跟进|\d+\s*月\s*\d+\s*日.*跟进)/u.test(rawSummary)) continue;
+        if (/(?:想听听你.*怎么样|要不要我帮你看看.*好不好读)/u.test(rawSummary)) continue;
+      }
+
+      const updatedAt = tip?.updatedAt ?? view.threads[0]?.updatedAt ?? view.observedAt;
+      const explicitCommitment = view.pendingRequests.length > 0
+        || view.phase === 'review'
+        || view.importance === 'high'
+        || view.priority.urgent
+        || view.owner === 'me'
+        || view.lane === 'you'
+        || view.capture?.kind === 'dispatch';
+      if (!explicitCommitment && now.getTime() - Date.parse(updatedAt) > TRIAGE_FRESH_DIRECT_MS) continue;
+
+      if (targetThreadId) {
+        if (seenThreads.has(targetThreadId)) continue;
+        seenThreads.add(targetThreadId);
+      }
+
+      const kind: SuperagentTriageItem['kind'] = view.pendingRequests.length > 0
+        ? 'approval'
+        : view.phase === 'review'
+          ? 'review'
+          : 'needs_user';
+
+      candidates.push({
+        id: view.id,
+        threadId: targetThreadId,
+        title: [...rawTitle].slice(0, 48).join(''),
+        summary: [...rawSummary].slice(0, 110).join(''),
+        kind,
+        urgent: view.priority.urgent || kind === 'approval',
+        important: view.priority.important,
+        updatedAt,
+        score: view.priority.score + (kind === 'approval' ? 200 : 0),
+      });
+    }
+
+    candidates.sort((a, b) => b.score - a.score || b.updatedAt.localeCompare(a.updatedAt));
+    const items = candidates.slice(0, limit).map(({ score: _score, ...item }) => item);
+    return {
+      items,
+      total: candidates.length,
+      overflowCount: Math.max(0, candidates.length - items.length),
+    };
+  }
+
+  /**
+   * Shelves a triage item from the Assistant home chip without marking the task done in the ledger.
+   * If a brand-new turn or approval arrives later, its new signature will surface normally.
+   */
+  shelveTriage(matterId: string): { id: string; shelved: boolean } {
+    const todo = this.store.getTodo(matterId);
+    if (!todo) throw new HttpError(404, 'todo not found');
+    const view = this.taskView(todo);
+    const rawThreadId = view.pendingRequests[0]?.threadId ?? view.primaryThreadId;
+    const targetThreadId = rawThreadId ? this.activeSegmentId(rawThreadId) : null;
+    const signature = this.triageSignature(view, targetThreadId);
+    const map = this.store.hubSetting<Record<string, string>>(TRIAGE_SHELVED_KEY, {});
+    const entries = Object.entries(map).slice(-300);
+    const next = Object.fromEntries([...entries, [matterId, signature]]);
+    this.store.saveHubSetting(TRIAGE_SHELVED_KEY, next);
+    for (const run of this.personal.proactive.runs()) {
+      if (run.status === 'asking' && run.kind !== 'dispatch' && (run.matterId === matterId || (targetThreadId && run.threadId === targetThreadId))) {
+        this.personal.proactive.dismiss(run.id);
+      }
+    }
+    return { id: matterId, shelved: true };
   }
 
   /**

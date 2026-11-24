@@ -586,3 +586,77 @@ test('switching the assistant agent updates immediately without locking the comp
     await page.locator('.chat-flow .row.assistant').first().waitFor({ timeout: 15_000 });
   } finally { await browser.close(); await daemon.stop(); }
 });
+
+test('superagent triage orb shows top-5 titled decisions, opens thread preview on tap, and shelves items cleanly', async () => {
+  const daemon = await startDaemon();
+  const browser = await launchBrowser();
+  try {
+    const board = (await json(daemon, '/api/extensions')).find(ext => ext.manifest.id === 'board');
+    await json(daemon, '/api/extensions/board/install', 'POST', { granted: board.manifest.permissions });
+    await configurePersonal(daemon);
+    await json(daemon, '/api/personal/superagent/settings', 'PUT', { enabled: true });
+
+    // Create 6 genuine blocked sessions + 1 casual chat noise session.
+    const casual = await json(daemon, '/api/threads', 'POST', { agent: 'pi', cwd: daemon.workdir, title: '闲聊客套会话' });
+    await json(daemon, `/api/threads/${casual.id}/turns`, 'POST', { text: 'fixture-progress [进度] 需要你：想听听你那条方案后来怎么样了，要不要我帮你看看它好不好读' });
+    await waitFor(async () => (await json(daemon, `/api/threads/${casual.id}`)).status === 'idle', 'casual idle');
+
+    const created = [];
+    for (let i = 1; i <= 6; i++) {
+      const t = await json(daemon, '/api/threads', 'POST', { agent: 'pi', cwd: daemon.workdir, title: `关键拍板会话${i}（接手）` });
+      await json(daemon, `/api/threads/${t.id}/turns`, 'POST', { text: `fixture-progress [进度] 需要你：请确认架构选型 ${i}A 还是 ${i}B` });
+      await waitFor(async () => (await json(daemon, `/api/threads/${t.id}`)).status === 'idle', `blocked ${i} idle`);
+      created.push(t);
+    }
+
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+    await openUi(page, daemon);
+    await page.evaluate(() => { location.hash = '#/desk'; });
+    const orb = page.locator('.chat-ask-orb');
+    await orb.getByText('6 待答').waitFor();
+    await orb.tap();
+
+    const tray = page.locator('.chat-tray.open');
+    await tray.waitFor();
+    assert.equal(await tray.locator('.chat-ask.triage').count(), 5, 'caps visible triage rows at 5');
+    await tray.locator('.chat-triage-more', { hasText: '其余 1 项在工作台' }).waitFor();
+    assert.equal(await tray.getByText('闲聊客套会话').count(), 0, 'casual sign-off is filtered out');
+
+    if (process.env.CALLI_TRIAGE_SHOTS) {
+      mkdirSync(process.env.CALLI_TRIAGE_SHOTS, { recursive: true });
+      await page.screenshot({ path: join(process.env.CALLI_TRIAGE_SHOTS, 'triage-phone-light.png'), animations: 'disabled' });
+      for (const [label, width, height, mobile, scheme] of [
+        ['triage-phone-dark.png', 390, 844, true, 'dark'],
+        ['triage-desktop-light.png', 1440, 900, false, 'light'],
+        ['triage-desktop-dark.png', 1440, 900, false, 'dark'],
+      ]) {
+        const ctx = await browser.newContext({ viewport: { width, height }, isMobile: mobile, hasTouch: mobile, colorScheme: scheme });
+        try {
+          const p = await ctx.newPage();
+          await openUi(p, daemon);
+          await p.evaluate(() => { location.hash = '#/desk'; });
+          await p.locator('.chat-ask-orb').click();
+          await p.locator('.chat-tray.open').waitFor();
+          await p.screenshot({ path: join(process.env.CALLI_TRIAGE_SHOTS, label), animations: 'disabled' });
+        } finally { await ctx.close(); }
+      }
+    }
+
+    const firstRow = tray.locator('.chat-ask.triage').first();
+    const firstTitle = (await firstRow.locator('.chat-triage-title').textContent())?.trim();
+    assert.match(firstTitle, /^关键拍板会话\d+$/, 'renders clean session title without （接手） suffix');
+    assert.match((await firstRow.locator('.chat-triage-sub').textContent()) ?? '', /^请确认架构选型 \d+A 还是 \d+B$/, 'renders stripped decision summary');
+
+    // Shelve the first item via × -> count drops from 6 to 5 and overflow disappears.
+    await firstRow.locator('.chat-triage-shelve').tap();
+    await orb.getByText('5 待答').waitFor();
+    assert.equal(await tray.locator('.chat-triage-more').count(), 0, 'overflow footer disappears once <= 5 remain');
+
+    // Tap the remaining top triage row -> opens its ThreadPeek directly!
+    const nextRow = tray.locator('.chat-ask.triage').first();
+    const nextTitle = (await nextRow.locator('.chat-triage-title').textContent())?.trim();
+    await nextRow.locator('.chat-ask-row.triage-main').tap();
+    const panel = page.locator('.chat-home > .agent-panel');
+    await panel.locator('.agent-panel-heading', { hasText: nextTitle }).waitFor();
+  } finally { await browser.close(); await daemon.stop(); }
+});

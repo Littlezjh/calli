@@ -786,5 +786,18 @@ test('switching her agent is instant, starts no eager handover turn, and deliver
     assert.notEqual(backToPi.threadId, switched.threadId);
     assert.equal(backToPi.settings.agent, 'pi');
     assert.equal(h.store.listEventsOfType(backToPi.threadId, 'turn.started').length, 0);
+
+    // Switching to an adapter that supports `full_access` upgrades permissionMode to `full_access`,
+    // and legacy assistant threads stuck on `auto_edit` / `助手（接手）（接手）` self-heal on send.
+    const { AgyAdapter } = await import('../src/adapters/agy.js');
+    h.adapters.set('agy-test', new AgyAdapter([process.execPath, resolve('test/fixtures/fake-agy.mjs')]));
+    const toAgy = await (await h.request('/api/personal/agent', { agent: 'agy-test' })).json() as { threadId: string };
+    assert.equal(h.store.getThread(toAgy.threadId)!.permissionMode, 'full_access');
+    h.store.updateThread(toAgy.threadId, { permissionMode: 'auto_edit', title: '助手（接手）（接手）' });
+    await h.say('检查自愈');
+    await wait(() => h.router.status().status === 'idle');
+    const healed = h.store.getThread(toAgy.threadId)!;
+    assert.equal(healed.permissionMode, 'full_access', 'degraded assistant permission self-heals to full_access');
+    assert.equal(healed.title, '助手', 'accumulated handover suffix self-heals to 助手');
   } finally { await h.close(); }
 });

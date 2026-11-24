@@ -1,7 +1,7 @@
 import type { AgentAdapter } from './adapters/types.js';
 import { HttpError } from './errors.js';
 import { replaceMessageTail, type StoredEvent, type TurnPart } from './events.js';
-import { personalText, type PersonalService } from './personal.js';
+import { assistantPermissionMode, personalText, type PersonalService } from './personal.js';
 import type { Store, ThreadRecord } from './store.js';
 import type { ThreadManager } from './threads.js';
 import { batchShape } from './turn-batch.js';
@@ -191,7 +191,8 @@ export class PersonalRouter {
         const state = this.state();
         this.store.saveHubSetting(KEY, { ...state, retiring: state.retiring?.filter(other => other !== id) });
       }
-    } finally { this.archiving = false; }
+    } catch { /* Store may already be closed during daemon shutdown. */ }
+    finally { this.archiving = false; }
   }
 
   /**
@@ -311,12 +312,13 @@ export class PersonalRouter {
     let thread = state.threadId ? this.store.getThread(state.threadId) : null;
     // Changing private settings takes effect on the next message. The conversation it replaces is
     // archived, not deleted: it stays restorable, but no longer piles up in the sidebar.
+    const desiredPermission = assistantPermissionMode(adapter);
     if (!thread || thread.archivedAt || thread.agent !== settings.agent || thread.cwd !== settings.directory || thread.model !== settings.model) {
       const replaced = thread && !thread.archivedAt ? thread.id : null;
       const replacedThread = replaced ? this.store.getThread(replaced) : null;
       const hasTurns = replaced ? this.store.listTurns(replaced).length > 0 : false;
       thread = await this.manager.createThread({ agent: settings.agent!, cwd: settings.directory, title: '助手',
-        permissionMode: adapter.capabilities.defaultPermissionMode, ...(settings.model ? { model: settings.model } : {}) });
+        permissionMode: desiredPermission, ...(settings.model ? { model: settings.model } : {}) });
       const pendingHandover: PendingHandover | null = replaced && replacedThread && hasTurns
         ? {
             forThreadId: thread.id,
@@ -331,6 +333,13 @@ export class PersonalRouter {
         retiring: [...(state.retiring ?? []), ...(replaced ? [replaced] : [])] };
       this.store.saveHubSetting(KEY, state);
       if (replaced) this.manager.notice(thread.id, '设置已变，这是新的对话；之前的内容在旧对话里');
+    } else if ((desiredPermission && thread.permissionMode !== desiredPermission) || /^助手(?:（接手）)+$/.test(thread.title)) {
+      // Heal existing assistant threads whose permission or title was degraded by legacy handover.
+      await this.manager.updateThread(thread.id, {
+        ...(desiredPermission && thread.permissionMode !== desiredPermission ? { permissionMode: desiredPermission } : {}),
+        ...(/^助手(?:（接手）)+$/.test(thread.title) ? { title: '助手' } : {}),
+      });
+      thread = this.store.getThread(thread.id)!;
     }
     await this.archiveRetired();
     // The profile digest rides along on every trigger: what the person cares about is context,

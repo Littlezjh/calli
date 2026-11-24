@@ -527,6 +527,21 @@ export interface ExploreSource { id: ExploreSourceId; available: boolean; reason
 
 export interface PersonalSettings { routerThreadId?: string | null; directoryIsDefault?: boolean; defaultDirectory?: string; defaultDirectoryDisplay?: string; directoryDisplay?: string | null; directory: string | null; agent: string | null; model: string | null }
 export interface SuperagentSettings { enabled: boolean; ledgerCapture: boolean; notifyMergeMs: number; fallbackTimeoutMs: number }
+export interface SuperagentTriageItem {
+  id: string;
+  threadId: string | null;
+  title: string;
+  summary: string;
+  kind: 'approval' | 'needs_user' | 'review';
+  urgent: boolean;
+  important: boolean;
+  updatedAt: string;
+}
+export interface SuperagentTriageView {
+  items: SuperagentTriageItem[];
+  total: number;
+  overflowCount: number;
+}
 export type ThreadOpenSource = 'sidebar' | 'search' | 'direct-link' | 'assistant-link' | 'notification' | 'handover' | 'restore';
 export interface PersonalBrief { title: string; lines: string[]; text: string }
 export type PlanRange = 'hour' | 'day' | 'week' | 'month';
@@ -1302,6 +1317,8 @@ export class Api {
   personalSettings(): Promise<PersonalSettings> { return this.request('GET', '/api/personal/settings'); }
   superagentSettings(): Promise<SuperagentSettings> { return this.request('GET', '/api/personal/superagent/settings'); }
   saveSuperagentSettings(value: Partial<SuperagentSettings>): Promise<SuperagentSettings> { return this.request('PUT', '/api/personal/superagent/settings', value); }
+  superagentTriage(): Promise<SuperagentTriageView> { return this.request('GET', '/api/personal/superagent/triage'); }
+  shelveSuperagentTriage(id: string): Promise<{ id: string; shelved: boolean }> { return this.request('POST', `/api/personal/superagent/triage/${encodeURIComponent(id)}/shelve`); }
   recordThreadOpen(threadId: string, source: ThreadOpenSource, userInitiated = true): Promise<void> {
     if (this.demo) return Promise.resolve();
     return this.request('POST', '/api/personal/thread-open', { threadId, source, userInitiated }).then(() => undefined);

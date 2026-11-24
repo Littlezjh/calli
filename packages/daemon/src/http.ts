@@ -347,6 +347,15 @@ export function createHttpServer(deps: HttpDeps): Server {
       if (method === 'GET') return sendJson(res, 200, manager.personal.supervision.settings());
       if (method === 'PUT') return sendJson(res, 200, manager.personal.supervision.saveSettings(await readJson(req)));
     }
+    if (path === '/api/personal/superagent/triage' && method === 'GET') {
+      const limitParam = url.searchParams.get('limit');
+      return sendJson(res, 200, manager.personal.ledger.triage({
+        ...(limitParam ? { limit: Number(limitParam) } : {}),
+      }));
+    }
+    if (parts[1] === 'personal' && parts[2] === 'superagent' && parts[3] === 'triage' && parts[4] && parts[5] === 'shelve' && parts.length === 6 && method === 'POST') {
+      return sendJson(res, 200, manager.personal.ledger.shelveTriage(decodeURIComponent(parts[4])));
+    }
     if (path === '/api/personal/ledger' && method === 'GET') {
       const limitParam = url.searchParams.get('limit');
       return sendJson(res, 200, manager.personal.ledger.snapshot({

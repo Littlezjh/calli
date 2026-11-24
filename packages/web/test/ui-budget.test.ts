@@ -20,7 +20,7 @@ const BUDGET = {
 
 const RATCHET = {
   /** `font-size: 12.5px` and the like instead of a size variable. */
-  rawFontSizes: 928,
+  rawFontSizes: 921,
   /** How many different raw font sizes there are; a type scale needs only a handful. */
   distinctFontSizes: 27,
   /** `border-radius: 8px` and the like instead of a --radius variable. */

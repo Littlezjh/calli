@@ -368,7 +368,9 @@ export class ProactiveService {
     const sourceThread = decision.source?.startsWith('session:') ? decision.source.slice(8) : '';
     const run: ProactiveRun = { id: randomUUID(), matterId: todo.id, kind: 'advance', threadId: sourceThread, startedAt: now.toISOString(), precheck: decision.state,
       ...(decision.source ? { source: decision.source } : {}), status: 'discarded', line: decision.evidence };
-    if (decision.state === 'done') Object.assign(run, { status: 'asking', reason: 'done', phase: 'done', summary: `看起来已经做过了：${decision.evidence}` });
+    if (decision.state === 'done' && !this.personal.supervision.settings().enabled) {
+      Object.assign(run, { status: 'asking', reason: 'done', phase: 'done', summary: `看起来已经做过了：${decision.evidence}` });
+    }
     else if (decision.state === 'doing') Object.assign(run, { summary: `正在别处进行：${decision.evidence}`, discardReason: '已有会话在做' });
     const current = this.store.getTodo(todo.id);
     if (!current || current.done || current.state === 'done' || current.proposed || this.settings().mode === 'off') return true;
@@ -408,7 +410,17 @@ export class ProactiveService {
   private invalidate(threadId?: string): void {
     for (const run of this.runs()) {
       if (run.kind === 'dispatch' || !['waiting', 'asking'].includes(run.status) || run.precheck || threadId && run.threadId !== threadId) continue;
-      if (threadId || this.store.recentLifecycle(run.threadId, 1)[0]?.turnId !== run.turnId) {
+      const thread = this.store.getThread(run.threadId);
+      const todo = run.matterId ? this.store.getTodo(run.matterId) : null;
+      if (
+        threadId
+        || !thread
+        || Boolean(thread.archivedAt)
+        || Boolean(thread.doneAt)
+        || Boolean(todo && (todo.done || todo.state === 'done' || todo.lane === 'later'))
+        || this.personal.ledger.activeSegmentId(run.threadId) !== run.threadId
+        || this.store.recentLifecycle(run.threadId, 1)[0]?.turnId !== run.turnId
+      ) {
         this.update(run.id, { status: 'discarded', discardReason: '线程已继续' });
       }
     }
@@ -499,7 +511,7 @@ export class ProactiveService {
             : attempts && previous?.wakeAt ? Math.min(60, Math.max(2, (Date.parse(previous.wakeAt) - Date.parse(previous.startedAt)) / 60_000) * 2) : decision.checkMinutes ?? 10;
           run.wakeAt = new Date(now.getTime() + delay * 60_000).toISOString();
         }
-      } else if (reason === 'done' || reason === 'user') run.status = 'asking';
+      } else if ((reason === 'done' || reason === 'user') && !this.personal.supervision.settings().enabled) run.status = 'asking';
       run.summary = reason === 'transient' ? '会在退避后续跑临时出错的线程' : reason === 'external' ? `会定时检查：${decision.wait!.what}`
         : reason === 'user' ? `会请你回答：${decision.question!.text}` : reason === 'done' ? `看起来做完了：${decision.line}` : '无法确定下一步，保留记录';
       if (this.settings().mode === 'observe' && run.status === 'waiting') run.status = 'observed';

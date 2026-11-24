@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ApiError, type AgentInfo, type ModelOption, type Api, type PersonalSettings, type ProactiveAction, type ProactiveRun, type Thread, type Todo } from '../api';
+import { ApiError, type AgentInfo, type ModelOption, type Api, type PersonalSettings, type ProactiveAction, type ProactiveRun, type SuperagentTriageItem, type SuperagentTriageView, type Thread, type Todo } from '../api';
 import { historyPage, mergeHistory, mergeHistoryPage, watchHistory } from '../history';
-import { replaceRun, startConflict, askingPins, askLine, needTarget } from '../proactive';
+import { replaceRun, startConflict, askingPins, needTarget } from '../proactive';
 import { buildDesk, briefStatus, type BriefStatus } from '../desk';
 import { buildTimeline, type StoredEvent } from '../timeline';
 import { restoreVideos } from '../videos';
@@ -13,7 +13,6 @@ import { Composer } from './Composer';
 import { AgentPicker, ModelPicker, effortsForModel } from './Pickers';
 import { ThreadView } from './ThreadView';
 import { ThreadPeek } from './ThreadPeek';
-import { RunControls, RunSummary, type ProactiveState } from './ProactiveRuns';
 import { DeskPage } from './DeskPage';
 import { PlanView } from './PlanView';
 import { IconAgents, IconChevron, IconClose, IconDrawer, IconSettings } from './icons';
@@ -159,22 +158,31 @@ export function AssistantHome({ api, todos, loading, error, threads, threadsKnow
     return () => { live = false; ctrl.abort(); clearTimeout(timer); };
   }, [api, threadId]);
 
-  // Her asks stay in the conversation, as the last thing in it. The demo has none to ask.
+  // Explicit dispatch proposals + SuperAgent's priority-filtered triage items (never raw background chatter).
   const [runs, setRuns] = useState<ProactiveRun[] | null>(null);
   const [runsError, setRunsError] = useState('');
   const [pending, setPending] = useState<Record<string, ProactiveAction>>({});
   const [failures, setFailures] = useState<Record<string, string>>({});
+  const [triage, setTriage] = useState<SuperagentTriageView>({ items: [], total: 0, overflowCount: 0 });
+  const [shelving, setShelving] = useState<Record<string, boolean>>({});
   const actionsAlive = useRef(true);
   useEffect(() => { actionsAlive.current = true; return () => { actionsAlive.current = false; }; }, []);
-  const asks = useMemo(() => askingPins(runs), [runs]);
+  const dispatchAsks = useMemo(() => askingPins(runs).filter(run => run.kind === 'dispatch'), [runs]);
+  const totalAsks = dispatchAsks.length + triage.total;
+  const visibleAsks = dispatchAsks.length + triage.items.length;
   const loadRuns = useCallback(() => {
     if (api.demo) { setRuns([]); return; }
     setRunsError('');
     void api.proactive().then(value => setRuns(value.runs)).catch(e => setRunsError(message(e)));
   }, [api]);
+  const loadTriage = useCallback(() => {
+    if (api.demo) { setTriage({ items: [], total: 0, overflowCount: 0 }); return; }
+    void api.superagentTriage().then(setTriage).catch(() => undefined);
+  }, [api]);
   useEffect(() => { loadRuns(); }, [loadRuns, refreshKey]);
+  useEffect(() => { loadTriage(); }, [loadTriage, refreshKey, todos, threads]);
 
-  useEffect(() => { if (!previewId && stick.current && scroll.current) scroll.current.scrollTop = scroll.current.scrollHeight; }, [events, asks.length, previewId]);
+  useEffect(() => { if (!previewId && stick.current && scroll.current) scroll.current.scrollTop = scroll.current.scrollHeight; }, [events, visibleAsks, previewId]);
 
   // The unread dot is the list's; reading here counts as reading.
   useEffect(() => {
@@ -275,7 +283,6 @@ export function AssistantHome({ api, todos, loading, error, threads, threadsKnow
       })
       .finally(() => setPending(({ [run.id]: _done, ...rest }) => rest));
   };
-  const state: ProactiveState = { runs, error: runsError, load: loadRuns, pending, failures, act };
 
   const switchPromiseRef = useRef<Promise<string | null> | null>(null);
   const send = async (text: string, images: { data: string; mimeType: string }[], rawVideos: File[]) => {
@@ -322,10 +329,10 @@ export function AssistantHome({ api, todos, loading, error, threads, threadsKnow
   }, [api, refreshKey]);
 
   // Pending asks stay tucked into a quiet right-edge thumb chip above the composer until tapped,
-  // eliminating full-width double-card stacking over the input bar.
+  // showing only fresh dispatch proposals and SuperAgent's top-5 high-signal decisions.
   const [trayOpen, setTrayOpen] = useState(false);
   const [openAsk, setOpenAsk] = useState<string | null>(null);
-  useEffect(() => { if (asks.length === 0) setTrayOpen(false); }, [asks.length]);
+  useEffect(() => { if (visibleAsks === 0) setTrayOpen(false); }, [visibleAsks]);
   useEffect(() => {
     if (!trayOpen) return;
     const onEsc = (event: KeyboardEvent) => {
@@ -337,54 +344,92 @@ export function AssistantHome({ api, todos, loading, error, threads, threadsKnow
     document.addEventListener('keydown', onEsc);
     return () => document.removeEventListener('keydown', onEsc);
   }, [trayOpen]);
-  const single = asks.length === 1;
-  const shownAsk = single ? asks[0].id : openAsk && asks.some(run => run.id === openAsk) ? openAsk : null;
-  const askDetail = (run: ProactiveRun) => <div className="chat-ask-detail" id={`ask-${run.id}`}>
-    {run.kind === 'dispatch'
-      ? <>
-          <p className="chat-ask-body">{run.task ?? run.summary ?? run.title ?? ''}</p>
-          {run.cwd && <p className="chat-ask-cwd"><code>{run.cwd}</code></p>}
-          <div className="chat-ask-acts">
-            <button className="primary" disabled={Boolean(pending[run.id])} aria-busy={pending[run.id] === 'start'} onClick={() => act(run, 'start')}>{t('proactive.start')}</button>
-            <button className="ghost" disabled={Boolean(pending[run.id])} onClick={() => act(run, 'dismiss')}>{t('proactive.noThanks')}</button>
-          </div>
-        </>
-      : <>
-          {run.question?.text && askLine(run) !== run.question.text.trim() && <p className="chat-ask-body">{run.question.text.trim()}</p>}
-          <RunSummary run={run} />
-          <RunControls key={run.id} api={api} run={run} state={state} hideQuestion />
-        </>}
-  </div>;
-  const askKind = (run: ProactiveRun) => run.kind === 'dispatch' ? t('desk.chatDispatch', run.agent ?? '') : run.reason === 'done' ? t('proactive.looksDone') : null;
+  const singleDispatch = dispatchAsks.length === 1 && triage.items.length === 0;
+  const shownAsk = singleDispatch ? dispatchAsks[0].id : openAsk && dispatchAsks.some(run => run.id === openAsk) ? openAsk : null;
+  const shelveTriageItem = (item: SuperagentTriageItem) => {
+    if (shelving[item.id]) return;
+    setShelving(now => ({ ...now, [item.id]: true }));
+    setTriage(prev => {
+      const items = prev.items.filter(candidate => candidate.id !== item.id);
+      const total = Math.max(0, prev.total - 1);
+      return { items, total, overflowCount: Math.max(0, total - 5) };
+    });
+    void api.shelveSuperagentTriage(item.id)
+      .then(() => { loadTriage(); loadRuns(); })
+      .catch(e => { setError(message(e)); loadTriage(); })
+      .finally(() => setShelving(({ [item.id]: _done, ...rest }) => rest));
+  };
   const openNeed = (id: string) => {
     const target = needTarget(id, runs);
     if (target.kind === 'thread') { void api.recordThreadOpen(target.id, 'assistant-link').catch(() => undefined); onOpenThread(target.id); return; }
-    if (target.kind === 'ask') { openDrawer(null); setTrayOpen(true); setOpenAsk(target.run.id); return; }
-    loadRuns(); onReload();
+    if (target.kind === 'ask') {
+      if (target.run.kind === 'dispatch') { openDrawer(null); setTrayOpen(true); setOpenAsk(target.run.id); return; }
+      if (target.run.threadId) { void api.recordThreadOpen(target.run.threadId, 'assistant-link').catch(() => undefined); onOpenThread(target.run.threadId); return; }
+    }
+    loadRuns(); loadTriage(); onReload();
   };
-  const askCards = (needsSetup || runsError || asks.length > 0) ? <div className="chat-asks" aria-label={t('desk.chatPins')}>
+  const askCards = (needsSetup || runsError || visibleAsks > 0) ? <div className="chat-asks" aria-label={t('desk.chatPins')}>
     {needsSetup && <p className="chat-ask-error" role="alert">{t('pet.needsSetup')} <button className="ghost" onClick={onConfigure}>{t('desk.configure')}</button></p>}
     {runsError && <p className="chat-ask-error" role="alert">{runsError} <button className="ghost" onClick={loadRuns}>{t('common.retry')}</button></p>}
-    {asks.length > 0 && <>
+    {visibleAsks > 0 && <>
       {trayOpen && <section className="chat-tray open">
         <ul className="chat-tray-list">
-          {asks.map(run => {
+          {dispatchAsks.map(run => {
             const open = shownAsk === run.id;
-            return <li key={run.id} className={`chat-ask${open ? ' open' : ''}${run.kind === 'dispatch' ? ' dispatch' : ''}`} data-run={run.id}>
-              <button className="chat-ask-row" aria-expanded={open} aria-controls={`ask-${run.id}`} disabled={single} onClick={() => setOpenAsk(open ? null : run.id)}>
-                {askKind(run) && <span className={`chat-ask-kind${run.kind === 'dispatch' ? '' : ' personal-warning'}`}>{run.kind === 'dispatch' && <IconAgents size={13} />}{askKind(run)}</span>}
-                <span className="chat-ask-line">{askLine(run)}</span>
+            const line = (run.title || run.task || run.summary || '').split('\n').map(s => s.trim()).find(Boolean) ?? '';
+            return <li key={run.id} className={`chat-ask dispatch${open ? ' open' : ''}`} data-run={run.id}>
+              <button className="chat-ask-row" aria-expanded={open} aria-controls={`ask-${run.id}`} disabled={singleDispatch} onClick={() => setOpenAsk(open ? null : run.id)}>
+                <span className="chat-ask-kind"><IconAgents size={13} />{t('desk.chatDispatch', run.agent ?? '')}</span>
+                <span className="chat-ask-line">{line}</span>
               </button>
-              {open && askDetail(run)}
+              {open && <div className="chat-ask-detail" id={`ask-${run.id}`}>
+                <p className="chat-ask-body">{run.task ?? run.summary ?? run.title ?? ''}</p>
+                {run.cwd && <p className="chat-ask-cwd"><code>{run.cwd}</code></p>}
+                <div className="chat-ask-acts">
+                  <button className="primary" disabled={Boolean(pending[run.id])} aria-busy={pending[run.id] === 'start'} onClick={() => act(run, 'start')}>{t('proactive.start')}</button>
+                  <button className="ghost" disabled={Boolean(pending[run.id])} onClick={() => act(run, 'dismiss')}>{t('proactive.noThanks')}</button>
+                </div>
+              </div>}
               {failures[run.id] && <p className="chat-ask-error" role="alert">{failures[run.id]}</p>}
             </li>;
           })}
+          {triage.items.map(item => <li key={item.id} className="chat-ask triage" data-triage={item.id}>
+            <div className="chat-triage-item">
+              <button type="button" className="chat-ask-row triage-main" onClick={() => {
+                setTrayOpen(false);
+                if (item.threadId) {
+                  void api.recordThreadOpen(item.threadId, 'assistant-link').catch(() => undefined);
+                  openPreview(item.threadId);
+                } else {
+                  setRevealTodo(item.id);
+                  openDrawer('desk');
+                }
+              }}>
+                <span className="chat-triage-head">
+                  {item.kind !== 'needs_user' && <span className={`chat-ask-kind${item.kind === 'approval' ? ' personal-warning' : ''}`}>{t(item.kind === 'approval' ? 'desk.triageApproval' : 'desk.triageReview')}</span>}
+                  <span className="chat-triage-title">{item.title}</span>
+                </span>
+                <span className="chat-triage-sub">{item.summary}</span>
+              </button>
+              <button type="button" className="chat-triage-shelve" disabled={Boolean(shelving[item.id])}
+                aria-label={t('desk.shelveAsk', item.title)} title={t('desk.shelve')}
+                onClick={() => shelveTriageItem(item)}>
+                <IconClose size={14} />
+              </button>
+            </div>
+          </li>)}
+          {triage.overflowCount > 0 && <li className="chat-ask more">
+            <button type="button" className="chat-triage-more" onClick={() => { setTrayOpen(false); openDrawer('matters'); }}>
+              <span>{t('desk.triageMore', triage.overflowCount)}</span>
+              <IconChevron size={12} />
+            </button>
+          </li>}
         </ul>
       </section>}
       <div className="chat-ask-orb-row">
         <button className="chat-ask-orb" aria-expanded={trayOpen} onClick={() => setTrayOpen(open => !open)}>
           <span className="chat-ask-dot" aria-hidden="true" />
-          <span>{t('desk.asksOrb', asks.length)}</span>
+          <span>{t('desk.asksOrb', totalAsks)}</span>
           <IconChevron size={13} open={trayOpen} />
         </button>
       </div>
@@ -392,7 +437,7 @@ export function AssistantHome({ api, todos, loading, error, threads, threadsKnow
   </div> : null;
 
   // Two independent quiet circles at top-right: workbench drawer + settings (no screaming numeric badges).
-  const needsCount = loading || error ? null : desk.needsYou + asks.filter(run => !run.matterId).length;
+  const needsCount = loading || error ? null : desk.needsYou + dispatchAsks.filter(run => !run.matterId).length + triage.total;
   const lastDrawerTab = useRef<DrawerTab | null>(null);
   if (drawer) lastDrawerTab.current = drawer;
   const toggleWorkbench = () => {

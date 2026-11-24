@@ -5,7 +5,7 @@ import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { homeDirectory } from './config.js';
 import { fileURLToPath } from 'node:url';
-import type { AgentAdapter } from './adapters/types.js';
+import type { AgentAdapter, PermissionMode } from './adapters/types.js';
 import type { LarkSignal } from './channels/lark.js';
 import { isWithinWorkdirs } from './workdirs.js';
 import { HttpError } from './errors.js';
@@ -47,6 +47,11 @@ export interface DispatchTask {
   model?: string;
 }
 export interface PersonalSettings { directory: string | null; agent: string | null; model: string | null }
+/** The assistant runs unattended prep/signals and `calli` socket tools; prefer `full_access` whenever supported. */
+export function assistantPermissionMode(adapter: AgentAdapter): PermissionMode | undefined {
+  if (adapter.capabilities.permissionModes.includes('full_access')) return 'full_access';
+  return adapter.capabilities.defaultPermissionMode;
+}
 /** Reject only unmistakable credential formats; this is not a general secret detector. */
 export function personalText(value: unknown, limit: number, empty = false): string {
   if (typeof value !== 'string' || (!empty && !value.trim()) || [...value].length > limit) throw new HttpError(400, `text must contain ${empty ? '0' : '1'}–${limit} characters`);
@@ -161,13 +166,14 @@ export class PersonalService {
         void this.manager.cancelTurn(thread.id).catch(() => undefined);
       }
       const hasTurns = this.store.listTurns(thread.id).length > 0;
+      const desiredPermission = assistantPermissionMode(adapter);
       let successorId: string;
       let successorModel: string | null;
       if (hasTurns) {
         const successor = await this.manager.createHandoverThread(thread.id, agent, model, 'continue', undefined, false, false);
-        this.store.updateThread(successor.id, {
+        await this.manager.updateThread(successor.id, {
           title: '助手',
-          ...(adapter.capabilities.defaultPermissionMode ? { permissionMode: adapter.capabilities.defaultPermissionMode } : {}),
+          ...(desiredPermission ? { permissionMode: desiredPermission } : {}),
         });
         successorId = successor.id;
         successorModel = successor.model ?? null;
@@ -176,7 +182,7 @@ export class PersonalService {
           agent,
           cwd: thread.cwd,
           title: '助手',
-          permissionMode: adapter.capabilities.defaultPermissionMode,
+          permissionMode: desiredPermission,
           ...(model ? { model } : {}),
         });
         successorId = fresh.id;

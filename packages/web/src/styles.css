@@ -13634,7 +13634,9 @@ button.trace-step-head:hover { background: var(--hover); }
 
 /* Pending asks float as a quiet thumb chip at the bottom-right edge above the composer; tapping it
    opens the frosted tray on demand, so the talk and composer never stack two full-width cards. */
-.chat-earlier, .chat-ask-orb { font-size: 12px; }
+.chat-earlier, .chat-ask-orb, .chat-ask-acts .primary, .chat-ask-acts .ghost, .chat-ask .desk-card-actions .ghost, .chat-triage-sub, .chat-triage-more { font-size: 12px; }
+.chat-ask-line, .chat-ask-body, .chat-ask-error, .chat-ask .proactive-answer p, .chat-ask .proactive-answer-form input, .chat-triage-title { font-size: 12.5px; }
+.chat-ask-kind, .chat-drawer-sub { font-size: 11px; font-weight: 600; }
 .chat-earlier { display: block; margin: 10px auto 4px; padding: 4px 12px; border: 0; border-radius: var(--radius-pill); background: none; color: var(--muted); }
 .chat-earlier:hover { background: var(--hover); color: var(--text); }
 .chat-asks { position: absolute; left: 16px; right: 16px; bottom: 100%; display: flex; flex-direction: column; gap: 6px; padding-bottom: 4px; pointer-events: none; }
@@ -13651,27 +13653,34 @@ button.trace-step-head:hover { background: var(--hover); }
 .chat-ask-row { display: flex; align-items: baseline; gap: 10px; width: 100%; min-height: 38px; padding: 9px 12px; border: 0; background: none; color: var(--text); text-align: left; }
 .chat-ask-row:not(:disabled):hover { background: var(--hover); }
 .chat-ask-row:disabled { cursor: default; opacity: 1; }
-.chat-ask-kind { flex: none; display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 11px; font-weight: 600; }
+.chat-ask-kind { flex: none; display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
 .chat-ask-kind.personal-warning { color: var(--warn); }
 .chat-ask-kind svg { flex: none; align-self: center; }
-.chat-ask-line { min-width: 0; overflow: hidden; font-size: 12.5px; text-overflow: ellipsis; white-space: nowrap; }
+.chat-ask-line { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-ask.open .chat-ask-line { white-space: normal; overflow-wrap: anywhere; line-height: 1.6; }
+.chat-triage-item { display: flex; align-items: center; }
+.chat-ask-row.triage-main { flex: 1; min-width: 0; flex-direction: column; align-items: flex-start; gap: 2px; padding: 8px 6px 8px 12px; }
+.chat-triage-head { display: flex; align-items: center; gap: 6px; max-width: 100%; min-width: 0; }
+.chat-triage-title { font-weight: 560; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-triage-sub { max-width: 100%; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-triage-shelve { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; margin-right: 4px; padding: 0; border: 0; border-radius: var(--radius-pill); background: none; color: var(--faint); }
+.chat-triage-shelve:hover { background: var(--hover); color: var(--text); }
+.chat-triage-more { display: flex; align-items: center; justify-content: space-between; width: 100%; min-height: 34px; padding: 6px 12px; border: 0; background: none; color: var(--muted); text-align: left; }
+.chat-triage-more:hover { background: var(--hover); color: var(--text); }
 .chat-ask-detail { padding: 0 12px 11px; }
-.chat-ask-body { margin: 0; font-size: 12.5px; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
+.chat-ask-body { margin: 0; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
 .chat-ask-cwd { margin: 6px 0 0; }
 .chat-ask-cwd code { font-family: var(--mono); font-size: 11.5px; color: var(--muted); overflow-wrap: anywhere; }
 .chat-ask-acts { display: flex; gap: 8px; margin-top: 9px; }
-.chat-ask-acts .primary, .chat-ask-acts .ghost { min-height: 28px; padding: 0 13px; font-size: 12px; }
-.chat-ask-error { margin: 0; color: var(--warn); font-size: 12.5px; }
+.chat-ask-acts .primary, .chat-ask-acts .ghost { min-height: 28px; padding: 0 13px; }
+.chat-ask-error { margin: 0; color: var(--warn); }
 .chat-ask .chat-ask-error { margin: 0; padding: 0 12px 10px; }
-.chat-ask .proactive-answer p { font-size: 12.5px; }
-.chat-ask .proactive-answer-form input { font-size: 12.5px; }
 .chat-ask .desk-card-actions { margin-top: 6px; }
 .chat-ask-detail > .proactive-answer:first-child .desk-card-actions:first-child { margin-top: 0; }
-.chat-ask .desk-card-actions .ghost { min-height: 28px; font-size: 12px; }
+.chat-ask .desk-card-actions .ghost { min-height: 28px; }
 .desk-card-actions .ghost.quiet { border-color: transparent; background: none; color: var(--muted); }
 .desk-card-actions .ghost.quiet:hover { background: var(--hover); color: var(--text); }
-.chat-drawer-sub { margin: 0 0 6px; color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .02em; }
+.chat-drawer-sub { margin: 0 0 6px; color: var(--muted); letter-spacing: .02em; }
 
 /* Hours, today, this week, this month: one switch, then short sections. Everything is scoped
    under the panel's own class: the conversation's plan list uses .plan-list and .plan-text too,
@@ -13747,7 +13756,8 @@ body:has(.chat-home) .pet { visibility: hidden; }
   .chat-entry { width: 40px; height: 40px; }
   /* Only the icon fits; the label stays, folded away, so the button keeps its name. */
   .chat-entry-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-  .chat-ask-acts .primary, .chat-ask-acts .ghost, .chat-drawer-tabs button, .chat-ask-row, .plan-view .plan-ranges button { min-height: 40px; }
+  .chat-ask-acts .primary, .chat-ask-acts .ghost, .chat-drawer-tabs button, .chat-ask-row, .chat-triage-more, .plan-view .plan-ranges button { min-height: 40px; }
+  .chat-triage-shelve { width: 40px; height: 40px; }
   .chat-ask-orb { min-height: 36px; }
   .chat-asks { left: 12px; right: 12px; }
   .chat-composer { padding-bottom: calc(8px + var(--safe-bottom)); }

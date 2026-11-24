@@ -166,6 +166,8 @@ export function route(data: DemoData, method: string, url: string, body?: unknow
       return { days: data.activity };
     case 'machine-usage':
       return demoMachineUsage(q);
+    case 'personal/superagent/triage':
+      return { items: [], total: 0, overflowCount: 0 };
   }
 
   if (parts[0] === 'agents' && parts.length === 3) {

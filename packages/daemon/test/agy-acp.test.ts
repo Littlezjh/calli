@@ -175,3 +175,51 @@ test('agy fork: clones SQLite DB (WAL + protobuf BLOB UUIDs), brain and annotati
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('agy full_access auto-approves permission prompts in both foreground and autonomous background turns, while auto_edit asks', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'agy-bg-approval-'));
+  const adapter = new AgyAdapter([process.execPath, fixture], { CALLI_ACP_BACKGROUND_IDLE_MS: '60' });
+  const bgEvents: Array<{ type: string; data: Record<string, unknown> }> = [];
+  const bgApprovals: string[] = [];
+  const finished: Array<{ id: string; stopReason: string }> = [];
+  const s = await adapter.start({ cwd, permissionMode: 'full_access' });
+  try {
+    s.setSessionHooks({
+      turnStarted: () => ({
+        emit: ev => { bgEvents.push(ev as { type: string; data: Record<string, unknown> }); },
+        requestApproval: async req => { bgApprovals.push(req.title); return { optionId: 'reject' }; },
+      }),
+      turnFinished: (id, res) => { finished.push({ id, stopReason: res.stopReason }); },
+    });
+
+    const r1 = await s.prompt(
+      { text: 'background-approval', images: [] },
+      { emit: () => {}, requestApproval: async () => { throw new Error('should not ask user in full_access'); } },
+    );
+    assert.equal(r1.stopReason, 'end_turn');
+    await new Promise<void>((resolve, reject) => {
+      const deadline = Date.now() + 5000;
+      const check = () => {
+        if (finished.length === 1) return resolve();
+        if (Date.now() > deadline) return reject(new Error('timed out waiting for background approval turn'));
+        setTimeout(check, 25);
+      };
+      check();
+    });
+    assert.deepEqual(bgApprovals, [], 'full_access must auto-approve background permission requests without prompting');
+    assert.ok(bgEvents.some(e => e.type === 'message.delta' && e.data.text === 'background approved'));
+
+    // Switching down to auto_edit forwards permission requests to the caller's approval hook.
+    await s.setPermissionMode!('auto_edit');
+    let asked = 0;
+    const r2 = await s.prompt(
+      { text: 'run a command', images: [] },
+      { emit: () => {}, requestApproval: async () => { asked++; return { optionId: 'allow' }; } },
+    );
+    assert.equal(r2.stopReason, 'end_turn');
+    assert.equal(asked, 1, 'auto_edit still asks for approval');
+  } finally {
+    await s.close();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});

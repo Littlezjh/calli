@@ -360,3 +360,75 @@ test('evidence verification rejects missing/forged refs, kicks back gaps when en
     await h.close();
   }
 });
+
+test('superagent triage filters superseded/casual/stale noise, caps at top 5 by priority, and shelves without losing ledger items', async () => {
+  const h = await setup();
+  try {
+    const now = new Date();
+    const oldIso = new Date(now.getTime() - 72 * 3600_000).toISOString();
+
+    // 1. Superseded handover chain: older segment was blocked, active tip segment is clean -> filtered out.
+    const oldSeg = await h.manager.createThread({ agent: 'pi', cwd: h.repo, title: '旧交接段' });
+    h.store.setThreadProgress(oldSeg.id, { report: { stage: 'blocked', note: '旧段等你确认', at: oldIso } });
+    const oldMatter = h.manager.personal.ledger.captureThread(oldSeg.id, { kind: 'direct' })!;
+    const newSeg = await h.manager.createHandoverThread(oldSeg.id, 'pi', undefined, 'continue', undefined, true, false);
+    h.store.setThreadProgress(newSeg.id, { report: { stage: 'doing', note: '正在推进', at: now.toISOString() } });
+    assert.ok(oldMatter);
+
+    // 2. Stale (>36h) unprioritized ad-hoc chat & casual sign-off & paused note -> all filtered out.
+    const staleChat = await h.manager.createThread({ agent: 'pi', cwd: h.repo, title: '三天前随手问' });
+    h.store.setThreadProgress(staleChat.id, { report: { stage: 'blocked', note: '要不要继续看', at: oldIso } });
+    h.manager.personal.ledger.captureThread(staleChat.id, { kind: 'direct' });
+    h.store.db.prepare('UPDATE threads SET updated_at = ? WHERE id = ?').run(oldIso, staleChat.id);
+    // Even without raw SQL, casual & paused notes on fresh threads are filtered out:
+    const casual = await h.manager.createThread({ agent: 'pi', cwd: h.repo, title: '群消息闲聊' });
+    h.store.setThreadProgress(casual.id, { report: { stage: 'blocked', note: '想听听你那条方案后来怎么样了，要不要我帮你看看它好不好读', at: now.toISOString() } });
+    h.manager.personal.ledger.captureThread(casual.id, { kind: 'direct' });
+
+    const paused = await h.manager.createThread({ agent: 'pi', cwd: h.repo, title: '暂停开发会话' });
+    h.store.setThreadProgress(paused.id, { report: { stage: 'blocked', note: '已暂停开发；恢复时请告诉我机器地址', at: now.toISOString() } });
+    h.manager.personal.ledger.captureThread(paused.id, { kind: 'direct' });
+
+    // 3. Unverified `review` thread ("看起来做完了") stays in `verifying`, NOT in home triage.
+    const unverified = await h.manager.createThread({ agent: 'pi', cwd: h.repo, title: '未核验完成会话' });
+    h.store.setThreadProgress(unverified.id, { report: { stage: 'review', note: '自称已完成', at: now.toISOString() } });
+    h.manager.personal.ledger.captureThread(unverified.id, { kind: 'direct' });
+
+    // 4. Create 6 genuine blocked decisions (1 urgent+important, 5 regular fresh decisions) -> capped at Top 5 + 1 overflow!
+    const urgentMatter = h.manager.personal.create({
+      text: '核心发布窗口拍板',
+      owner: 'me',
+      lane: 'you',
+      importance: 'high',
+      dueAt: new Date(now.getTime() + 2 * 3600_000).toISOString(),
+    });
+    const urgentThread = await h.manager.createThread({ agent: 'pi', cwd: h.repo, title: '🚀核心发布窗口拍板（接手）（接手）' });
+    h.store.linkTodoThread(urgentMatter.id, urgentThread.id);
+    h.store.setThreadProgress(urgentThread.id, { report: { stage: 'blocked', note: '[进度] 需要你：确认今晚 20:00 灰度还是明早全量', at: now.toISOString() } });
+
+    for (let i = 1; i <= 5; i++) {
+      const t = await h.manager.createThread({ agent: 'pi', cwd: h.repo, title: `决策会话 ${i}` });
+      h.store.setThreadProgress(t.id, { report: { stage: 'blocked', note: `请选方案 ${i}A 还是 ${i}B`, at: now.toISOString() } });
+      h.manager.personal.ledger.captureThread(t.id, { kind: 'direct' });
+    }
+
+    const triageRes = await (await h.api('/api/personal/superagent/triage')).json();
+    assert.equal(triageRes.items.length, 5, 'home triage caps visible items at 5');
+    assert.ok(triageRes.total >= 6);
+    assert.equal(triageRes.overflowCount, triageRes.total - 5);
+    assert.equal(triageRes.items[0].id, urgentMatter.id, 'urgent + high-importance decision ranks #1');
+    assert.equal(triageRes.items[0].title, '🚀核心发布窗口拍板', 'strips trailing （接手） suffixes');
+    assert.equal(triageRes.items[0].summary, '确认今晚 20:00 灰度还是明早全量', 'strips raw [进度] 需要你： prefix');
+    assert.ok(!triageRes.items.some((x: { title: string }) => /三天前随手问|群消息闲聊|暂停开发会话|未核验完成会话|旧交接段/.test(x.title)));
+
+    // 5. Shelving removes the item from triage without deleting or closing the task in the ledger.
+    const beforeOpen = h.manager.personal.ledger.snapshot().totalOpen;
+    const shelveRes = await h.api(`/api/personal/superagent/triage/${urgentMatter.id}/shelve`, 'POST');
+    assert.equal(shelveRes.status, 200);
+    const afterTriage = await (await h.api('/api/personal/superagent/triage')).json();
+    assert.ok(!afterTriage.items.some((x: { id: string }) => x.id === urgentMatter.id), 'shelved item leaves triage immediately');
+    assert.equal(h.manager.personal.ledger.snapshot().totalOpen, beforeOpen, 'full unfinished ledger stays intact');
+  } finally {
+    await h.close();
+  }
+});

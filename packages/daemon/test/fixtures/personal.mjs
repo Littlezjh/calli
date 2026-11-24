@@ -7,6 +7,7 @@ export function personalFixture(text) {
   const context = text.match(/^<calli-context>\n([\s\S]*?)\n<\/calli-context>\n\n/);
   const command = text.slice(context?.[0].length ?? 0).split('\n')[0];
   if (text.includes('<calli-personal-router>')) router = true;
+  if (command.startsWith('fixture-progress ')) return `已处理。\n${command.slice('fixture-progress '.length)}`;
   if (command.startsWith('dispatch-worker-')) {
     if (!text.includes('不推远端、不给别人发消息、不删除、不付款')) throw new Error('missing dispatch boundary');
     if (command === 'dispatch-worker-review') return '结果已整理，等你检查。\n[进度] 待验收：请检查测试结果';

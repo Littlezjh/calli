@@ -26,6 +26,7 @@ import type {
   SkillDir,
   SlashCommand,
   StartOptions,
+  TurnHooks,
 } from './types.js';
 
 /** Antigravity uses ACP for conversations; print mode remains for account queries only. */
@@ -549,16 +550,28 @@ export class AgyAdapter extends AcpAdapter {
       if (u?.sessionUpdate === 'current_mode_update') mode = u.currentModeId === 'plan' ? 'plan' : 'execute';
       update(value);
     };
+    const wrapApproval = (requestApproval: TurnHooks['requestApproval']): TurnHooks['requestApproval'] => req => {
+      const allow = permission === 'full_access' && mode !== 'plan'
+        ? req.options.find(o => o.kind === 'allow_once')
+          ?? req.options.find(o => o.kind === 'allow_always')
+          ?? req.options.find(o => /^(?:allow|accept)/i.test(o.optionId))
+        : undefined;
+      return allow ? Promise.resolve({ optionId: allow.optionId }) : requestApproval(req);
+    };
+    const setSessionHooks = session.setSessionHooks.bind(session);
+    session.setSessionHooks = sessionHooks => setSessionHooks({
+      ...sessionHooks,
+      turnStarted: (id, meta) => {
+        const hooks = sessionHooks.turnStarted(id, meta);
+        return { ...hooks, requestApproval: wrapApproval(hooks.requestApproval) };
+      },
+    });
     const prompt = session.prompt.bind(session);
     session.prompt = async (input, hooks) => {
       const plan = mode === 'plan' && !isCompaction(input.text) ? new PlanReply(hooks.emit, `agy-plan-${Date.now()}`) : null;
       const result = await prompt(input, {
         ...hooks,
-        requestApproval: req => {
-          const allow = permission === 'full_access' && mode !== 'plan'
-            ? req.options.find(o => o.kind === 'allow_once') ?? req.options.find(o => o.kind === 'allow_always') : undefined;
-          return allow ? Promise.resolve({ optionId: allow.optionId }) : hooks.requestApproval(req);
-        },
+        requestApproval: wrapApproval(hooks.requestApproval),
         emit: ev => {
           if (plan && ev.type === 'message.delta') plan.add(String(ev.data.text ?? ''));
           else { if (ev.type === 'tool.start') plan?.aside(); hooks.emit(ev); }
