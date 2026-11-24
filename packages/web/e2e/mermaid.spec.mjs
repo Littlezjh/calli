@@ -177,7 +177,35 @@ test('formatted Mermaid labels survive the lazy SVG clone', async t => {
     const markup = enlargeMermaidDiagram(svg);
     const container = document.createElement('div');
     container.innerHTML = markup;
-    return { svg: !!container.querySelector('svg'), labels: container.querySelectorAll('.nodeLabel').length, text: container.querySelector('.nodeLabel')?.textContent, error: !!container.querySelector('parsererror') }; 
+    return { svg: !!container.querySelector('svg'), labels: container.querySelectorAll('.nodeLabel').length, text: container.querySelector('.nodeLabel')?.textContent, error: !!container.querySelector('parsererror') };
   });
   assert.deepEqual(result, { svg: true, labels: 2, text: 'one & twonext line', error: false });
+});
+
+test('every palette draws, including the ones whose colours are color-mix()', async t => {
+  const page = await setup(t);
+  // Only paper states its colours outright. Every other palette derives its surfaces with
+  // color-mix(), which the browser computes to color(srgb …) — a form mermaid cannot parse, so
+  // the whole diagram used to fall back to code there. Each palette must still draw.
+  const failures = await page.evaluate(async () => {
+    const { renderMermaidDiagram } = await import('/src/mermaid.ts');
+    const palettes = ['paper', 'graphite', 'catppuccin', 'everforest', 'gruvbox', 'nord', 'rose-pine', 'one'];
+    const original = document.documentElement.dataset.palette;
+    const failed = [];
+    try {
+      for (const palette of palettes) {
+        document.documentElement.dataset.palette = palette;
+        try {
+          const svg = await renderMermaidDiagram('flowchart LR\nA["one"] --> B["two"]');
+          if (!svg.includes('<svg')) failed.push(`${palette}: no svg`);
+        } catch (e) {
+          failed.push(`${palette}: ${e?.message ?? e}`);
+        }
+      }
+    } finally {
+      document.documentElement.dataset.palette = original;
+    }
+    return failed;
+  });
+  assert.deepEqual(failures, []);
 });
