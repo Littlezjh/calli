@@ -3068,22 +3068,26 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           <div className="topbar-heading">
             {/* Every page names itself here, the way a thread does: the bar is never left blank. */}
             {/* On a phone there is no room for the tag: the title itself opens where the thread runs. */}
-            {placeShown && !compact && <ThreadPlace thread={selected!} agent={agentLabel(selected!.agent)} host={host?.label} />}
-            {threadPending && !viewTitle && !compact && <div className="pop" aria-hidden="true"><span className="icon-btn place-icon"><IconFolder size={16} /></span></div>}
-            {compact && placeShown ? (
-              <ThreadPlace thread={selected!} agent={agentLabel(selected!.agent)} host={host?.label} title={onRouterThread ? routerTitle : selected!.title} />
-            ) : (
-              <div className="topbar-title">{host && !hostUp ? host.label : viewTitle ?? (selected ? (onRouterThread ? routerTitle : selected.title) : threadPending ? '' : t('sidebar.newThread'))}</div>
-            )}
-            {selected?.coordination?.team && <div className={`team-task-status${['awaiting_confirm', 'needs_attention'].includes(selected.coordination.team.status) ? ' attention' : ''}`}><span className="team-task-name">{selected.coordination.team.name}</span><span> · {t(`teams.${selected.coordination.team.status}`)}</span></div>}
+            <div className="topbar-title-pill">
+              {placeShown && !compact && <ThreadPlace thread={selected!} agent={agentLabel(selected!.agent)} host={host?.label} />}
+              {threadPending && !viewTitle && !compact && <div className="pop" aria-hidden="true"><span className="icon-btn place-icon"><IconFolder size={16} /></span></div>}
+              {compact && placeShown ? (
+                <ThreadPlace thread={selected!} agent={agentLabel(selected!.agent)} host={host?.label} title={onRouterThread ? routerTitle : selected!.title} />
+              ) : (
+                <div className="topbar-title">{host && !hostUp ? host.label : viewTitle ?? (selected ? (onRouterThread ? routerTitle : selected.title) : threadPending ? '' : t('sidebar.newThread'))}</div>
+              )}
+            </div>
             {!selected && !threadPending && host && hostUp && <div className="topbar-sub">{host.label}</div>}
-            {mergedHandover && chainFocus?.index && chainFocus.total && chainFocus.index < chainFocus.total && <div className="topbar-sub topbar-segment">{agentLabel((focusedThread ?? selected!).agent)} · {t('handover.chain.position', chainFocus.index, chainFocus.total)}</div>}
-            {busyLine && busyLine.threadId === selected?.id && <div className="topbar-sub topbar-busy">{busyLine.message}</div>}
-            {atMember && (
-              <button className="topbar-sub topbar-lead-link" title={t('app.backToLead')} onClick={() => pick(selected!.coordination!.rootId)}>
-                {agentLabel(selected!.agent)} · {t('app.leadThread', leadTitle)}
-              </button>
-            )}
+            <div className="topbar-chips">
+              {selected?.coordination?.team && <div className={`topbar-chip team-task-status${['awaiting_confirm', 'needs_attention'].includes(selected.coordination.team.status) ? ' attention' : ''}`}><span className="team-task-name">{selected.coordination.team.name}</span><span> · {t(`teams.${selected.coordination.team.status}`)}</span></div>}
+              {mergedHandover && chainFocus?.index && chainFocus.total && chainFocus.index < chainFocus.total && <div className="topbar-chip topbar-sub topbar-segment">{agentLabel((focusedThread ?? selected!).agent)} · {t('handover.chain.position', chainFocus.index, chainFocus.total)}</div>}
+              {busyLine && busyLine.threadId === selected?.id && <div className="topbar-chip topbar-sub topbar-busy">{busyLine.message}</div>}
+              {atMember && (
+                <button className="topbar-chip topbar-sub topbar-lead-link" title={t('app.backToLead')} onClick={() => pick(selected!.coordination!.rootId)}>
+                  {agentLabel(selected!.agent)} · {t('app.leadThread', leadTitle)}
+                </button>
+              )}
+            </div>
           </div>
           {onDesk && !selected && <div className="topbar-desk" ref={setDeskSlot} />}
           {selected && (

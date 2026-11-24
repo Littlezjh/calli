@@ -40,27 +40,30 @@ test('glass chrome has scrolling content behind it without hiding either end of 
       });
       let bounds = await measure();
       assert.ok(bounds.scroller.top <= bounds.top.top + 1, 'content scrolls behind the top controls');
-      if (mobile) {
-        assert.ok(bounds.scroller.bottom >= bounds.input.bottom, 'content scrolls behind the input');
-      } else {
-        // A wide screen keeps the glass top bar but draws the composer as an opaque card,
-        // with the conversation ending above it.
-        const solid = await page.evaluate(() => {
+      assert.ok(bounds.scroller.bottom >= bounds.input.bottom, 'content scrolls behind the floating glass composer');
+      if (!mobile) {
+        // Wide screens use Option A floating liquid glass pills for top controls and a floating
+        // liquid glass composer, with no hanging wash curtain below the top bar.
+        const glass = await page.evaluate(() => {
           const top = document.querySelector('.main > .topbar');
+          const titlePill = document.querySelector('.topbar-title-pill');
           const pill = document.querySelector('.topbar-actions');
           const box = document.querySelector('.composer-box');
           const cs = (el, pseudo) => getComputedStyle(el, pseudo);
           return {
-            band: [cs(top).borderBottomWidth, cs(top, '::before').display, cs(top, '::after').display].join('|'),
+            border: cs(top).borderBottomWidth,
+            washHeight: Number.parseFloat(cs(top, '::after').height),
+            barHeight: top.getBoundingClientRect().height,
+            titlePill: cs(titlePill).backdropFilter,
             pill: cs(pill).backdropFilter,
-            box: [cs(box).backgroundColor, cs(box).backdropFilter].join('|'),
+            box: cs(box).backdropFilter,
           };
         });
-        assert.equal(solid.band, '0px|block|block', 'the top bar keeps its fade bands and draws no hairline');
-        assert.notEqual(solid.pill, 'none', 'the top bar buttons keep their glass capsule');
-        assert.notEqual(solid.box.split('|')[0], 'rgba(0, 0, 0, 0)', 'the composer card has a surface of its own');
-        assert.equal(solid.box.split('|')[1], 'none', 'the composer card is opaque');
-        assert.ok(bounds.scroller.bottom <= bounds.input.top + 1, 'a wide screen ends the conversation above the composer');
+        assert.equal(glass.border, '0px', 'the top bar draws no hairline');
+        assert.ok(glass.washHeight <= glass.barHeight, 'no wash curtain hangs below the top bar');
+        assert.notEqual(glass.titlePill, 'none', 'the title wears a floating liquid glass capsule');
+        assert.notEqual(glass.pill, 'none', 'the top bar buttons keep their liquid glass capsule');
+        assert.notEqual(glass.box, 'none', 'the desktop composer wears floating liquid glass');
       }
       await scroller.evaluate(el => { el.scrollTop = 0; });
       bounds = await measure();
@@ -184,7 +187,7 @@ test('the phone edges wash only where text scrolls out, and the read-only handov
     assert.ok(Math.abs(plain.washHeight - (plain.composer + 40)) <= 1, 'the bottom wash is the composer plus 40px of fade above its box');
     assert.ok(!/rgba\(0, 0, 0, 0\.\d*[1-9]/.test(plain.washTint), 'the bottom wash is the page colour, not a grey scrim');
     assert.notEqual(plain.blurFilter, 'none', 'the fade above the composer is blurred');
-    assert.ok(Math.abs(plain.barWashHeight - (plain.bar + 30)) <= 1, 'the top wash eases out 30px below the bar');
+    assert.ok(plain.barWashHeight <= plain.bar, 'the top edge wash stays strictly inside the top bar and never hangs over the first line');
     await context.close();
   } finally { await browser.close(); await daemon.stop(); }
 });

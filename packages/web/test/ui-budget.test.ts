@@ -28,7 +28,7 @@ const RATCHET = {
   /** `z-index: 60` and the like instead of a --z variable. */
   rawZIndexes: 63,
   /** Colours written outside a custom property's definition (masks included). */
-  rawColours: 23,
+  rawColours: 21,
 };
 
 test('the largest UI files stay within their budgets', () => {
