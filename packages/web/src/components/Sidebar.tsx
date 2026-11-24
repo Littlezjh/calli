@@ -623,6 +623,28 @@ export function Sidebar({
           ))}
         </section>
       ))}
+      {mergedModel.done.length > 0 && (
+        <section className="thread-group">
+          <div className="group-head-row">
+            <button className="group-head" aria-expanded={isOpen('done')} onClick={() => toggle('done')}>
+              <span className="group-chevron"><IconChevron size={13} open={isOpen('done')} /></span>
+              <IconCheck size={13} />
+              <span className="group-name">{t('sidebar.done')}</span>
+              <span className="group-count">{mergedModel.done.length}</span>
+            </button>
+          </div>
+          {isOpen('done') && mergedModel.done.map(({ thread, hostId: on }) => (
+            <Fragment key={`${on ?? ''}:${thread.id}`}>
+              {entry(thread, {
+                label: on === null ? undefined : labelOf.get(on),
+                offline: unavailableOf.get(on),
+                open: on === hostId ? undefined : () => onOpenElsewhere?.(on, thread.id),
+                agents: on === hostId ? undefined : agentsOf.get(on) ?? null,
+              })}
+            </Fragment>
+          ))}
+        </section>
+      )}
     </nav>
   ) : activity ? (
     <nav className="thread-groups activity" aria-label={t('sidebar.threadsByActivity')}>
@@ -633,6 +655,19 @@ export function Sidebar({
           {groupedRows(g.threads, true)}
         </section>
       ))}
+      {activity.done.length > 0 && (
+        <section className="thread-group">
+          <div className="group-head-row">
+            <button className="group-head" aria-expanded={isOpen('done')} onClick={() => toggle('done')}>
+              <span className="group-chevron"><IconChevron size={13} open={isOpen('done')} /></span>
+              <IconCheck size={13} />
+              <span className="group-name">{t('sidebar.done')}</span>
+              <span className="group-count">{activity.done.length}</span>
+            </button>
+          </div>
+          {isOpen('done') && groupedRows(activity.done, true)}
+        </section>
+      )}
     </nav>
   ) : (
     <nav className="thread-groups" aria-label={t('sidebar.threads')}>

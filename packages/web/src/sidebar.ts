@@ -179,6 +179,8 @@ export function buildSidebar(threads: Thread[], sections: Section[], search: str
 export interface ActivityModel {
   /** In the order shown; a group with nothing in it is left out. */
   groups: Array<{ key: string; label: string; threads: Thread[] }>;
+  /** Threads the person marked done, together at the bottom under one fold, newest finish first. */
+  done: Thread[];
   /** Number of threads shown after filtering. */
   count: number;
 }
@@ -261,10 +263,12 @@ function urgency(t: Thread, selectedId: string | null): number | null {
  */
 export function buildActivity(threads: Thread[], search: string, now: Date, selectedId: string | null): ActivityModel {
   const visible = matching(threads, search);
+  // Finished threads leave the activity order for the bottom fold, as they left the filed order.
+  const [busy, done] = visible.reduce(([busy, done]: [Thread[], Thread[]], t) => (t.doneAt ? [busy, [...done, t]] : [[...busy, t], done]), [[], []]);
   // A handover chain is one entry, kept whole: it stands under its most pressing member, and under
   // the day any of them last moved. Split by urgency, the original and its successor would sit in
   // different groups, far apart.
-  const chains = handoverGroups(visible).map(({ members }) => ({
+  const chains = handoverGroups(busy).map(({ members }) => ({
     members,
     urgent: Math.min(...members.map((t) => urgency(t, selectedId) ?? Infinity)),
     moved: members.reduce((time, t) => (t.updatedAt > time ? t.updatedAt : time), ''),
@@ -296,6 +300,7 @@ export function buildActivity(threads: Thread[], search: string, now: Date, sele
     groups: [{ key: 'priority', label: t('sidebar.group.priority'), threads: priority }, ...ages.map((a) => ({ key: a.key, label: a.label, threads: byAge.get(a.key) ?? [] }))].filter(
       (g) => g.threads.length > 0,
     ),
+    done: done.sort((a, b) => (a.doneAt! < b.doneAt! ? 1 : -1)),
     count: visible.length,
   };
 }
@@ -464,6 +469,8 @@ export interface HostSource {
 
 export interface MergedModel {
   groups: Array<{ key: string; label: string; items: Array<{ thread: Thread; hostId: string | null }> }>;
+  /** Threads the person marked done, together at the bottom under one fold. */
+  done: Array<{ thread: Thread; hostId: string | null }>;
   count: number;
   /** Machines not read yet, unreachable or failing, in the order given: the list says so rather than leaving them out. */
   notes: HostSource[];
@@ -486,6 +493,7 @@ export function buildMerged(sources: HostSource[], search: string, now: Date, se
   const activity = buildActivity(all, search, now, selectedId);
   return {
     groups: activity.groups.map((g) => ({ key: g.key, label: g.label, items: g.threads.map((thread) => ({ thread, hostId: owner.get(thread) ?? null })) })),
+    done: activity.done.map((thread) => ({ thread, hostId: owner.get(thread) ?? null })),
     count: activity.count,
     // A remembered list being refreshed reads as it is; one that cannot be refreshed says so.
     notes: sources.filter((s) => s.state === 'loading' || s.state === 'failed' || s.state === 'offline'),
