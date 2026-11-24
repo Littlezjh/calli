@@ -80,6 +80,8 @@ export interface SidebarModel {
   projects: Array<{ key: string; cwd: string; name: string; threads: Thread[] }>;
   /** Threads in no project (each in a scratch folder of its own), together after the projects. */
   scratch: Thread[];
+  /** Threads the person marked done, together at the bottom under one fold — kept in reach, out of the way. */
+  done: Thread[];
   /** Number of threads shown after filtering. */
   count: number;
 }
@@ -123,8 +125,9 @@ export function withExternalSessions(threads: Thread[], external: ExternalSessio
     .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0));
 }
 
-/** A thread appears exactly once: under "pinned" if pinned, else under its section if it has one,
- * else under its project (working directory). Threads keep the order they arrive in.
+/** A thread appears exactly once: under "done" if the person marked it done, else under "pinned"
+ * if pinned, else under its section if it has one, else under its project (working directory).
+ * Threads keep the order they arrive in, except done, which follows when it was finished.
  *
  * Projects are told apart by the directory with symlinks resolved: the same folder reached by two
  * spellings is one project. The group shows the spelling of its most recent thread.
@@ -133,13 +136,17 @@ export function buildSidebar(threads: Thread[], sections: Section[], search: str
   const visible = matching(threads, search);
 
   const sectionIds = new Set(sections.map((s) => s.id));
+  const done: Thread[] = [];
   const pinned: Thread[] = [];
   const bySection = new Map<string, Thread[]>();
   const byProject = new Map<string, Thread[]>();
   const scratch: Thread[] = [];
 
   for (const t of visible) {
-    if (t.pinned) {
+    // Done outranks a pin, the way finishing outranks keeping: un-done, the pin takes hold again.
+    if (t.doneAt) {
+      done.push(t);
+    } else if (t.pinned) {
       pinned.push(t);
     } else if (t.sectionId && sectionIds.has(t.sectionId)) {
       bySection.set(t.sectionId, [...(bySection.get(t.sectionId) ?? []), t]);
@@ -163,6 +170,8 @@ export function buildSidebar(threads: Thread[], sections: Section[], search: str
       .map(([key, list]) => ({ key, cwd: projectDir(list[0]).cwd, name: folderName(projectDir(list[0]).cwd), threads: list }))
       .sort((a, b) => (a.threads[0].updatedAt < b.threads[0].updatedAt ? 1 : -1)),
     scratch,
+    // Finished most recently first, as T3 Code's settled shelf does.
+    done: done.sort((a, b) => (a.doneAt! < b.doneAt! ? 1 : -1)),
     count: visible.length,
   };
 }
@@ -183,17 +192,32 @@ const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDat
  * nothing. The sidebar, its dots and the summaries extensions read all go by this, so a thread is
  * in the same state everywhere. The thread on screen is being read right now: it is never unread.
  */
-export function threadAttention(t: Pick<Thread, 'id' | 'waiting' | 'waitingReason' | 'unread' | 'status'>, selectedId: string | null): Attention | null {
+export function threadAttention(t: Pick<Thread, 'id' | 'waiting' | 'waitingReason' | 'unread' | 'status' | 'snoozedUntil'>, selectedId: string | null, now = Date.now()): Attention | null {
+  // Snoozed, the thread asked not to be heard from until its time comes: no dot, no count, no board block.
+  if (t.snoozedUntil && Date.parse(t.snoozedUntil) > now) return null;
   // Older daemons do not say what is awaited; approvals were all there was.
   if (t.waiting) return { kind: t.waitingReason ?? 'approval' };
   if (t.unread && t.id !== selectedId) return { kind: t.status === 'error' ? 'error' : 'unread' };
   return null;
 }
 
+/** Whether a thread's snooze still stands at `now`. */
+export function snoozed(t: Pick<Thread, 'snoozedUntil'>, now = Date.now()): string | null {
+  return t.snoozedUntil && Date.parse(t.snoozedUntil) > now ? t.snoozedUntil : null;
+}
+
+/** When a snoozed thread comes back: the clock time today, the date and time on a later day. */
+export function snoozeTimeLabel(iso: string, now = new Date()): string {
+  const at = new Date(iso);
+  const clock = `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
+  const sameDay = at.getFullYear() === now.getFullYear() && at.getMonth() === now.getMonth() && at.getDate() === now.getDate();
+  return sameDay ? clock : `${at.getMonth() + 1}/${at.getDate()} ${clock}`;
+}
+
 export type BoardStage = 'backlog' | 'doing' | 'blocked' | 'review' | 'done';
 
 /** The board column a thread sits in, judged in the board's order: done, waiting, running, then what was reported. */
-export function boardStage(t: Pick<Thread, 'id' | 'waiting' | 'waitingReason' | 'unread' | 'status' | 'doneAt' | 'report'>): BoardStage {
+export function boardStage(t: Pick<Thread, 'id' | 'waiting' | 'waitingReason' | 'unread' | 'status' | 'doneAt' | 'report' | 'snoozedUntil'>): BoardStage {
   if (t.doneAt) return 'done';
   const attention = threadAttention(t, null);
   if (attention && attention.kind !== 'unread') return 'blocked';
