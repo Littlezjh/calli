@@ -1,0 +1,1237 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light" data-device="desktop" data-add="a" data-filter="both" data-view="board">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>标签与看板筛选 · Playground</title>
+<style>
+/* Colours copied from packages/web/src/styles.css (paper palette, light and dark). */
+:root {
+  --bg: #f8f6f1; --sidebar: #f1efe9; --surface: #ffffff; --surface-2: #fbfaf7;
+  --text: #1f1e1c; --muted: #827f77; --faint: #a9a69e;
+  --border: #e5e2da; --border-strong: #d6d2c8;
+  --hover: rgba(31, 30, 28, 0.045); --active: rgba(31, 30, 28, 0.08);
+  --accent: #1f1e1c; --accent-fg: #ffffff; --on-color: #ffffff;
+  --positive: #2f7d5b; --warn: #c2410c; --danger: #b42318;
+  --user-bg: #eceae4; --code-bg: #efede7; --scrim: rgba(24, 23, 21, 0.32);
+  --shadow-card: 0 1px 2px rgba(31, 30, 28, 0.04), 0 6px 20px rgba(31, 30, 28, 0.05);
+  --shadow-pop: 0 14px 40px rgba(31, 30, 28, 0.14), 0 2px 6px rgba(31, 30, 28, 0.06);
+  --radius-sm: 8px; --radius: 12px; --radius-lg: 18px; --radius-pill: 999px;
+  --font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Helvetica Neue', 'Noto Sans CJK SC', sans-serif;
+  --mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
+}
+[data-theme='dark'] {
+  --bg: #1b1a18; --sidebar: #232220; --surface: #252422; --surface-2: #201f1d;
+  --text: #ecebe7; --muted: #9a978f; --faint: #6f6c65;
+  --border: #32302c; --border-strong: #423f3a;
+  --hover: rgba(236, 235, 231, 0.06); --active: rgba(236, 235, 231, 0.1);
+  --accent: #ecebe7; --accent-fg: #1b1a18; --on-color: #1b1a18;
+  --positive: #3f9a72; --warn: #f0935a; --danger: #f97066;
+  --user-bg: #2c2b28; --code-bg: #262522; --scrim: rgba(0, 0, 0, 0.45);
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 6px 20px rgba(0, 0, 0, 0.25);
+  --shadow-pop: 0 14px 40px rgba(0, 0, 0, 0.45), 0 2px 6px rgba(0, 0, 0, 0.3);
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--font); -webkit-font-smoothing: antialiased; }
+button, input { font: inherit; color: inherit; }
+button { cursor: pointer; }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--positive); outline-offset: 2px; }
+.ic { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+.num { font-variant-numeric: tabular-nums; }
+
+/* ---------------- Playground controls ---------------- */
+.controls { max-width: 1400px; margin: 0 auto; padding: 14px 18px 4px; display: grid; gap: 9px; }
+.title-row { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.controls h1 { margin: 0; font-size: 15px; font-weight: 650; letter-spacing: -0.01em; }
+.sub { color: var(--faint); font-size: 11.5px; }
+.row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.lab { color: var(--faint); font-size: 11px; letter-spacing: 0.04em; white-space: nowrap; }
+.seg { display: inline-flex; padding: 2px; border: 1px solid var(--border); border-radius: var(--radius-pill); background: var(--surface); }
+.seg button { border: 0; background: none; padding: 5px 10px; border-radius: var(--radius-pill); font-size: 12px; color: var(--muted); white-space: nowrap; }
+.seg button[aria-pressed='true'] { background: var(--accent); color: var(--accent-fg); }
+.hint { flex: 1 1 320px; min-width: 200px; color: var(--muted); font-size: 11.5px; line-height: 1.6; }
+.reset { margin-left: auto; border: 1px solid var(--border); background: var(--surface); color: var(--muted); border-radius: var(--radius-pill); padding: 6px 12px; font-size: 12px; }
+.reset:hover { color: var(--text); border-color: var(--border-strong); }
+.notes { margin-top: 2px; color: var(--muted); font-size: 11.5px; line-height: 1.65; }
+.notes summary { cursor: pointer; color: var(--faint); font-size: 11.5px; }
+.notes ul { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 2px; }
+
+/* ---------------- Frame ---------------- */
+.stage { display: flex; justify-content: center; padding: 10px 18px 36px; }
+.frame { position: relative; width: min(1320px, calc(100vw - 36px)); height: 800px; background: var(--bg); border: 1px solid var(--border-strong); border-radius: 20px; overflow: hidden; isolation: isolate; }
+[data-device='phone'] .frame { width: 390px; height: 812px; border-radius: 38px; }
+.app { position: absolute; inset: 0; overflow: auto; scrollbar-width: thin; }
+
+/* ---------------- Board ---------------- */
+.board { width: min(1320px, calc(100% - 48px)); margin: 0 auto; padding: 26px 0 40px; }
+[data-device='phone'] .board { width: calc(100% - 28px); padding: 16px 0 28px; }
+.board-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 16px; }
+.board-title { margin: 0; font-size: 30px; font-weight: 650; letter-spacing: -0.015em; }
+[data-device='phone'] .board-title { font-size: 24px; }
+.filters { display: flex; align-items: center; gap: 7px; margin-left: auto; min-width: 0; overflow-x: auto; scrollbar-width: none; padding: 2px; }
+.filters::-webkit-scrollbar { display: none; }
+.filters > * { flex: none; }
+.action, .pill { display: inline-flex; align-items: center; gap: 6px; min-height: 34px; padding: 6px 11px; border: 1px solid var(--border); border-radius: var(--radius-pill); background: var(--surface); color: var(--muted); font-size: 12px; white-space: nowrap; }
+.action { color: var(--text); }
+.action:hover, .pill:hover { background: var(--hover); color: var(--text); }
+.pill.is-on { border-color: var(--border-strong); background: var(--active); color: var(--text); }
+.pill-count { min-width: 16px; padding: 0 5px; border-radius: var(--radius-pill); background: var(--hover); color: var(--text); font-size: 10.5px; line-height: 16px; text-align: center; font-variant-numeric: tabular-nums; }
+.pill .chev { width: 11px; height: 11px; color: var(--faint); }
+[data-device='phone'] .action { width: 36px; min-height: 36px; padding: 0; justify-content: center; }
+[data-device='phone'] .action span { display: none; }
+[data-device='phone'] .pill { min-height: 36px; }
+
+.pins { display: flex; align-items: center; gap: 7px; margin: 0 0 12px; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
+.pins::-webkit-scrollbar { display: none; }
+.pin { display: inline-flex; align-items: center; gap: 6px; flex: none; min-height: 30px; padding: 4px 11px; border: 1px solid var(--border); border-radius: var(--radius-pill); background: var(--surface); color: var(--muted); font-size: 12px; }
+.pin:hover { background: var(--hover); color: var(--text); }
+.pin.on { background: var(--active); border-color: var(--border-strong); color: var(--text); }
+.pin-count { color: var(--faint); font-size: 11px; font-variant-numeric: tabular-nums; }
+.pin.dashed { border-style: dashed; color: var(--faint); }
+[data-device='phone'] .pin { min-height: 34px; }
+
+.tag-bar { display: flex; align-items: center; gap: 7px; margin: 0 0 16px; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
+.tag-bar::-webkit-scrollbar { display: none; }
+.tag-bar-label { flex: none; color: var(--faint); font-size: 11px; letter-spacing: 0.04em; padding-right: 2px; }
+.tag-filter { display: inline-flex; align-items: center; gap: 5px; flex: none; min-height: 30px; padding: 4px 10px; border: 1px solid var(--border); border-radius: var(--radius-pill); background: var(--surface); color: var(--muted); font-size: 12px; }
+.tag-filter:hover { background: var(--hover); color: var(--text); }
+.tag-filter.on { background: var(--active); border-color: var(--border-strong); color: var(--text); }
+.tag-filter .ic { width: 12px; height: 12px; }
+.tag-filter .tag-count { color: var(--faint); font-size: 11px; font-variant-numeric: tabular-nums; }
+.tag-clear { flex: none; border: 0; background: none; color: var(--faint); font-size: 11.5px; padding: 6px 4px; }
+.tag-clear:hover { color: var(--text); }
+.tag-bar-empty { color: var(--faint); font-size: 12px; }
+
+.active-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: -4px 0 12px; }
+.active-chip { display: inline-flex; align-items: center; gap: 5px; min-height: 26px; padding: 2px 6px 2px 9px; border-radius: var(--radius-pill); background: var(--active); color: var(--text); font-size: 11.5px; }
+.active-chip .kind { color: var(--faint); font-size: 10.5px; }
+.active-chip .x { display: inline-flex; width: 18px; height: 18px; align-items: center; justify-content: center; border: 0; background: none; border-radius: var(--radius-pill); color: var(--muted); padding: 0; }
+.active-chip .x:hover { background: var(--hover); color: var(--text); }
+.clear-link { border: 0; background: none; color: var(--muted); font-size: 11.5px; padding: 5px 4px; }
+.clear-link:hover { color: var(--text); }
+
+.columns { display: grid; grid-template-columns: 44px repeat(4, minmax(0, 1fr)); gap: 12px; align-items: start; }
+.columns.backlog-open { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+[data-device='phone'] .columns, [data-device='phone'] .columns.backlog-open { grid-template-columns: minmax(0, 1fr); }
+.rail { display: flex; flex-direction: column; align-items: center; gap: 10px; min-height: 220px; padding: 12px 0; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface-2); color: var(--muted); }
+.rail:hover { background: var(--hover); color: var(--text); }
+.rail-name { writing-mode: vertical-rl; letter-spacing: 0.12em; font-size: 12px; font-weight: 600; }
+.rail-count { font-size: 11px; color: var(--faint); }
+.col { min-width: 0; }
+.col-head { display: flex; align-items: center; gap: 7px; margin: 0 2px 9px; min-height: 24px; }
+.col-name { font-size: 13px; font-weight: 600; }
+.col-count { min-width: 20px; padding: 1px 6px; border-radius: var(--radius-pill); background: var(--hover); color: var(--muted); font-size: 11px; line-height: 18px; text-align: center; font-variant-numeric: tabular-nums; }
+.col-collapse { margin-left: auto; border: 0; background: none; color: var(--muted); padding: 3px; border-radius: 6px; }
+.col-collapse:hover { background: var(--hover); color: var(--text); }
+.cards { display: grid; gap: 10px; }
+.col-empty { margin: 0; padding: 8px 2px; color: var(--faint); font-size: 12px; }
+
+.phone-tabs { display: flex; gap: 2px; padding: 4px; margin: 0 0 14px; border-radius: var(--radius-pill); background: var(--surface-2); overflow-x: auto; scrollbar-width: none; }
+.phone-tabs::-webkit-scrollbar { display: none; }
+.phone-tab { flex: 1 0 auto; display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 34px; padding: 6px 9px; border: 0; border-radius: var(--radius-pill); background: none; color: var(--muted); font-size: 12px; white-space: nowrap; }
+.phone-tab[aria-selected='true'] { background: var(--surface); color: var(--text); box-shadow: var(--shadow-card); }
+.phone-tab .n { color: var(--faint); font-size: 10.5px; font-variant-numeric: tabular-nums; }
+
+.card { position: relative; display: flex; flex-direction: column; gap: 7px; min-width: 0; padding: 14px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-card); cursor: pointer; text-align: left; }
+.card:hover { border-color: var(--border-strong); background: var(--surface-2); }
+.card-title { padding: 0 58px 0 0; margin: 0; border: 0; background: none; color: inherit; font-size: 14px; font-weight: 600; line-height: 1.5; text-align: left; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.card.done .card-title { color: var(--muted); }
+.card-tags { display: flex; align-items: center; gap: 4px; min-width: 0; overflow: hidden; }
+.tag { display: inline-flex; align-items: center; gap: 3px; min-width: 0; max-width: 38%; padding: 1px 6px; border: 0; border-radius: var(--radius-pill); background: var(--hover); color: var(--muted); font-size: 11px; line-height: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+button.tag { cursor: pointer; font: inherit; font-size: 11px; }
+button.tag:hover { background: var(--active); color: var(--text); }
+.tag.accent { background: var(--active); color: var(--text); }
+.tag .ic { width: 11px; height: 11px; }
+.tag-add { flex: none; border: 1px dashed var(--border-strong); background: transparent; color: var(--faint); padding: 0 5px; }
+.tag-add:hover { background: var(--hover); color: var(--text); border-color: var(--muted); }
+.card-note { color: var(--muted); font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.reason { display: flex; align-items: center; gap: 6px; min-width: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.reason .dot { width: 6px; height: 6px; border-radius: var(--radius-pill); background: currentColor; flex: none; }
+.reason.tone-running { color: var(--positive); }
+.reason.tone-waiting { color: var(--warn); }
+.reason.tone-review { color: var(--text); }
+.reason.tone-done, .reason.tone-backlog { color: var(--muted); }
+.reason .pinned { margin-left: auto; color: var(--muted); display: inline-flex; }
+.reason .pinned .ic { width: 12px; height: 12px; }
+.card-foot { display: flex; align-items: center; gap: 5px; min-width: 0; color: var(--muted); font-size: 11px; line-height: 18px; }
+.project-link { max-width: 45%; padding: 0 2px; margin: 0 -2px; border: 0; background: none; color: inherit; font: inherit; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-radius: 4px; }
+.project-link:hover { background: var(--hover); color: var(--text); }
+.card-foot .sep { color: var(--faint); }
+.card-foot .agent { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card-foot .time { margin-left: auto; flex: none; color: var(--faint); white-space: nowrap; }
+.check { position: absolute; top: 14px; right: 12px; display: grid; place-items: center; width: 20px; height: 20px; padding: 0; border: 1.5px solid var(--border-strong); border-radius: var(--radius-pill); background: var(--surface); color: var(--accent-fg); }
+.check:hover { border-color: var(--muted); }
+.check.on { border-color: var(--positive); background: var(--positive); color: var(--on-color); }
+.check .ic { width: 12px; height: 12px; stroke-width: 2.2; }
+.card-menu { position: absolute; top: 13px; right: 38px; display: grid; place-items: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: var(--radius-pill); background: none; color: var(--faint); opacity: 0; transition: opacity 120ms ease; }
+.card:hover .card-menu, .card:focus-within .card-menu { opacity: 1; }
+.card-menu:hover { background: var(--hover); color: var(--text); }
+[data-device='phone'] .check { top: 12px; right: 12px; width: 22px; height: 22px; }
+[data-device='phone'] .card-menu { top: 12px; right: 40px; width: 24px; height: 24px; opacity: 1; }
+[data-device='phone'] .tag { max-width: 42%; }
+[data-device='phone'] .card-title { padding-right: 64px; font-size: 14.5px; }
+
+.board-empty { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 56px 0; color: var(--muted); font-size: 13px; }
+.board-empty .ic { width: 24px; height: 24px; color: var(--faint); }
+.text-btn { border: 0; background: none; color: var(--muted); font-size: 12px; padding: 4px; text-decoration: underline; text-underline-offset: 3px; }
+.text-btn:hover { color: var(--text); }
+
+/* ---------------- Thread page ---------------- */
+.thread-page { width: min(820px, calc(100% - 56px)); margin: 0 auto; padding: 24px 0 40px; }
+[data-device='phone'] .thread-page { width: calc(100% - 28px); padding: 16px 0 24px; }
+.back { display: inline-flex; align-items: center; gap: 5px; margin-bottom: 18px; border: 0; background: none; color: var(--muted); font-size: 12px; padding: 4px 0; }
+.back:hover { color: var(--text); }
+.thread-head { border-bottom: 1px solid var(--border); padding-bottom: 16px; }
+.thread-title-row { display: flex; align-items: flex-start; gap: 10px; }
+.thread-title-row h1 { margin: 0; flex: 1; min-width: 0; font-size: 26px; font-weight: 650; letter-spacing: -0.01em; line-height: 1.35; overflow-wrap: anywhere; }
+[data-device='phone'] .thread-title-row h1 { font-size: 22px; }
+.menu-btn { display: grid; place-items: center; width: 34px; height: 34px; flex: none; border: 1px solid var(--border); border-radius: var(--radius-pill); background: var(--surface); color: var(--muted); }
+.menu-btn:hover { background: var(--hover); color: var(--text); }
+.thread-meta { margin-top: 6px; color: var(--muted); font-size: 12px; }
+.thread-tags { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; margin-top: 12px; }
+.thread-tags .tag { max-width: 220px; padding: 2px 8px; font-size: 12px; line-height: 20px; }
+.thread-tags .tag-add { padding: 2px 8px; }
+.messages { display: grid; gap: 18px; padding: 24px 0 120px; }
+.msg { font-size: 14.5px; line-height: 1.7; }
+.msg.user { justify-self: end; max-width: 78%; padding: 10px 14px; border-radius: 18px; background: var(--user-bg); }
+.msg.assistant p { margin: 0 0 10px; }
+.work-line { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+.composer { position: sticky; bottom: 0; padding: 10px 0 4px; background: linear-gradient(to bottom, transparent, var(--bg) 30%); }
+.composer-box { border: 1px solid var(--border); border-radius: 22px; background: var(--surface); box-shadow: var(--shadow-card); padding: 12px 12px 8px; }
+.composer-hint { color: var(--faint); font-size: 14px; }
+.composer-bar { display: flex; align-items: center; gap: 6px; margin-top: 10px; }
+.soft { display: inline-flex; align-items: center; justify-content: center; min-width: 28px; height: 28px; padding: 0 8px; border: 1px solid var(--border); border-radius: var(--radius-pill); background: none; color: var(--muted); font-size: 11px; }
+.grow { flex: 1; }
+.send { display: grid; place-items: center; width: 30px; height: 30px; border: 0; border-radius: var(--radius-pill); background: var(--accent); color: var(--accent-fg); }
+
+/* ---------------- Popovers, menu, picker ---------------- */
+.pop-layer { position: absolute; inset: 0; z-index: 80; pointer-events: none; }
+.pop-layer .scrim { position: absolute; inset: 0; pointer-events: auto; background: transparent; }
+[data-device='phone'] .pop-layer .scrim { background: var(--scrim); }
+.pop { position: absolute; pointer-events: auto; z-index: 81; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); box-shadow: var(--shadow-pop); color: var(--text); overflow: hidden; }
+[data-device='phone'] .pop { left: 0 !important; right: 0; bottom: 0; top: auto !important; width: auto !important; max-height: 76%; border-radius: 22px 22px 0 0; border-bottom: 0; display: flex; flex-direction: column; }
+[data-device='phone'] .pop::before { content: ''; display: block; width: 40px; height: 4px; margin: 8px auto 4px; border-radius: var(--radius-pill); background: var(--border-strong); flex: none; }
+[data-device='phone'] .pop-list { max-height: none; }
+[data-device='phone'] .sheet-done { display: block; }
+[data-device='phone'] .kbd-hint { display: none; }
+[data-device='phone'] .pop-head { padding-top: 8px; }
+[data-device='phone'] .menu { max-height: none; }
+[data-device='phone'] .menu::before { display: none; }
+
+.menu { width: 210px; padding: 5px; }
+.menu-item { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 34px; padding: 6px 8px; border: 0; border-radius: 9px; background: none; color: var(--text); font-size: 12.5px; text-align: left; }
+.menu-item:hover { background: var(--hover); }
+.menu-item .ic { color: var(--muted); }
+.menu-item .label { flex: 1; min-width: 0; }
+.menu-item .n { color: var(--faint); font-size: 11px; font-variant-numeric: tabular-nums; }
+.menu-sep { height: 1px; margin: 4px 8px; background: var(--border); }
+.menu-item.danger { color: var(--danger); }
+.menu-item.danger .ic { color: var(--danger); }
+
+.picker { width: 310px; max-height: 420px; display: flex; flex-direction: column; }
+.pop-head { display: flex; align-items: center; gap: 8px; padding: 10px 12px 6px; font-size: 12.5px; font-weight: 600; flex: none; }
+.pop-sub { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); font-weight: 400; font-size: 11px; }
+.pop-x { display: grid; place-items: center; width: 24px; height: 24px; border: 0; border-radius: var(--radius-pill); background: none; color: var(--faint); flex: none; }
+.pop-x:hover { background: var(--hover); color: var(--text); }
+.search { position: relative; display: block; margin: 0 10px 4px; flex: none; }
+.search .ic { position: absolute; left: 9px; top: 50%; transform: translateY(-50%); color: var(--faint); width: 13px; height: 13px; }
+.search input { width: 100%; height: 34px; padding: 0 10px 0 29px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg); color: var(--text); font-size: 13px; outline: none; }
+.search input:focus { border-color: var(--border-strong); }
+.search input::placeholder { color: var(--faint); }
+.pop-list { flex: 1; min-height: 0; max-height: 300px; overflow-y: auto; padding: 2px 6px 4px; }
+.pop-row { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 34px; padding: 5px 7px; border: 0; border-radius: 9px; background: none; color: var(--text); font: inherit; font-size: 12.5px; text-align: left; }
+.pop-row:hover { background: var(--hover); }
+.row-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row-count { color: var(--faint); font-size: 11px; font-variant-numeric: tabular-nums; }
+.check-box { display: grid; place-items: center; width: 16px; height: 16px; flex: none; border: 1.5px solid var(--border-strong); border-radius: 4px; color: var(--accent-fg); }
+.check-box.on { border-color: var(--accent); background: var(--accent); }
+.check-box .ic { width: 11px; height: 11px; stroke-width: 2.4; }
+.pop-row.create { color: var(--text); border-top: 1px solid var(--border); border-radius: 0; margin-top: 4px; padding-top: 8px; }
+.pop-row.create .ic { color: var(--muted); }
+.pop-empty, .pop-hint { margin: 0; padding: 12px 9px; color: var(--faint); font-size: 11.5px; line-height: 1.6; }
+.pop-foot { display: flex; align-items: center; gap: 8px; padding: 7px 10px 9px; border-top: 1px solid var(--border); color: var(--faint); font-size: 11px; flex: none; }
+.pop-foot .link { border: 0; background: none; color: var(--muted); font-size: 11px; padding: 2px 0; }
+.pop-foot .link:hover { color: var(--text); }
+.kbd-hint { margin-left: auto; color: var(--faint); font-size: 10.5px; white-space: nowrap; }
+.sheet-done { display: none; padding: 0 12px calc(12px + env(safe-area-inset-bottom)); flex: none; }
+.done-btn { height: 36px; padding: 0 16px; border: 0; border-radius: var(--radius-pill); background: var(--accent); color: var(--accent-fg); font-size: 12.5px; font-weight: 600; }
+
+.title-pop { width: 360px; padding: 0 0 4px; }
+.pop-desc { margin: 0; padding: 0 12px 8px; color: var(--muted); font-size: 11.5px; line-height: 1.6; }
+.pop-desc code { font-family: var(--mono); font-size: 10.5px; background: var(--code-bg); padding: 1px 4px; border-radius: 4px; }
+.title-input { display: block; width: calc(100% - 24px); margin: 0 12px 4px; height: 36px; padding: 0 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg); color: var(--text); font-size: 13px; outline: none; flex: none; }
+.title-input:focus { border-color: var(--border-strong); }
+
+.filter-pop { width: 260px; padding: 0 0 4px; }
+.filter-pop .pop-list { max-height: 320px; }
+
+.toast-host { position: absolute; left: 0; right: 0; bottom: 22px; display: flex; justify-content: center; pointer-events: none; z-index: 90; }
+.toast { max-width: calc(100% - 32px); padding: 8px 14px; border: 1px solid var(--border-strong); border-radius: var(--radius-pill); background: var(--surface); color: var(--text); box-shadow: var(--shadow-card); font-size: 12px; line-height: 1.5; }
+[data-device='phone'] .toast-host { bottom: calc(18px + env(safe-area-inset-bottom)); }
+
+@media (prefers-reduced-motion: reduce) {
+  .card-menu { transition: none; }
+}
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5"/></symbol>
+  <symbol id="i-chevron-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+  <symbol id="i-chevron-left" viewBox="0 0 24 24"><path d="m15 6-6 6 6 6"/></symbol>
+  <symbol id="i-more" viewBox="0 0 24 24"><path d="M5 12h.01M12 12h.01M19 12h.01" stroke-width="2.4"/></symbol>
+  <symbol id="i-tag" viewBox="0 0 24 24"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H12l8 8-7 7-8-8Z"/><circle cx="8.5" cy="8.5" r="1.1"/></symbol>
+  <symbol id="i-pin" viewBox="0 0 24 24"><path d="M9 4h6l-1 6 3 3v2H7v-2l3-3Z"/><path d="M12 15v5"/></symbol>
+  <symbol id="i-sparkle" viewBox="0 0 24 24"><path d="M12 3.5 13.7 9l5.5 1.7-5.5 1.7L12 18l-1.7-5.6L4.8 10.7 10.3 9Z"/></symbol>
+  <symbol id="i-pencil" viewBox="0 0 24 24"><path d="m5 19 1-4L16.5 4.5a2.1 2.1 0 0 1 3 3L9 18Z"/><path d="M14.5 6.5l3 3"/></symbol>
+  <symbol id="i-arrow-left" viewBox="0 0 24 24"><path d="M19 12H5"/><path d="m11 6-6 6 6 6"/></symbol>
+  <symbol id="i-arrow-up" viewBox="0 0 24 24"><path d="M12 19V5"/><path d="m6 11 6-6 6 6"/></symbol>
+  <symbol id="i-fork" viewBox="0 0 24 24"><circle cx="7" cy="6" r="2.2"/><circle cx="17" cy="6" r="2.2"/><circle cx="12" cy="18" r="2.2"/><path d="M7 8.2v2.3a3 3 0 0 0 3 3h4a3 3 0 0 0 3-3V8.2M12 13.5v2.3"/></symbol>
+  <symbol id="i-archive" viewBox="0 0 24 24"><path d="M4 7h16v13H4z"/><path d="M3 4h18v3H3zM9 12h6"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3.5 6.5a1.5 1.5 0 0 1 1.5-1.5h4l2 2.5h8a1.5 1.5 0 0 1 1.5 1.5v9a1.5 1.5 0 0 1-1.5 1.5H5a1.5 1.5 0 0 1-1.5-1.5Z"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 7.5V12l3 2"/></symbol>
+  <symbol id="i-terminal" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="2"/><path d="m7 10 3 2-3 2M12.5 14H17"/></symbol>
+</svg>
+
+<div class="controls">
+  <div class="title-row">
+    <h1>标签与看板筛选 · Playground</h1>
+    <span class="sub">点击卡片、标签和筛选按钮都可以试；路径带方案，方便直接发给别人看</span>
+  </div>
+
+  <div class="row">
+    <span class="lab">怎么加标签</span>
+    <div class="seg" id="seg-add" role="group" aria-label="加标签方式">
+      <button type="button" data-action="set-add" data-value="a" aria-pressed="true">A 菜单</button>
+      <button type="button" data-action="set-add" data-value="b" aria-pressed="false">B 行内 +</button>
+      <button type="button" data-action="set-add" data-value="c" aria-pressed="false">C 标题前缀（现状）</button>
+    </div>
+    <span class="hint" id="hint-add"></span>
+  </div>
+
+  <div class="row">
+    <span class="lab">看板筛选</span>
+    <div class="seg" id="seg-filter" role="group" aria-label="看板筛选方式">
+      <button type="button" data-action="set-filter" data-value="popover" aria-pressed="false">弹层</button>
+      <button type="button" data-action="set-filter" data-value="inline" aria-pressed="false">标签条</button>
+      <button type="button" data-action="set-filter" data-value="both" aria-pressed="true">两者</button>
+    </div>
+    <span class="hint" id="hint-filter"></span>
+  </div>
+
+  <div class="row">
+    <span class="lab">视图</span>
+    <div class="seg" id="seg-view" role="group" aria-label="视图">
+      <button type="button" data-action="set-view" data-value="board" aria-pressed="true">看板</button>
+      <button type="button" data-action="set-view" data-value="thread" aria-pressed="false">会话页</button>
+    </div>
+    <span class="lab">设备</span>
+    <div class="seg" id="seg-device" role="group" aria-label="设备">
+      <button type="button" data-action="set-device" data-value="desktop" aria-pressed="true">桌面 1440</button>
+      <button type="button" data-action="set-device" data-value="phone" aria-pressed="false">手机 390</button>
+    </div>
+    <span class="lab">主题</span>
+    <div class="seg" id="seg-theme" role="group" aria-label="主题">
+      <button type="button" data-action="set-theme" data-value="light" aria-pressed="true">亮色</button>
+      <button type="button" data-action="set-theme" data-value="dark" aria-pressed="false">深色</button>
+    </div>
+    <button type="button" class="reset" data-action="reset">重置</button>
+  </div>
+
+  <details class="notes">
+    <summary>实现要点</summary>
+    <ul>
+      <li>标签存在 daemon 的 <code>tags</code> / <code>thread_tags</code> 里，不写进标题；现在标题开头的 <code>[标签]</code>、<code>【标签】</code> 只作为迁移来源，迁移后不再用。</li>
+      <li>看板筛选：标签之间是「或」，和项目、实例、是否定时之间是「且」；标签计数按全部未归档线程算，不随其他筛选变化。</li>
+      <li>卡片最多显示 2 个标签，多的显示 <code>+N</code>；加标签的选择器最多 20 个字，同名不区分大小写。</li>
+      <li>颜色只有普通和强调两档，在「配置 → 标签」里改；删除标签会同时解除关联。</li>
+      <li>手机：标签条横向滚动，选择器是底部面板；卡片上的 ⋯ 一直显示，桌面悬停才出现。</li>
+    </ul>
+  </details>
+</div>
+
+<main class="stage">
+  <div class="frame" id="frame">
+    <div class="app">
+      <section id="board-view"></section>
+      <section id="thread-view" hidden></section>
+    </div>
+    <div class="pop-layer" id="pop-layer"></div>
+    <div class="toast-host" id="toast-host"></div>
+  </div>
+</main>
+
+<script>
+const $ = (selector, root = document) => root.querySelector(selector);
+const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
+const esc = (value) => String(value).replace(/[&<>"']/g, (char) => ({
+  '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+}[char]));
+const icon = (name, className = '') => `<svg class="ic ${className}" aria-hidden="true"><use href="#i-${name}"/></svg>`;
+
+const TAG_SEED = [
+  { id: 'payment', name: '支付重构', tone: 'normal' },
+  { id: 'incident', name: '线上问题', tone: 'accent' },
+  { id: 'release', name: '发布', tone: 'normal' },
+  { id: 'observability', name: '可观测', tone: 'normal' },
+  { id: 'retro', name: '复盘', tone: 'normal' },
+];
+
+const THREAD_SEED = [
+  { id: 't1', title: '修复支付回调超时', project: 'orders', agent: 'Codex', state: 'doing', running: true, runText: '已运行 8 分钟', tags: ['payment', 'incident'], note: '正在跑支付回归测试', updated: '8 分钟前', pinned: true, done: false, order: 2 },
+  { id: 't2', title: '整理官网移动端文案', project: 'website', agent: 'Claude', state: 'doing', running: true, runText: '已运行 12 分钟', tags: ['release'], note: '正在生成第二版文案', updated: '12 分钟前', pinned: false, done: false, order: 3 },
+  { id: 't3', title: '确认退款重试策略', project: 'orders', agent: 'Codex', state: 'waiting', attention: '等你批准', tags: ['payment'], note: '准备重试退款请求', updated: '3 分钟前', pinned: false, done: false, order: 1 },
+  { id: 't4', title: '重构订单状态机', project: 'orders', agent: 'Claude', state: 'review', tags: ['payment'], note: '已改完，等你验收', updated: '1 小时前', pinned: false, done: false, order: 5 },
+  { id: 't5', title: '报表导出失败', project: 'infra', agent: 'pi', state: 'review', tags: ['incident'], note: '原因已找到，等你确认', updated: '2 小时前', pinned: false, done: false, order: 6 },
+  { id: 't6', title: '接入新的日志字段', project: 'infra', agent: 'Codex', state: 'done', tags: ['observability'], note: '已上线', updated: '昨天', pinned: false, done: true, order: 8 },
+  { id: 't7', title: '官网改版复盘', project: 'website', agent: 'Claude', state: 'backlog', tags: ['retro'], note: '下个迭代再排', updated: '昨天', pinned: false, done: false, order: 9 },
+  { id: 't8', title: '更新官网截图', project: 'website', agent: 'Codex', state: 'review', tags: [], note: '截图已更新，等你验收', updated: '昨天', pinned: false, done: false, order: 7 },
+  { id: 't9', title: '发布前检查支付回调', project: 'orders', agent: 'Codex', state: 'waiting', attention: '等你回答', tags: ['payment', 'release'], note: '需要确认是否回滚', updated: '26 分钟前', pinned: false, done: false, scheduled: true, order: 4 },
+];
+
+const COLUMNS = [
+  { id: 'backlog', name: '以后再做' },
+  { id: 'doing', name: '进行中' },
+  { id: 'waiting', name: '等你' },
+  { id: 'review', name: '待验收' },
+  { id: 'done', name: '已完成' },
+];
+const MAIN_COLUMNS = COLUMNS.filter((column) => column.id !== 'backlog');
+
+const ADD_HINT = {
+  a: '从卡片右上角 ⋯（手机长按卡片）或会话页标题旁 ⋯ 打开菜单，选「标签」。菜单是正式入口，卡片上不再加按钮；右键和长按仍然有效。',
+  b: '标签行末尾有一个 +；点开和菜单里「标签」是同一个选择器。菜单保留，两种路都能走。',
+  c: '现状：只能改标题。在开头写 [标签] 或【标签】，看板把它解析成标签；保存标题会重写这条线程的全部标签。',
+};
+const FILTER_HINT = {
+  popover: '筛选条件收在顶部「标签」弹层里，关掉后只剩一个计数；看板上看不到选了哪些标签。',
+  inline: '标签条一直摆在看板上方，带数量，点一下即筛；选中的标签留在原位，一眼能看到。',
+  both: '标签条负责一眼可见和一点即筛；标签多到一行放不下时，仍可从顶部弹层搜索。',
+};
+
+const state = {
+  add: 'a',
+  filter: 'both',
+  view: 'board',
+  device: 'desktop',
+  theme: 'light',
+  tags: [],
+  threads: [],
+  filters: { tags: [], project: [], agent: [], scheduled: [] },
+  query: '',
+  picker: null,
+  menu: null,
+  titleEditor: null,
+  filterPop: null,
+  phoneColumn: 'waiting',
+  backlogOpen: false,
+  activeThread: 't1',
+};
+let nextTagId = 1;
+let toastTimer = 0;
+
+const threadById = (id) => state.threads.find((thread) => thread.id === id);
+const tagById = (id) => state.tags.find((tag) => tag.id === id);
+const tagName = (id) => tagById(id)?.name ?? id;
+const tagTone = (id) => tagById(id)?.tone ?? 'normal';
+const tagCount = (id) => state.threads.filter((thread) => thread.tags.includes(id)).length;
+
+function resetData() {
+  state.tags = TAG_SEED.map((tag) => ({ ...tag }));
+  state.threads = THREAD_SEED.map((thread) => ({ ...thread, tags: [...thread.tags] }));
+  state.filters = { tags: [], project: [], agent: [], scheduled: [] };
+  state.query = '';
+  state.picker = null;
+  state.menu = null;
+  state.titleEditor = null;
+  state.filterPop = null;
+  state.phoneColumn = 'waiting';
+  state.backlogOpen = false;
+  state.activeThread = 't1';
+}
+
+function validTag(value) {
+  const text = value.trim();
+  return [...text].length >= 1 && [...text].length <= 20 && !/[\[\]【】]/u.test(text);
+}
+
+function ensureTag(name) {
+  const text = name.trim();
+  const existing = state.tags.find((tag) => tag.name.toLowerCase() === text.toLowerCase());
+  if (existing) return existing.id;
+  const id = `tag-${nextTagId++}`;
+  state.tags.push({ id, name: text, tone: 'normal' });
+  return id;
+}
+
+function projectOptions() {
+  const counts = new Map();
+  for (const thread of state.threads) counts.set(thread.project, (counts.get(thread.project) ?? 0) + 1);
+  return [...counts].map(([key, count]) => ({ key, count }))
+    .sort((a, b) => b.count - a.count || a.key.localeCompare(b.key));
+}
+
+function agentOptions() {
+  const counts = new Map();
+  for (const thread of state.threads) counts.set(thread.agent, (counts.get(thread.agent) ?? 0) + 1);
+  return [...counts].map(([key, count]) => ({ key, count }))
+    .sort((a, b) => b.count - a.count || a.key.localeCompare(b.key));
+}
+
+function columnOf(thread) {
+  if (thread.done) return 'done';
+  if (thread.attention) return 'waiting';
+  if (thread.running) return 'doing';
+  return thread.state;
+}
+
+function matchesFilters(thread) {
+  const filters = state.filters;
+  return (filters.tags.length === 0 || thread.tags.some((id) => filters.tags.includes(id)))
+    && (filters.project.length === 0 || filters.project.includes(thread.project))
+    && (filters.agent.length === 0 || filters.agent.includes(thread.agent))
+    && (filters.scheduled.length === 0 || filters.scheduled.includes(Boolean(thread.scheduled)));
+}
+
+function cardsFor(column) {
+  return state.threads
+    .filter((thread) => columnOf(thread) === column && matchesFilters(thread))
+    .sort((a, b) => Number(b.pinned) - Number(a.pinned) || a.order - b.order);
+}
+
+function hasFilters() {
+  return state.filters.tags.length + state.filters.project.length + state.filters.agent.length + state.filters.scheduled.length > 0;
+}
+
+function reasonOf(thread) {
+  if (thread.done) return { text: '已完成', tone: 'done' };
+  if (thread.attention) return { text: thread.attention, tone: 'waiting' };
+  if (thread.running) return { text: thread.runText || '正在运行', tone: 'running' };
+  if (thread.state === 'review') return { text: '等你验收', tone: 'review' };
+  if (thread.state === 'backlog') return { text: '以后再做', tone: 'backlog' };
+  return { text: '已停下', tone: 'idle' };
+}
+
+function prefixTitle(thread) {
+  const prefix = thread.tags.map((id) => `[${tagName(id)}]`).join(' ');
+  return prefix ? `${prefix} ${thread.title}` : thread.title;
+}
+
+function parsePrefixes(raw) {
+  let rest = raw.trim();
+  const names = [];
+  for (;;) {
+    const match = /^(?:\[([^\[\]【】]*)\]|【([^\[\]【】]*)】)\s*/u.exec(rest);
+    if (!match) break;
+    const name = (match[1] ?? match[2]).trim();
+    if (!validTag(name)) break;
+    if (!names.some((existing) => existing.toLowerCase() === name.toLowerCase())) names.push(name);
+    rest = rest.slice(match[0].length);
+  }
+  return { names, title: rest.trim() || raw.trim() };
+}
+
+/* ---------------- Rendering ---------------- */
+
+function render() {
+  document.documentElement.dataset.theme = state.theme;
+  document.documentElement.dataset.device = state.device;
+  document.documentElement.dataset.add = state.add;
+  document.documentElement.dataset.filter = state.filter;
+  document.documentElement.dataset.view = state.view;
+  updateControls();
+  renderBoard();
+  renderThreadPage();
+  renderPopLayer();
+  syncHash();
+}
+
+function updateControls() {
+  for (const [key, action] of [['add', 'set-add'], ['filter', 'set-filter'], ['view', 'set-view'], ['device', 'set-device'], ['theme', 'set-theme']]) {
+    $$(`[data-action="${action}"]`).forEach((button) => {
+      button.setAttribute('aria-pressed', String(button.dataset.value === state[key]));
+    });
+  }
+  $('#hint-add').textContent = ADD_HINT[state.add];
+  $('#hint-filter').textContent = FILTER_HINT[state.filter];
+  $('#board-view').hidden = state.view !== 'board';
+  $('#thread-view').hidden = state.view !== 'thread';
+}
+
+function filterCount(kind) {
+  if (kind === 'tags') return state.filters.tags.length;
+  if (kind === 'project') return state.filters.project.length;
+  if (kind === 'agent') return state.filters.agent.length;
+  if (kind === 'scheduled') return state.filters.scheduled.length;
+  return 0;
+}
+
+function filterLabel(kind) {
+  return { tags: '标签', project: '项目', agent: '实例', scheduled: '定时' }[kind];
+}
+
+function filterIcon(kind) {
+  return { tags: 'tag', project: 'folder', agent: 'sparkle', scheduled: 'clock' }[kind] || 'chevron-down';
+}
+
+function renderBoard() {
+  const host = $('#board-view');
+  const visible = state.threads.filter(matchesFilters);
+  const showTagFilter = state.filter !== 'inline';
+  const showTagBar = state.filter !== 'popover';
+
+  const filterButton = (kind) => {
+    const count = filterCount(kind);
+    return `<button type="button" class="pill${count ? ' is-on' : ''}" data-action="open-filter" data-kind="${kind}" aria-haspopup="dialog">
+      ${icon(filterIcon(kind))}<span>${filterLabel(kind)}</span>${count ? `<span class="pill-count">${count}</span>` : ''}${icon('chevron-down', 'chev')}
+    </button>`;
+  };
+
+  const head = `<header class="board-head">
+    <h1 class="board-title">看板</h1>
+    <div class="filters">
+      <button type="button" class="action" data-action="new-thread">${icon('plus')}<span>新对话</span></button>
+      <button type="button" class="action" data-action="ask-assistant">${icon('sparkle')}<span>让助手看看</span></button>
+      ${showTagFilter ? filterButton('tags') : ''}
+      ${filterButton('project')}
+      ${filterButton('agent')}
+      ${filterButton('scheduled')}
+    </div>
+  </header>`;
+
+  const active = activeFilterRow();
+  const pins = `<div class="pins" role="toolbar" aria-label="项目快捷切换">
+    <button type="button" class="pin${state.filters.project.length === 0 ? ' on' : ''}" data-action="set-project" data-project="">全部</button>
+    ${projectOptions().map((project) => `<button type="button" class="pin${state.filters.project.length === 1 && state.filters.project[0] === project.key ? ' on' : ''}" data-action="set-project" data-project="${esc(project.key)}">
+      ${esc(project.key)}<span class="pin-count">${project.count}</span>
+    </button>`).join('')}
+    <button type="button" class="pin dashed" data-action="pin-project">${icon('pin')}固定项目</button>
+  </div>`;
+
+  let body = '';
+  if (visible.length === 0) {
+    body = `<div class="board-empty">${icon('tag')}<p>没有符合筛选条件的线程。</p>${hasFilters() ? `<button type="button" class="text-btn" data-action="clear-filters">清除筛选</button>` : ''}</div>`;
+  } else if (state.device === 'phone') {
+    const selected = state.phoneColumn;
+    body = `<div class="phone-tabs" role="tablist" aria-label="线程进度">
+      ${COLUMNS.map((column) => {
+        const count = cardsFor(column.id).length;
+        return `<button type="button" class="phone-tab" role="tab" aria-selected="${selected === column.id}" data-action="set-phone-column" data-column="${column.id}">
+          ${column.name}<span class="n">${count}</span>
+        </button>`;
+      }).join('')}
+    </div>
+    <div class="columns single">${columnHtml(COLUMNS.find((column) => column.id === selected))}</div>`;
+  } else {
+    const backlog = state.backlogOpen ? columnHtml(COLUMNS[0]) : railHtml();
+    body = `<div class="columns${state.backlogOpen ? ' backlog-open' : ''}">${backlog}${MAIN_COLUMNS.map(columnHtml).join('')}</div>`;
+  }
+
+  host.innerHTML = `<div class="board">${head}${active}${pins}${showTagBar ? tagBarHtml() : ''}${body}</div>`;
+}
+
+function activeFilterRow() {
+  const chips = [];
+  const add = (kind, value, label) => {
+    chips.push(`<span class="active-chip"><span class="kind">${filterLabel(kind)}</span>${esc(label)}
+      <button type="button" class="x" data-action="remove-filter" data-kind="${kind}" data-value="${esc(value)}" aria-label="移除 ${esc(label)}">${icon('x')}</button>
+    </span>`);
+  };
+  if (state.filter === 'popover') for (const id of state.filters.tags) add('tags', id, tagName(id));
+  for (const project of state.filters.project) add('project', project, project);
+  for (const agent of state.filters.agent) add('agent', agent, agent);
+  for (const scheduled of state.filters.scheduled) add('scheduled', String(scheduled), scheduled ? '定时' : '非定时');
+  if (chips.length === 0) return '';
+  return `<div class="active-filters">${chips.join('')}<button type="button" class="clear-link" data-action="clear-filters">清除筛选</button></div>`;
+}
+
+function tagBarHtml() {
+  const tags = state.tags
+    .map((tag) => ({ ...tag, count: tagCount(tag.id) }))
+    .filter((tag) => tag.count > 0)
+    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+  if (tags.length === 0) {
+    return `<div class="tag-bar"><span class="tag-bar-label">标签</span><span class="tag-bar-empty">还没有标签</span></div>`;
+  }
+  return `<div class="tag-bar" role="toolbar" aria-label="按标签筛选">
+    <span class="tag-bar-label">标签</span>
+    ${tags.map((tag) => {
+      const selected = state.filters.tags.includes(tag.id);
+      return `<button type="button" class="tag-filter${selected ? ' on' : ''}" data-action="toggle-filter-tag" data-tag="${tag.id}" aria-pressed="${selected}">
+        ${selected ? icon('check') : ''}<span>${esc(tag.name)}</span><span class="tag-count">${tag.count}</span>
+      </button>`;
+    }).join('')}
+    ${state.filters.tags.length ? `<button type="button" class="tag-clear" data-action="clear-tags">清除</button>` : ''}
+  </div>`;
+}
+
+function railHtml() {
+  const count = cardsFor('backlog').length;
+  return `<button type="button" class="rail" data-action="toggle-backlog" aria-label="展开以后再做">
+    <span class="rail-name">以后再做</span><span class="rail-count">${count}</span>
+  </button>`;
+}
+
+function columnHtml(column) {
+  const cards = cardsFor(column.id);
+  return `<section class="col" data-column="${column.id}">
+    <div class="col-head">
+      <span class="col-name">${column.name}</span><span class="col-count">${cards.length}</span>
+      ${column.id === 'backlog' && state.backlogOpen ? `<button type="button" class="col-collapse" data-action="toggle-backlog" aria-label="收起以后再做">${icon('chevron-left')}</button>` : ''}
+    </div>
+    <div class="cards">${cards.length ? cards.map(cardHtml).join('') : '<p class="col-empty">暂无</p>'}</div>
+  </section>`;
+}
+
+function cardHtml(thread) {
+  const tags = thread.tags.map((id) => tagById(id)).filter(Boolean);
+  const reason = reasonOf(thread);
+  const tagHtml = tags.slice(0, 2).map((tag) => `<button type="button" class="tag${tag.tone === 'accent' ? ' accent' : ''}" data-action="card-tag-filter" data-tag="${tag.id}" title="按「${esc(tag.name)}」筛选">${esc(tag.name)}</button>`).join('');
+  const more = tags.length > 2 ? `<span class="tag" title="${esc(tags.slice(2).map((tag) => tag.name).join('、'))}">+${tags.length - 2}</span>` : '';
+  const add = state.add === 'b'
+    ? `<button type="button" class="tag tag-add" data-action="open-picker" data-thread="${thread.id}" aria-label="添加标签" title="添加标签">${icon('plus')}</button>`
+    : state.add === 'c'
+      ? `<button type="button" class="tag tag-add" data-action="open-title" data-thread="${thread.id}" aria-label="改标题加标签" title="改标题加标签">${icon('pencil')}</button>`
+      : '';
+  const tagRow = tags.length || add ? `<div class="card-tags">${tagHtml}${more}${add}</div>` : '';
+  return `<article class="card${thread.done ? ' done' : ''}" data-action="open-thread" data-thread="${thread.id}" aria-label="线程：${esc(thread.title)}">
+    <button type="button" class="check${thread.done ? ' on' : ''}" data-action="toggle-done" data-thread="${thread.id}" role="checkbox" aria-checked="${thread.done}" aria-label="${thread.done ? '标记为未完成' : '标记完成'}" title="${thread.done ? '标记为未完成' : '标记完成'}">${thread.done ? icon('check') : ''}</button>
+    <button type="button" class="card-menu" data-action="open-menu" data-thread="${thread.id}" aria-label="更多操作" aria-haspopup="menu" title="更多">${icon('more')}</button>
+    <button type="button" class="card-title" data-action="open-thread" data-thread="${thread.id}">${esc(thread.title)}</button>
+    ${tagRow}
+    ${thread.note ? `<div class="card-note">${esc(thread.note)}</div>` : ''}
+    <div class="reason tone-${reason.tone}">
+      ${reason.tone !== 'idle' ? '<i class="dot"></i>' : ''}<span>${esc(reason.text)}</span>
+      ${thread.pinned ? `<span class="pinned" title="已置顶">${icon('pin')}</span>` : ''}
+    </div>
+    <div class="card-foot">
+      <button type="button" class="project-link" data-action="set-project" data-project="${esc(thread.project)}" title="只看 ${esc(thread.project)}">${esc(thread.project)}</button>
+      <span class="sep">·</span><span class="agent">${esc(thread.agent)}</span><span class="time">${esc(thread.updated)}</span>
+    </div>
+  </article>`;
+}
+
+function renderThreadPage() {
+  const host = $('#thread-view');
+  const thread = threadById(state.activeThread) || state.threads[0];
+  const tags = thread.tags.map((id) => tagById(id)).filter(Boolean);
+  const reason = reasonOf(thread);
+  const tagHtml = tags.map((tag) => `<button type="button" class="tag${tag.tone === 'accent' ? ' accent' : ''}" data-action="card-tag-filter" data-tag="${tag.id}" title="按「${esc(tag.name)}」筛选">${esc(tag.name)}</button>`).join('');
+  const add = state.add === 'b'
+    ? `<button type="button" class="tag tag-add" data-action="open-picker" data-thread="${thread.id}">${icon('plus')}标签</button>`
+    : state.add === 'c'
+      ? `<button type="button" class="tag tag-add" data-action="open-title" data-thread="${thread.id}">${icon('pencil')}编辑标题</button>`
+      : '';
+  host.innerHTML = `<div class="thread-page">
+    <button type="button" class="back" data-action="back-board">${icon('arrow-left')}看板</button>
+    <header class="thread-head">
+      <div class="thread-title-row">
+        <h1>${esc(thread.title)}</h1>
+        <button type="button" class="menu-btn" data-action="open-menu" data-thread="${thread.id}" aria-label="更多操作" aria-haspopup="menu">${icon('more')}</button>
+      </div>
+      <div class="thread-meta">${esc(thread.agent)} · ${esc(thread.project)} · ${esc(reason.text)}</div>
+      ${tags.length || add ? `<div class="thread-tags">${tagHtml}${add}</div>` : ''}
+    </header>
+    <div class="messages">
+      <div class="msg user">支付回调在超时后没有重试，先看 orders 的重试逻辑。</div>
+      <div class="msg assistant">
+        <p>我看过重试链路了，问题在退避次数用完后没有落回队列。改完会补一条回归测试。</p>
+        <div class="work-line">${icon('terminal')}运行了 npm test · 1 分钟</div>
+      </div>
+    </div>
+    <div class="composer"><div class="composer-box">
+      <div class="composer-hint">继续这条会话…</div>
+      <div class="composer-bar"><button type="button" class="soft" aria-label="添加附件">${icon('plus')}</button><span class="soft">Auto</span><span class="grow"></span><button type="button" class="send" aria-label="发送">${icon('arrow-up')}</button></div>
+    </div></div>
+  </div>`;
+}
+
+/* ---------------- Popovers ---------------- */
+
+function anchorOf(element) {
+  const frame = $('#frame').getBoundingClientRect();
+  const rect = element.getBoundingClientRect();
+  return { left: rect.left - frame.left, right: rect.right - frame.left, top: rect.top - frame.top, bottom: rect.bottom - frame.top };
+}
+
+function positionStyle(anchor, width, height, align = 'end') {
+  if (state.device === 'phone') return '';
+  const frame = $('#frame');
+  const frameWidth = frame.clientWidth;
+  const frameHeight = frame.clientHeight;
+  let left = align === 'end' ? anchor.right - width : anchor.left;
+  left = Math.max(10, Math.min(frameWidth - width - 10, left));
+  let top = anchor.bottom + 8;
+  if (top + height > frameHeight - 10) top = Math.max(10, anchor.top - height - 8);
+  return `left:${left}px; top:${top}px;`;
+}
+
+function renderPopLayer() {
+  const layer = $('#pop-layer');
+  let html = '';
+  if (state.menu) html += renderMenu();
+  if (state.picker) html += renderPicker();
+  if (state.titleEditor) html += renderTitleEditor();
+  if (state.filterPop) html += renderFilterPop();
+  if (html) html = '<div class="scrim" data-action="close-pop"></div>' + html;
+  layer.innerHTML = html;
+  if (state.picker) {
+    renderPickerList();
+    const input = $('#picker-search');
+    if (input) {
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
+    }
+  }
+}
+
+function renderMenu() {
+  const thread = threadById(state.menu.threadId);
+  if (!thread) return '';
+  const item = (id, iconName, label, extra = '') => `<button type="button" class="menu-item" role="menuitem" data-action="menu-item" data-item="${id}" data-thread="${thread.id}">
+    ${icon(iconName)}<span class="label">${label}</span>${extra}
+  </button>`;
+  const tagItem = state.add === 'c'
+    ? item('title', 'pencil', '编辑标题', `<span class="n">${thread.tags.length}</span>`)
+    : item('tag', 'tag', '标签', `<span class="n">${thread.tags.length}</span>`);
+  return `<div class="pop menu" data-pop="menu" role="menu" style="${positionStyle(state.menu.anchor, 210, 240)}">
+    ${item('open', 'arrow-up', '打开线程')}
+    ${tagItem}
+    ${item('pin', 'pin', thread.pinned ? '取消置顶' : '置顶')}
+    ${item('fork', 'fork', '分叉')}
+    <div class="menu-sep"></div>
+    ${item('archive', 'archive', '归档')}
+  </div>`;
+}
+
+function renderPicker() {
+  const thread = threadById(state.picker.threadId);
+  if (!thread) return '';
+  return `<div class="pop picker" data-pop="picker" role="dialog" aria-label="标签" aria-modal="false" style="${positionStyle(state.picker.anchor, 310, 400)}">
+    <div class="pop-head"><span>标签</span><span class="pop-sub">${esc(thread.title)}</span><button type="button" class="pop-x" data-action="close-pop" aria-label="关闭">${icon('x')}</button></div>
+    <label class="search">${icon('search')}<input id="picker-search" type="text" value="${esc(state.query)}" placeholder="搜索或新建标签" autocomplete="off" aria-label="搜索或新建标签"></label>
+    <div class="pop-list" id="picker-list" role="listbox" aria-multiselectable="true" aria-label="标签"></div>
+    <div class="pop-foot"><button type="button" class="link" data-action="manage-tags">管理标签</button><span class="kbd-hint">回车新建 · Esc 关闭</span></div>
+    <div class="sheet-done"><button type="button" class="done-btn" data-action="close-pop">完成</button></div>
+  </div>`;
+}
+
+function pickerTags() {
+  return [...state.tags]
+    .sort((a, b) => tagCount(b.id) - tagCount(a.id) || a.name.localeCompare(b.name));
+}
+
+function renderPickerList() {
+  const list = $('#picker-list');
+  if (!list || !state.picker) return;
+  const thread = threadById(state.picker.threadId);
+  if (!thread) return;
+  const query = state.query.trim();
+  const lower = query.toLowerCase();
+  const exact = state.tags.find((tag) => tag.name.toLowerCase() === lower);
+  const tags = pickerTags().filter((tag) => !query || tag.name.toLowerCase().includes(lower));
+  let html = tags.map((tag) => {
+    const selected = thread.tags.includes(tag.id);
+    return `<button type="button" class="pop-row" role="option" aria-selected="${selected}" data-action="toggle-tag" data-thread="${thread.id}" data-tag="${tag.id}">
+      <span class="check-box${selected ? ' on' : ''}">${selected ? icon('check') : ''}</span>
+      <span class="row-name">${esc(tag.name)}</span><span class="row-count">${tagCount(tag.id)}</span>
+    </button>`;
+  }).join('');
+  if (query && !exact && validTag(query)) {
+    html += `<button type="button" class="pop-row create" data-action="create-tag" data-thread="${thread.id}">${icon('plus')}<span class="row-name">新建「${esc(query)}」</span></button>`;
+  } else if (query && !exact && !validTag(query)) {
+    html += '<p class="pop-hint">标签名 1–20 个字，不能带 [ ] 【 】。</p>';
+  }
+  if (!html) html = '<p class="pop-empty">还没有标签。输入一个名字，回车新建。</p>';
+  list.innerHTML = html;
+}
+
+function renderTitleEditor() {
+  const thread = threadById(state.titleEditor.threadId);
+  if (!thread) return '';
+  return `<div class="pop title-pop" data-pop="title" role="dialog" aria-label="编辑标题" style="${positionStyle(state.titleEditor.anchor, 360, 230)}">
+    <div class="pop-head"><span>编辑标题</span><button type="button" class="pop-x" data-action="close-pop" aria-label="关闭">${icon('x')}</button></div>
+    <p class="pop-desc">在开头写 <code>[标签]</code> 或 <code>【标签】</code>。保存后，标题里的标签会替换这条线程现有的标签。</p>
+    <input id="title-input" class="title-input" type="text" value="${esc(prefixTitle(thread))}" aria-label="标题">
+    <div class="pop-foot"><span class="kbd-hint">回车保存 · Esc 关闭</span><button type="button" class="done-btn" data-action="save-title" data-thread="${thread.id}">保存</button></div>
+  </div>`;
+}
+
+function filterOptions(kind) {
+  if (kind === 'tags') {
+    return pickerTags().map((tag) => ({ value: tag.id, label: tag.name, count: tagCount(tag.id) }));
+  }
+  if (kind === 'project') return projectOptions().map((option) => ({ value: option.key, label: option.key, count: option.count }));
+  if (kind === 'agent') return agentOptions().map((option) => ({ value: option.key, label: option.key, count: option.count }));
+  return [
+    { value: 'true', label: '定时', count: state.threads.filter((thread) => thread.scheduled).length },
+    { value: 'false', label: '非定时', count: state.threads.filter((thread) => !thread.scheduled).length },
+  ];
+}
+
+function filterSelected(kind) {
+  if (kind === 'tags') return state.filters.tags;
+  if (kind === 'project') return state.filters.project;
+  if (kind === 'agent') return state.filters.agent;
+  return state.filters.scheduled.map(String);
+}
+
+function renderFilterPop() {
+  const kind = state.filterPop.kind;
+  const selected = filterSelected(kind);
+  const options = filterOptions(kind);
+  return `<div class="pop filter-pop" data-pop="filter" role="dialog" aria-label="${filterLabel(kind)}筛选" style="${positionStyle(state.filterPop.anchor, 260, 330)}">
+    <div class="pop-head"><span>${filterLabel(kind)}</span><button type="button" class="pop-x" data-action="close-pop" aria-label="关闭">${icon('x')}</button></div>
+    <div class="pop-list" role="listbox" aria-multiselectable="true" aria-label="${filterLabel(kind)}">
+      <button type="button" class="pop-row" role="option" aria-selected="${selected.length === 0}" data-action="filter-all" data-kind="${kind}">
+        <span class="check-box${selected.length === 0 ? ' on' : ''}">${selected.length === 0 ? icon('check') : ''}</span><span class="row-name">全部</span>
+      </button>
+      ${options.map((option) => {
+        const on = selected.includes(option.value);
+        return `<button type="button" class="pop-row" role="option" aria-selected="${on}" data-action="filter-option" data-kind="${kind}" data-value="${esc(option.value)}">
+          <span class="check-box${on ? ' on' : ''}">${on ? icon('check') : ''}</span><span class="row-name">${esc(option.label)}</span><span class="row-count">${option.count}</span>
+        </button>`;
+      }).join('')}
+    </div>
+    <div class="pop-foot"><span class="kbd-hint">${kind === 'tags' ? '多个标签：任一匹配' : '和标签之间：且'}</span><button type="button" class="link" data-action="clear-one" data-kind="${kind}">清除这一项</button></div>
+  </div>`;
+}
+
+/* ---------------- Actions ---------------- */
+
+function renderViews() {
+  renderBoard();
+  renderThreadPage();
+}
+
+function closePops() {
+  state.menu = null;
+  state.picker = null;
+  state.titleEditor = null;
+  state.filterPop = null;
+  renderPopLayer();
+}
+
+function openThread(id) {
+  state.activeThread = id;
+  state.view = 'thread';
+  state.menu = null;
+  render();
+}
+
+function toggleThreadTag(threadId, tagId) {
+  const thread = threadById(threadId);
+  if (!thread) return;
+  thread.tags = thread.tags.includes(tagId) ? thread.tags.filter((id) => id !== tagId) : [...thread.tags, tagId];
+  renderViews();
+  renderPickerList();
+}
+
+function createTagFromQuery(threadId) {
+  const name = state.query.trim();
+  if (!validTag(name)) return;
+  const id = ensureTag(name);
+  const thread = threadById(threadId);
+  if (thread && !thread.tags.includes(id)) thread.tags = [...thread.tags, id];
+  state.query = '';
+  const input = $('#picker-search');
+  if (input) {
+    input.value = '';
+    input.focus();
+  }
+  renderViews();
+  renderPickerList();
+}
+
+function submitPickerQuery() {
+  if (!state.picker) return;
+  const query = state.query.trim();
+  if (!query) return;
+  const existing = state.tags.find((tag) => tag.name.toLowerCase() === query.toLowerCase());
+  if (existing) toggleThreadTag(state.picker.threadId, existing.id);
+  else if (validTag(query)) createTagFromQuery(state.picker.threadId);
+}
+
+function saveTitle(threadId) {
+  const input = $('#title-input');
+  const thread = threadById(threadId);
+  if (!input || !thread) return;
+  const parsed = parsePrefixes(input.value);
+  thread.tags = [...new Set(parsed.names.map((name) => ensureTag(name)))];
+  thread.title = parsed.title;
+  state.titleEditor = null;
+  render();
+  showToast('标题已保存，标签已更新');
+}
+
+function toggleFilterTag(tagId) {
+  const tags = state.filters.tags;
+  state.filters.tags = tags.includes(tagId) ? tags.filter((id) => id !== tagId) : [...tags, tagId];
+  renderViews();
+  if (state.filterPop) renderPopLayer();
+}
+
+function setProjectFilter(project) {
+  const current = state.filters.project;
+  state.filters.project = project && !(current.length === 1 && current[0] === project) ? [project] : [];
+  render();
+}
+
+function toggleFacet(kind, value, append = true) {
+  const key = kind === 'scheduled' ? 'scheduled' : kind;
+  const values = state.filters[key];
+  const parsed = kind === 'scheduled' ? value === 'true' : value;
+  state.filters[key] = values.includes(parsed) ? values.filter((item) => item !== parsed) : (append ? [...values, parsed] : [parsed]);
+  renderViews();
+  renderPopLayer();
+}
+
+function removeFilter(kind, value) {
+  const key = kind === 'scheduled' ? 'scheduled' : kind;
+  const parsed = kind === 'scheduled' ? value === 'true' : value;
+  state.filters[key] = state.filters[key].filter((item) => item !== parsed);
+  renderViews();
+}
+
+function clearFilters() {
+  state.filters = { tags: [], project: [], agent: [], scheduled: [] };
+  renderViews();
+  if (state.filterPop) renderPopLayer();
+}
+
+function showToast(text) {
+  const host = $('#toast-host');
+  host.innerHTML = `<div class="toast" role="status">${esc(text)}</div>`;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { host.innerHTML = ''; }, 2400);
+}
+
+function syncHash() {
+  const hash = `#${state.add}-${state.filter}-${state.view}-${state.device}-${state.theme}`;
+  try { history.replaceState(null, '', hash); } catch { /* file:// still works without it */ }
+}
+
+function readHash() {
+  const parts = location.hash.replace(/^#/, '').split('-');
+  if (parts.length < 5) return;
+  const [add, filter, view, device, theme] = parts;
+  if (['a', 'b', 'c'].includes(add)) state.add = add;
+  if (['popover', 'inline', 'both'].includes(filter)) state.filter = filter;
+  if (['board', 'thread'].includes(view)) state.view = view;
+  if (['desktop', 'phone'].includes(device)) state.device = device;
+  if (['light', 'dark'].includes(theme)) state.theme = theme;
+}
+
+/* ---------------- Events ---------------- */
+
+document.addEventListener('click', (event) => {
+  const target = event.target.closest('[data-action]');
+  if (!target) return;
+  const action = target.dataset.action;
+  if (action === 'close-pop') {
+    event.preventDefault();
+    closePops();
+    return;
+  }
+  event.preventDefault();
+  switch (action) {
+    case 'set-add':
+      state.add = target.dataset.value;
+      closePops();
+      render();
+      break;
+    case 'set-filter':
+      state.filter = target.dataset.value;
+      closePops();
+      render();
+      break;
+    case 'set-view':
+      state.view = target.dataset.value;
+      closePops();
+      render();
+      break;
+    case 'set-device':
+      state.device = target.dataset.value;
+      closePops();
+      render();
+      break;
+    case 'set-theme':
+      state.theme = target.dataset.value;
+      render();
+      break;
+    case 'reset':
+      resetData();
+      render();
+      break;
+    case 'open-thread':
+      openThread(target.dataset.thread);
+      break;
+    case 'back-board':
+      state.view = 'board';
+      render();
+      break;
+    case 'open-menu':
+      state.menu = { threadId: target.dataset.thread, anchor: anchorOf(target) };
+      state.picker = null;
+      state.titleEditor = null;
+      state.filterPop = null;
+      renderPopLayer();
+      break;
+    case 'menu-item': {
+      const threadId = target.dataset.thread;
+      const item = target.dataset.item;
+      if (item === 'open') {
+        openThread(threadId);
+      } else if (item === 'tag') {
+        state.menu = null;
+        state.picker = { threadId, anchor: anchorOf(target) };
+        state.query = '';
+        renderPopLayer();
+      } else if (item === 'title') {
+        state.menu = null;
+        state.titleEditor = { threadId, anchor: anchorOf(target) };
+        renderPopLayer();
+      } else if (item === 'pin') {
+        const thread = threadById(threadId);
+        if (thread) thread.pinned = !thread.pinned;
+        state.menu = null;
+        render();
+      } else {
+        state.menu = null;
+        renderPopLayer();
+        showToast(item === 'fork' ? '示例只演示标签；分叉沿用线程菜单原有行为。' : '示例只演示标签；归档沿用线程菜单原有行为。');
+      }
+      break;
+    }
+    case 'open-picker':
+      state.picker = { threadId: target.dataset.thread, anchor: anchorOf(target) };
+      state.menu = null;
+      state.titleEditor = null;
+      state.filterPop = null;
+      state.query = '';
+      renderPopLayer();
+      break;
+    case 'open-title':
+      state.titleEditor = { threadId: target.dataset.thread, anchor: anchorOf(target) };
+      state.menu = null;
+      state.picker = null;
+      state.filterPop = null;
+      renderPopLayer();
+      break;
+    case 'toggle-tag':
+      toggleThreadTag(target.dataset.thread, target.dataset.tag);
+      break;
+    case 'create-tag':
+      createTagFromQuery(target.dataset.thread);
+      break;
+    case 'save-title':
+      saveTitle(target.dataset.thread);
+      break;
+    case 'toggle-done': {
+      const thread = threadById(target.dataset.thread);
+      if (thread) thread.done = !thread.done;
+      renderViews();
+      break;
+    }
+    case 'card-tag-filter':
+      toggleFilterTag(target.dataset.tag);
+      break;
+    case 'toggle-filter-tag':
+      toggleFilterTag(target.dataset.tag);
+      break;
+    case 'clear-tags':
+      state.filters.tags = [];
+      renderViews();
+      break;
+    case 'set-project':
+      setProjectFilter(target.dataset.project || '');
+      break;
+    case 'set-phone-column':
+      state.phoneColumn = target.dataset.column;
+      renderBoard();
+      break;
+    case 'toggle-backlog':
+      state.backlogOpen = !state.backlogOpen;
+      renderBoard();
+      break;
+    case 'open-filter':
+      state.filterPop = { kind: target.dataset.kind, anchor: anchorOf(target) };
+      state.menu = null;
+      state.picker = null;
+      state.titleEditor = null;
+      renderPopLayer();
+      break;
+    case 'filter-all':
+      state.filters[target.dataset.kind === 'scheduled' ? 'scheduled' : target.dataset.kind] = [];
+      renderViews();
+      renderPopLayer();
+      break;
+    case 'filter-option':
+      toggleFacet(target.dataset.kind, target.dataset.value);
+      break;
+    case 'clear-one':
+      state.filters[target.dataset.kind === 'scheduled' ? 'scheduled' : target.dataset.kind] = [];
+      renderViews();
+      renderPopLayer();
+      break;
+    case 'clear-filters':
+      clearFilters();
+      break;
+    case 'remove-filter':
+      removeFilter(target.dataset.kind, target.dataset.value);
+      break;
+    case 'new-thread':
+      showToast(state.filters.tags.length ? `新对话会带上当前筛选的标签：${state.filters.tags.map(tagName).join('、')}` : '示例：新对话沿用看板现有的新对话入口。');
+      break;
+    case 'ask-assistant':
+      showToast(`会把当前筛选后的 ${state.threads.filter(matchesFilters).length} 张卡片交给助手。`);
+      break;
+    case 'pin-project':
+      showToast('固定项目沿用看板现有入口；这里只演示标签。');
+      break;
+    case 'manage-tags':
+      showToast('标签管理在「配置 → 标签」：改名、删除、普通/强调两档。');
+      break;
+    default:
+      break;
+  }
+});
+
+document.addEventListener('input', (event) => {
+  if (event.target.id === 'picker-search') {
+    state.query = event.target.value;
+    renderPickerList();
+  }
+});
+
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') {
+    if (state.menu || state.picker || state.titleEditor || state.filterPop) {
+      event.preventDefault();
+      closePops();
+    }
+    return;
+  }
+  if (event.target.id === 'picker-search' && event.key === 'Enter') {
+    event.preventDefault();
+    submitPickerQuery();
+    return;
+  }
+  if (event.target.id === 'title-input' && event.key === 'Enter') {
+    event.preventDefault();
+    if (state.titleEditor) saveTitle(state.titleEditor.threadId);
+  }
+});
+
+/* ---------------- Start ---------------- */
+
+resetData();
+readHash();
+render();
+</script>
+</body>
+</html>
