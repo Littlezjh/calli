@@ -10,7 +10,8 @@ import { GeneralSettingsDialog } from './components/GeneralSettingsDialog';
 import { AutoHandoverNotice, HandoverSettingsDialog } from './components/AutoHandover';
 import { useWorkSources, WorkSummary } from './extensions/work';
 import { HostIcon } from './extensions/ui';
-import { historyPage, mergeHistory, mergeHistoryPage, prependHistory, refreshHistoryPage, watchHistory } from './history';
+import { historyPage, mergeHistory, mergeHistoryPage, peekCachedPage, prependHistory, refreshHistoryPage, watchHistory } from './history';
+import { cachedRouterThreadId, rememberRouterThreadId } from './history-cache';
 import type { WorkMode, WritingStage } from './api';
 import { forkBlocked, useThreadActions } from './components/ThreadActions';import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ComponentProps, type ReactNode } from 'react';
 import type { Theme } from './appearance';
@@ -96,6 +97,7 @@ import { buildDesk } from './desk';
 import { SkillsPage } from './components/SkillsPage';
 import { SchedulesPage } from './components/SchedulesPage';
 import { AssistantHome } from './components/AssistantPanel';
+import { ConversationSkeleton } from './components/ConversationSkeleton';
 import { TodosPage } from './components/TodosPage';
 import { ActivityPage } from './components/ActivityPage';
 import { ExtensionsPage } from './components/ExtensionsPage';
@@ -883,10 +885,17 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   // A thread address opened before the list arrives keeps the thread's shape, not a new thread's, so nothing jumps.
   const threadPending = !selected && (Boolean(threadLink) || (Boolean(selectedId) && !threadsKnown));
   // Her own conversation is told apart by the hub's answer, never by its agent or title.
-  const [routerThreadId, setRouterThreadId] = useState<string | null>(null);
+  const [routerThreadId, setRouterThreadId] = useState<string | null>(() => (api.demo ? null : cachedRouterThreadId(api.host)));
   useEffect(() => {
-    if (api.demo) return; let live = true;
-    void api.petRouter().then(router => { if (live) setRouterThreadId(router.threadId); }).catch(() => undefined);
+    if (api.demo) { setRouterThreadId(null); return; }
+    let live = true;
+    const cached = cachedRouterThreadId(api.host);
+    if (cached) setRouterThreadId(current => current ?? cached);
+    void api.petRouter().then(router => {
+      if (!live) return;
+      rememberRouterThreadId(api.host, router.threadId);
+      setRouterThreadId(router.threadId);
+    }).catch(() => undefined);
     return () => { live = false; };
   }, [api, threads.length]);
   const onRouterThread = Boolean(selected && routerThreadId === selected.id);
@@ -1394,13 +1403,21 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
     return () => { active = false; };
   }, [api, selectedId, historyEpoch]);
   useEffect(() => {
-    setEvents([]); setHistoryTurnIds([]); setHasOlder(false); setLoadingOlder(false); setHistoryReady(false);
-    setEventsLoading(Boolean(api && selectedId)); historyCursor.current = null; olderRequest.current = null;
+    const cached = api && selectedId ? peekCachedPage(api, selectedId, undefined, undefined, mergedHandover)?.page ?? null : null;
+    if (cached) {
+      setEvents(cached.events); setHistoryTurnIds(cached.turnIds ?? []); setHasOlder(cached.hasOlder);
+      setLoadingOlder(false); setHistoryReady(true); setEventsLoading(false);
+      setHistoryRevision(cached.snapshotSeq); historyCursor.current = cached.nextCursor; olderRequest.current = null;
+    } else {
+      setEvents([]); setHistoryTurnIds([]); setHasOlder(false); setLoadingOlder(false); setHistoryReady(false);
+      setEventsLoading(Boolean(api && selectedId)); historyCursor.current = null; olderRequest.current = null;
+    }
     if (!api || !selectedId) return;
     const ctrl = new AbortController();
     stickToBottom.current = true; setAtBottom(true);
     void watchHistory(api, selectedId, ctrl.signal, {
       chain: mergedHandover,
+      pinned: selectedId === routerThreadId,
       page: page => {
         setEvents(page.events); setHistoryTurnIds(page.turnIds ?? []); setEventsLoading(false); setHistoryReady(true);
         setHistoryRevision(page.snapshotSeq);
@@ -3180,6 +3197,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
                 onAskAssistant={async text => {
                   const assistantApi = hostId === null ? api : new Api(token);
                   const result = await assistantApi.petSay(text);
+                  rememberRouterThreadId(assistantApi.host, result.threadId);
                   if (hostId !== null) onHost?.(null, { thread: result.threadId });
                   else { setRouterThreadId(result.threadId); openThread(await api.thread(result.threadId)); }
                 }} onExtensionChange={changeExtension} />
@@ -3264,7 +3282,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
               openFinds={deskFinds} onFindsOpened={() => setDeskFinds(false)}
               onSpreadChange={setDeskSpread} revealTodoId={revealTodo} onRevealTodo={() => setRevealTodo(null)}
               path={deskPath} onPathChange={setDeskPath}
-              focusSignal={chatFocus} headerSlot={deskSlot} />
+              focusSignal={chatFocus} headerSlot={deskSlot} initialThreadId={routerThreadId} />
           </div>
         ) : onTodos ? (
           // A scroller of its own: the thread's one pins itself to the bottom, a document starts at the top.
@@ -3294,9 +3312,10 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
         <div key="thread" className="scroller" ref={scrollerRef} onScroll={onScroll} {...gestureProps}>
           {selected && <TurnRuler key={selected.id} threadId={selected.id} scrollerRef={scrollerRef} previews={turnPreviewMap} turnIds={rulerTurnIds} onJump={turnId => setJump({ threadId: selected.id, turnId })} />}
           {onRouterThread && petStatus?.installed && <PetPortrait api={api} status={petStatus} onAway={setPortraitAway} />}
-          {selected && eventsLoading && <div className="loading-note">{t('common.loading')}</div>}
           {showcase && selected && !eventsLoading && !timeline.items.length && showcase.intro(selected.id)}
-          {selected ? (
+          {selected && eventsLoading ? (
+            <ConversationSkeleton />
+          ) : selected ? (
             <MergedHistory
               key={`${handoverHistoryKey(selected, threads)}:${mergedHandover}`}
               api={api} thread={selected} chainThreads={threads} merged={mergedHandover} ready={historyReady} agentLabel={agentLabel} latestSignal={latestSignal}
@@ -3437,6 +3456,8 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
                 },
               } : null}
             />
+          ) : threadPending ? (
+            <ConversationSkeleton />
           ) : (
             <div className="empty">
               <h2>{draftScratch ? t('app.emptyScratch') : t('app.emptyIn', folderName(beside?.worktree ? beside.project : draftCwd))}</h2>

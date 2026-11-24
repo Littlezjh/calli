@@ -462,7 +462,7 @@ test('assistant preview keeps its origin while loading, failing, retrying and sw
     const firstLink = page.locator('.chat-flow a.thread-link', { hasText: '预览一' });
     await firstLink.click();
     const panel = page.locator('.chat-home > .agent-panel');
-    await panel.locator('.loading-note').waitFor();
+    await panel.locator('.chat-skeleton').waitFor();
     await waitFor(() => release, 'held request');
     // A different link reuses the same panel; a late first response must not replace it.
     await page.locator('.chat-flow a.thread-link', { hasText: '预览二' }).click();
@@ -472,11 +472,11 @@ test('assistant preview keeps its origin while loading, failing, retrying and sw
     assert.equal(await panel.locator('.agent-panel-heading strong').textContent(), '预览二');
     await panel.getByRole('button', { name: '返回助手', exact: true }).click();
     await firstLink.click();
-    await panel.locator('.loading-note').waitFor();
+    await panel.locator('.chat-skeleton').waitFor();
     await page.waitForTimeout(100); release();
     await panel.getByRole('alert').waitFor();
     assert.match(await panel.getByRole('alert').textContent(), /preview temporarily unavailable/);
-    assert.equal(await panel.locator('.loading-note').count(), 0);
+    assert.equal(await panel.locator('.chat-skeleton').count(), 0);
     await page.unroute(`**/api/threads/${first.id}`);
     await panel.getByRole('button', { name: '重试', exact: true }).click();
     await panel.locator('.row.user', { hasText: '预览一' }).waitFor();

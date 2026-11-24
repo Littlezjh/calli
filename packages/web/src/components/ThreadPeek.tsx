@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { MAX_QUEUED, type AgentInfo, type Api, type ModelOption, type SlashCommand, type Thread, type WorkMode } from '../api';
-import { historyPage, refreshHistoryPage, mergeHistory, mergeHistoryPage, watchHistory } from '../history';
+import { historyPage, refreshHistoryPage, mergeHistory, mergeHistoryPage, peekCachedPage, watchHistory } from '../history';
 import { buildTimeline, type StoredEvent } from '../timeline';
 import { restoreVideos, type PreparedVideo } from '../videos';
 import { ActionSheet, type SheetTarget } from './ActionSheet';
 import { Composer } from './Composer';
+import { ConversationSkeleton } from './ConversationSkeleton';
 import { effortsForModel, imagesBlocked, imagesNote, ModelPicker, PermissionPicker, speedsForModel, UsageMeter } from './Pickers';
 import { ThreadView } from './ThreadView';
 import { IconChevron, IconClose, IconExternal } from './icons';
@@ -28,11 +29,15 @@ export function ThreadPeek({ api, initial, agents, draftKey, returnFocus, onClos
   const [retry, setRetry] = useState(0);
   const panel = useRef<HTMLElement>(null);
   const modelsReq = useRef(0);
-  const [events, setEvents] = useState<StoredEvent[]>([]);
-  const [loaded, setLoaded] = useState(false);
-  const [error, setError] = useState('');
+  const initialPage = useMemo(() => peekCachedPage(api, id)?.page ?? null, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const [events, setEvents] = useState<StoredEvent[]>(() => initialPage?.events ?? []);
+  const [loaded, setLoaded] = useState(() => Boolean(initialPage));
+  const [threadError, setThreadError] = useState('');
+  const [historyError, setHistoryError] = useState('');
+  const error = threadError || historyError;
+  const setError = setHistoryError;
   const [restore, setRestore] = useState<{ text: string; nonce: number } | null>(null);
-  const [cursor, setCursor] = useState<number | null>(null);
+  const [cursor, setCursor] = useState<number | null>(() => (initialPage?.hasOlder ? initialPage.nextCursor : null));
   const [loadingOlder, setLoadingOlder] = useState(false);
   const scroll = useRef<HTMLDivElement>(null);
   const close = useRef<HTMLButtonElement>(null);
@@ -119,22 +124,34 @@ export function ThreadPeek({ api, initial, agents, draftKey, returnFocus, onClos
   useEffect(() => {
     const ctrl = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
-    setError('');
+    const cached = peekCachedPage(api, id)?.page ?? null;
+    setThreadError('');
+    setHistoryError('');
+    if (cached) {
+      setEvents(cached.events);
+      setCursor(cached.hasOlder ? cached.nextCursor : null);
+      setLoaded(true);
+    } else {
+      setEvents([]);
+      setCursor(null);
+      setLoaded(false);
+    }
     void api.thread(id).then(value => {
       if (ctrl.signal.aborted) return;
+      setThreadError('');
       setThread(value); callbacks.current.onChange(value);
-      return watchHistory(api, id, ctrl.signal, {
-        page: page => { setEvents(page.events); setCursor(page.hasOlder ? page.nextCursor : null); setLoaded(true); setError(''); },
-        events: batch => {
-          setEvents(previous => mergeHistory(previous, batch));
-          if (batch.some(e => e.type.startsWith('turn.') || e.type === 'history.reset' || e.type === 'thread.updated')) {
-            clearTimeout(timer);
-            timer = setTimeout(() => { if (!ctrl.signal.aborted) void refresh().catch(reportError); }, 200);
-          }
-        },
-        error: reportError,
-      });
-    }).catch(error => { if (!ctrl.signal.aborted) reportError(error); });
+    }).catch(e => { if (!ctrl.signal.aborted) setThreadError(e instanceof Error ? e.message : String(e)); });
+    void watchHistory(api, id, ctrl.signal, {
+      page: page => { setEvents(page.events); setCursor(page.hasOlder ? page.nextCursor : null); setLoaded(true); setHistoryError(''); },
+      events: batch => {
+        setEvents(previous => mergeHistory(previous, batch));
+        if (batch.some(e => e.type.startsWith('turn.') || e.type === 'history.reset' || e.type === 'thread.updated')) {
+          clearTimeout(timer);
+          timer = setTimeout(() => { if (!ctrl.signal.aborted) void refresh().catch(reportError); }, 200);
+        }
+      },
+      error: reportError,
+    });
     return () => { ctrl.abort(); clearTimeout(timer); };
   }, [api, id, refresh, retry]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (stick.current && scroll.current) scroll.current.scrollTop = scroll.current.scrollHeight; }, [events]);
@@ -246,7 +263,7 @@ export function ThreadPeek({ api, initial, agents, draftKey, returnFocus, onClos
     {error && <p className="thread-peek-error" role="alert">{error} <button className="ghost" onClick={() => setRetry(value => value + 1)}>{t('common.retry')}</button></p>}
     {thread?.waiting && waiting.length === 0 && <button className="thread-peek-attention ghost" onClick={onOpen}>{t('threadPeek.needsAction')}</button>}
     <div className={side ? "agent-panel-body" : "thread-peek-body"} ref={scroll} tabIndex={0} onScroll={() => { const el = scroll.current; if (el) stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120; }}>
-      {!loaded || !thread ? (!error && <div className="loading-note">{t('common.loading')}</div>) : <ThreadView historyApi={api} historyThreadId={thread.id} historyTitle={thread.title}
+      {!loaded || !thread ? (!error && <ConversationSkeleton compact />) : <ThreadView historyApi={api} historyThreadId={thread.id} historyTitle={thread.title}
         items={timeline.items} roots={[thread.cwd, thread.cwdReal]} loadImage={loadImage} loadFile={loadFile}
         observeOlder={false} hasOlder={cursor !== null} loadingOlder={loadingOlder} onLoadOlder={() => void loadOlder()} />}
     </div>
