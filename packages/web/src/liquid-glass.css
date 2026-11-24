@@ -326,8 +326,16 @@
   color: var(--text);
 }
 
-/* Mobile: keep title pill compact and float any active status chip cleanly below the bar */
+/* Mobile: keep title pill compact, offset pills clear of iOS 26/27's system status-bar progressive
+   blur pocket (which feathers down to ~99pt on notched/Dynamic-Island devices when safe-area-inset-top
+   is non-zero), and float any active status chip cleanly below the bar. */
 @media (max-width: 899.98px) {
+  .app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar {
+    --lg-top-clearance: min(22px, env(safe-area-inset-top, 0px));
+    height: calc(56px + env(safe-area-inset-top) + var(--lg-top-clearance));
+    padding-top: calc(env(safe-area-inset-top) + var(--lg-top-clearance));
+  }
+
   .app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar:has(.topbar-actions) .topbar-title-pill {
     height: 42px;
     padding: 0 13px;

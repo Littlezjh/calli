@@ -102,7 +102,7 @@ test('glass chrome has scrolling content behind it without hiding either end of 
         await page.evaluate(() => document.querySelector('#status-seam-probe').remove());
         const top = await page.locator('.topbar').boundingBox();
         const back = await page.locator('.topbar .menu-btn').boundingBox();
-        assert.ok(back.y >= top.y + 59, 'controls stay below the status-bar safe area');
+        assert.ok(back.y >= top.y + 59 + 20, 'controls clear both the status-bar safe area and iOS system blur pocket');
       }
       await page.screenshot({ path: `${shots}/chat-${mobile ? 'phone' : 'desktop'}-${theme}.png` });
       await page.locator('.topbar-more').click();
