@@ -1521,7 +1521,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
     ro.observe(content);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [selectedId, mergedHandover, onSettings]);
+  }, [selected?.id, eventsLoading, mergedHandover, onSettings]);
 
   // A phone keyboard does not resize the page: it covers the bottom of it, and the browser pans
   // what is left (the visual viewport) over the page to keep the focused field in sight. So the

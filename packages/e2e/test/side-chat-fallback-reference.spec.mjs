@@ -20,8 +20,8 @@ test('non-forkable side questions attach a read-only source thread reference in 
     throw new Error('agy thread did not finish');
   };
   try {
-    const source = await post('/api/threads', { agent: 'agy', cwd: daemon.workdir, title: 'Non-forkable source' });
-    await post(`/api/threads/${source.id}/turns`, { text: 'agy-original-context' });
+    const source = await post('/api/threads', { agent: 'dsh', cwd: daemon.workdir, title: 'Non-forkable source' });
+    await post(`/api/threads/${source.id}/turns`, { text: 'dsh-original-context' });
     await idle(source.id);
     browser = await launchBrowser();
     for (const mobile of [false, true]) for (const theme of ['light', 'dark']) {
@@ -40,7 +40,7 @@ test('non-forkable side questions attach a read-only source thread reference in 
         });
         await page.locator('.selection-menu button', { hasText: '在侧边栏提问' }).click();
         const side = page.locator('.side-chat');
-        const question = `Follow up on agy ${mobile ? 'phone' : 'desktop'} ${theme}`;
+        const question = `Follow up on dsh ${mobile ? 'phone' : 'desktop'} ${theme}`;
         await side.locator('textarea').fill(question);
         const previousIds = new Set((await (await api(daemon, '/api/threads')).json()).map(thread => thread.id));
         await side.locator('.send-btn:not(.stop)').click();
