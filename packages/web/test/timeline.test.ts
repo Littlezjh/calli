@@ -19,6 +19,7 @@ import {
   stepTitle,
   toMarkdown,
   turnPreviews,
+  workHasFollowingOutput,
   workSections,
   withQuote,
   withNotes,
@@ -1194,4 +1195,37 @@ test("an agent program's own warning is a quiet line, not part of the answer", (
   assert.ok(warning?.kind === 'agent-warning' && warning.warning);
   const answer = timeline.items.find(item => item.kind === 'assistant');
   assert.ok(answer?.kind === 'assistant' && answer.text === 'answer');
+});
+
+test('workHasFollowingOutput stops labelling an earlier thought as Thinking once text follows in the same turn', () => {
+  const thinking = buildTimeline([
+    ev('turn.started', { text: 'go' }),
+    ev('tool.start', { id: 'c1', kind: 'execute', title: 'npm test', status: 'in_progress' }),
+    ev('reasoning.delta', { text: 'Drafting update' }),
+  ]).items;
+  const w1 = thinking.findIndex(i => i.kind === 'work');
+  assert.equal(workHasFollowingOutput(thinking, w1, 't1'), false, 'no output after thought yet');
+
+  // Agent streams an answer while the background tool finishes; the earlier thought is no longer live.
+  const answered = buildTimeline([
+    ev('turn.started', { text: 'go' }),
+    ev('tool.start', { id: 'c1', kind: 'execute', title: 'npm test', status: 'in_progress' }),
+    ev('reasoning.delta', { text: 'Drafting update' }),
+    ev('message.delta', { text: 'Tests are running.' }),
+    ev('tool.end', { id: 'c1', status: 'completed' }),
+  ]).items;
+  const w2 = answered.findIndex(i => i.kind === 'work');
+  assert.equal(workHasFollowingOutput(answered, w2, 't1'), true, 'streamed answer follows the work block');
+
+  // Once a new thought arrives, the previous answer folds into work as a note and the new thought is live again.
+  const resumed = buildTimeline([
+    ev('turn.started', { text: 'go' }),
+    ev('tool.start', { id: 'c1', kind: 'execute', title: 'npm test', status: 'in_progress' }),
+    ev('reasoning.delta', { text: 'Drafting update' }),
+    ev('message.delta', { text: 'Tests are running.' }),
+    ev('tool.end', { id: 'c1', status: 'completed' }),
+    ev('reasoning.delta', { text: 'Checking test failure' }),
+  ]).items;
+  const w3 = resumed.findIndex(i => i.kind === 'work');
+  assert.equal(workHasFollowingOutput(resumed, w3, 't1'), false, 'new thought is active again');
 });

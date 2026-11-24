@@ -44,6 +44,7 @@ import {
   stepCommand,
   stepTitle,
   stepStatusLabel,
+  workHasFollowingOutput,
   workSections,
   type ApprovalOption,
   type CoordinationNote,
@@ -320,7 +321,7 @@ export function ThreadView({ onOpenFinds, chain = false, observeOlder = true, be
   const lastKey = tail?.kind === 'actions' ? tail.key : null;
 
   const renderItems = (list: Item[]) =>
-    list.map((item) => {
+    list.map((item, idx) => {
       switch (item.kind) {
         case 'voice-recap': return <VoiceRecap key={item.key} item={item} render={renderItems} />;
         case 'handover-summary': return <HandoverSummary key={item.key} item={item} />;
@@ -418,7 +419,7 @@ export function ThreadView({ onOpenFinds, chain = false, observeOlder = true, be
         case 'plan':
           return <PlanCard key={item.key} item={item} />;
         case 'work':
-          return <WorkGroup key={item.key} item={item} roots={roots} />;
+          return <WorkGroup key={item.key} item={item} roots={roots} thoughtLive={!item.done && !workHasFollowingOutput(list, idx, item.turnId)} />;
         case 'waiting':
           return <TurnWaiting key={item.key} item={item} />;
         case 'approval':
@@ -1418,7 +1419,7 @@ function WorkLabel({ item }: { item: Extract<Item, { kind: 'work' }> }) {
   return <span className="work-label">{label}</span>;
 }
 
-function WorkGroup({ item, roots }: { item: Extract<Item, { kind: 'work' }>; roots: string[] }) {
+function WorkGroup({ item, roots, thoughtLive = !item.done }: { item: Extract<Item, { kind: 'work' }>; roots: string[]; thoughtLive?: boolean }) {
   // Open while the turn runs so progress is visible. Stopped turns stay open:
   // their interrupted thoughts are the user's history, not a completed work summary.
   const [open, setOpen] = useState(item.stopped || (!item.done && !item.deferred));
@@ -1475,8 +1476,8 @@ function WorkGroup({ item, roots }: { item: Extract<Item, { kind: 'work' }>; roo
                 <span>{compactionLabel(section)}</span>
               </div>
             ) : (
-              // Only the trailing thought stretch is live; any still-running tool stays visible across sections.
-              <StepRun key={section.key} run={section} live={!item.done && i === sections.length - 1} running={running} roots={roots} fold={!item.stopped} openThoughts={!!item.stopped} />
+              // Only the trailing thought stretch (with no answer emitted after it yet) is live; any still-running tool stays visible across sections.
+              <StepRun key={section.key} run={section} live={thoughtLive && i === sections.length - 1} running={running} roots={roots} fold={!item.stopped} openThoughts={!!item.stopped} />
             ),
           )}
           {!running && <ResourceMore resource={resource} />}
