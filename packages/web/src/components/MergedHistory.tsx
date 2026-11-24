@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type MutableRefObject, type ReactNode } from 'react';
 import { ApiError, type Api, type Thread } from '../api';
 import { historyPage, prependHistory, type HistoryPage } from '../history';
+import { captureReadingAnchor, restoreReadingAnchor, type ReadingAnchor } from '../scroll-anchor';
 import { buildTimeline, clockLabel } from '../timeline';
 import { t } from '../i18n';
 import { entryKey, partAt, readingPath, type ChainEntry } from '../handover';
@@ -79,7 +80,9 @@ export function MergedHistory({ api, thread, chainThreads, merged, ready, agentL
   const root = useRef<HTMLDivElement>(null);
   const pageRef = useRef<HTMLDivElement>(null);
   const sentinel = useRef<HTMLDivElement>(null);
-  const restore = useRef<number | null>(null);
+  const restore = useRef<{ key: string; anchor: ReadingAnchor | null; fromBottom: number } | null>(null);
+  const activeView = useRef(view.key);
+  activeView.current = view.key;
   const attempts = useRef(0);
   const pillTop = useRef<PillSetter | null>(null);
   const pillBottom = useRef<PillSetter | null>(null);
@@ -140,7 +143,8 @@ export function MergedHistory({ api, thread, chainThreads, merged, ready, agentL
       const page = await fetchPage(entry, 'tail', have.page.nextCursor ?? undefined);
       if (generation.current !== version) return;
       const scroller = root.current?.closest<HTMLElement>('.scroller');
-      if (scroller) restore.current = scroller.scrollHeight - scroller.scrollTop;
+      // 迟到的旧页只更新缓存，不能恢复已经切到另一交接段的阅读位置。
+      if (scroller && activeView.current === key) restore.current = { key, anchor: captureReadingAnchor(scroller), fromBottom: scroller.scrollHeight - scroller.scrollTop };
       setCache(previous => previous[key] ? { ...previous, [key]: { ...previous[key], page: { ...page, events: prependHistory(page.events, previous[key].page.events) } } } : previous);
     });
   };
@@ -158,7 +162,8 @@ export function MergedHistory({ api, thread, chainThreads, merged, ready, agentL
   const retry = (key: string) => { setFailed(previous => { const { [key]: _gone, [`o:${key}`]: _o, [`n:${key}`]: _n, ...rest } = previous; return rest; }); };
   useLayoutEffect(() => {
     const scroller = root.current?.closest<HTMLElement>('.scroller');
-    if (scroller && restore.current !== null) scroller.scrollTop = scroller.scrollHeight - restore.current;
+    const pending = restore.current;
+    if (scroller && pending?.key === view.key && restoreReadingAnchor(scroller, pending.anchor) === null) scroller.scrollTop = scroller.scrollHeight - pending.fromBottom;
     restore.current = null;
   }, [cache]);
   useEffect(() => {
