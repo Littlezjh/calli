@@ -6,9 +6,9 @@ import { isWait, threadAttention } from './sidebar';
 const waitingReason = (thread: Thread) => thread.waitingReason ?? 'unknown';
 export const waitingLabel = (thread: Thread): string => t(`notices.${waitingReason(thread)}.label`);
 
-/** Threads that want attention: waiting for a response, or finished and not yet looked at. */
+/** Threads that want attention: waiting for a response, or finished and not yet looked at. A snoozed one wants none until it wakes. */
 export function attentionCount(threads: Thread[], viewingId: string | null): number {
-  return threads.filter((t) => t.waiting || (t.unread && t.id !== viewingId)).length;
+  return threads.filter((t) => threadAttention(t, viewingId) !== null).length;
 }
 
 /** The browser tab title: the count goes first so it survives a narrow tab. */

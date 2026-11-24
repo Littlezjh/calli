@@ -12,9 +12,9 @@ import { TakeoverDialog } from './TakeoverDialog';
 import { Menu, type MenuEntry } from './Menu';
 import { AgentPicker } from './Pickers';
 import { ChatQuotaMenu } from './ChatQuotaMenu';
-import { IconDesktop, IconArchive, IconBack, IconBoard, IconCheck, IconCopy, IconDot, IconEdit, IconFiles, IconFork, IconHand, IconHandover, IconList, IconPin, IconPlus, IconSparkle, IconTerminal, IconTrace, IconTrash, IconWorktree } from './icons';
+import { IconDesktop, IconArchive, IconBack, IconBoard, IconCheck, IconClock, IconCopy, IconDot, IconEdit, IconFiles, IconFork, IconHand, IconHandover, IconList, IconPin, IconPlus, IconSparkle, IconTerminal, IconTrace, IconTrash, IconWorktree } from './icons';
 import { formatList, t } from '../i18n';
-import { boardStage, threadAttention, type BoardStage } from '../sidebar';
+import { boardStage, snoozed, threadAttention, type BoardStage } from '../sidebar';
 
 interface Deps {
   api: Api | null;
@@ -234,6 +234,33 @@ export function useThreadActions(deps: Deps) {
     }
   };
 
+  /** The snooze menu, the same in every menu that holds it: quiet this thread until a chosen time,
+   *  as an inbox is snoozed. Presets only — an exact minute is rarely the point. */
+  const snoozeMenu = (thread: Thread): MenuEntry => {
+    const set = (at: number) => () => void patch(thread, { snoozedUntil: new Date(at).toISOString() });
+    const morning = (days: number) => {
+      const d = new Date();
+      d.setDate(d.getDate() + days);
+      d.setHours(9, 0, 0, 0);
+      return d.getTime();
+    };
+    return {
+      id: 'snooze',
+      label: t('actions.snooze'),
+      icon: IconClock,
+      submenu: [
+        { id: 'snooze-1h', label: t('actions.snooze1h'), onSelect: set(Date.now() + 3600_000) },
+        { id: 'snooze-morning', label: t('actions.snoozeMorning'), onSelect: set(morning(1)) },
+        { id: 'snooze-week', label: t('actions.snoozeWeek'), onSelect: set(morning(7)) },
+        // Only a thread that is quiet now has something to call off.
+        ...(snoozed(thread) ? [
+          'separator',
+          { id: 'snooze-off', label: t('actions.snoozeOff'), onSelect: () => void patch(thread, { snoozedUntil: null }) },
+        ] as MenuEntry[] : []),
+      ],
+    };
+  };
+
   /** What a row's menu offers: how the thread sits in the list. As in ChatGPT and the Claude app,
    *  a row menu holds only row management, never the conversation's own tools. */
   const listItems = (thread: Thread): MenuEntry[] => {
@@ -260,6 +287,7 @@ export function useThreadActions(deps: Deps) {
         icon: IconDot,
         onSelect: () => void patch(thread, { unread: !thread.unread }, thread.unread ? undefined : () => onMarkedUnread(thread)),
       },
+      snoozeMenu(thread),
       { id: 'rename', label: t('actions.rename'), icon: IconEdit, onSelect: () => run('rename', thread) },
       ...(thread.forkGroup ? [{ id: 'fork-tag', label: t('actions.editForkTag'), icon: IconFork, onSelect: () => run('fork-tag', thread) }] : []),
       ...(autotitle ? [{ id: 'autotitle', label: t('actions.autotitle'), icon: IconSparkle, onSelect: () => void autoName(thread) }] : []),
@@ -336,6 +364,7 @@ export function useThreadActions(deps: Deps) {
       icon: IconDot,
       onSelect: () => void patch(thread, { unread: !thread.unread }, thread.unread ? undefined : () => onMarkedUnread(thread)),
     },
+    snoozeMenu(thread),
     { id: 'rename', label: t('actions.rename'), icon: IconEdit, onSelect: () => run('rename', thread) },
     ...(autotitle ? [{ id: 'autotitle', label: t('actions.autotitle'), icon: IconSparkle, onSelect: () => void autoName(thread) }] : []),
     {

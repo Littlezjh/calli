@@ -6,7 +6,7 @@ import { clockLabel } from '../timeline';
 import { useInTitlebar, useLongPress, useStoredFlag, useStoredSet } from '../hooks';
 import { attentionCount, threadMark, waitingLabel, type ThreadMark } from '../notices';
 import { folderName } from '../paths';
-import { buildActivity, buildMerged, buildSidebar, externalThreadRow, handoverGroups, markTerms, navOverflow, projectDir, SEARCH_MIN, taggedAgents, withExternalSessions, type ForkSubchatItem, type HostSource } from '../sidebar';
+import { buildActivity, buildMerged, buildSidebar, externalThreadRow, handoverGroups, markTerms, navOverflow, projectDir, SEARCH_MIN, snoozed, snoozeTimeLabel, taggedAgents, withExternalSessions, type ForkSubchatItem, type HostSource } from '../sidebar';
 import { timeAgo } from '../sessions';
 import { deliveredPreview } from '../timeline';
 import { HostSwitcher } from './Hosts';
@@ -14,7 +14,7 @@ import { Menu } from './Menu';
 import { PetBustImage, type PetBust } from './Pet';
 import type { HostIconName } from '@calli/extension-api';
 import { HostIcon } from '../extensions/ui';
-import { AgentMark, IconAgents, IconBell, IconChevron, IconClock, IconClose, IconDesktop, IconEdit, IconFork, IconHandover, IconFolder, IconList, IconMore, IconPin, IconPlus, IconSearch, IconSettings, IconSidebar, IconSparkle, IconServer } from './icons';
+import { AgentMark, IconAgents, IconBell, IconCheck, IconChevron, IconClock, IconClose, IconDesktop, IconEdit, IconFork, IconHandover, IconFolder, IconList, IconMore, IconPin, IconPlus, IconSearch, IconSettings, IconSidebar, IconSparkle, IconServer } from './icons';
 import { t } from '../i18n';
 import './fork-subchat.css';
 
@@ -269,9 +269,10 @@ export function Sidebar({
     const from = chain ? byId.get(chain.find((m) => m.id === thread.handover?.sourceId)?.agent ?? thread.handover?.agent ?? '') : undefined;
     // Filed by project, the list is for scanning: a title per row, as in Codex. The latest ask
     // shows where it helps finding something, by activity and in a search. A thread that needs a
-    // hand says so in every view.
+    // hand says so in every view; one told to come back later says when.
     const detail = flat || query ? preview : null;
-    const note = mark === 'waiting' ? waitingLabel(thread) : mark === 'error' ? t('sidebar.failed') : null;
+    const back = snoozed(thread);
+    const note = mark === 'waiting' ? waitingLabel(thread) : mark === 'error' ? t('sidebar.failed') : back ? t('sidebar.snoozedNote', snoozeTimeLabel(back)) : null;
     return (
     <div
       key={thread.id}
@@ -288,8 +289,8 @@ export function Sidebar({
         <span className="thread-text">
           <span className="thread-head">
             <span className="thread-title">{title}</span>
-            {/* Beside the title, so the row stays one line like the rest. */}
-            {note && <span className={`thread-note ${mark}`}>{note}</span>}
+            {/* Beside the title, so the row stays one line like the rest. The class follows the note's own kind, not the row's dot. */}
+            {note && <span className={`thread-note ${mark === 'waiting' || mark === 'error' ? mark : 'snoozed'}`}>{note}</span>}
             {/* Out of its project group, a thread says where it is. */}
             {flat && on?.label && <span className="thread-host" title={on.label}>{on.label}</span>}
             {flat && <span className="thread-dir">{folderName(projectDir(thread).cwd)}</span>}
@@ -690,6 +691,16 @@ export function Sidebar({
           <span className="group-name">{t('projects.none')}</span>,
           model.scratch,
           <GroupAdd label={t('sidebar.newScratch')} onClick={() => onNewIn({ scratch: true })} />,
+        )}
+      {model.done.length > 0 &&
+        group(
+          'done',
+          <>
+            <IconCheck size={13} />
+            <span className="group-name">{t('sidebar.done')}</span>
+          </>,
+          model.done,
+          <span className="group-count">{model.done.length}</span>,
         )}
     </nav>
   );
