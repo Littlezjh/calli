@@ -5,12 +5,14 @@ import './fork-subchat.css';
 
 interface Props {
   worktreeAvailable: boolean;
-  onConfirm: (opts: { forkTag: string; firstMessage: string; worktree: boolean }) => void;
+  allowLightweight?: boolean;
+  onConfirm: (opts: { forkTag: string; firstMessage: string; worktree: boolean; lightweight: boolean }) => void;
   onCancel: () => void;
 }
 
 /** Light one-step card to fork a grouped sub-conversation in the current directory. */
-export function ForkSubchatDialog({ worktreeAvailable, onConfirm, onCancel }: Props) {
+export function ForkSubchatDialog({ worktreeAvailable, allowLightweight = true, onConfirm, onCancel }: Props) {
+  const [lightweight, setLightweight] = useState(allowLightweight);
   const [forkTag, setForkTag] = useState('');
   const [firstMessage, setFirstMessage] = useState('');
   const hasMessage = firstMessage.trim().length > 0;
@@ -22,10 +24,40 @@ export function ForkSubchatDialog({ worktreeAvailable, onConfirm, onCancel }: Pr
       message={t('actions.forkSubchatMessage')}
       options={worktreeAvailable ? [{ label: t('actions.forkSubchatWorktree'), hint: t('actions.forkSubchatWorktreeHint') }] : []}
       confirmLabel={hasMessage ? t('actions.forkSubchatBackground') : t('actions.forkSubchatEnter')}
-      onConfirm={(_, [worktree]) => onConfirm({ forkTag: forkTag.trim(), firstMessage: firstMessage.trim(), worktree: Boolean(worktree) })}
+      onConfirm={(_, [worktree]) =>
+        onConfirm({ forkTag: forkTag.trim(), firstMessage: firstMessage.trim(), worktree: Boolean(worktree), lightweight: allowLightweight && lightweight })
+      }
       onCancel={onCancel}
     >
       <div className="fork-subchat-fields">
+        {allowLightweight && (
+          <div className="fork-subchat-field">
+            <span>{t('actions.forkModeLabel')}</span>
+            <div className="fork-subchat-mode" role="radiogroup" aria-label={t('actions.forkModeLabel')}>
+              <button
+                type="button"
+                role="radio"
+                aria-checked={lightweight}
+                className={lightweight ? 'active' : undefined}
+                onClick={() => setLightweight(true)}
+              >
+                {t('actions.forkModeLightweight')}
+              </button>
+              <button
+                type="button"
+                role="radio"
+                aria-checked={!lightweight}
+                className={!lightweight ? 'active' : undefined}
+                onClick={() => setLightweight(false)}
+              >
+                {t('actions.forkModeFull')}
+              </button>
+            </div>
+            <p className="fork-subchat-mode-hint">
+              {lightweight ? t('actions.forkModeLightweightHint') : t('actions.forkModeFullHint')}
+            </p>
+          </div>
+        )}
         <label className="fork-subchat-field">
           <span>{t('actions.forkTagLabel')}</span>
           <input

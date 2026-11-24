@@ -152,6 +152,27 @@ test('grouped fork keeps same cwd, supports optional firstMessage and forkTag, a
     assert.equal(handed.forkTag, '写代码');
     assert.ok(h.manager.forkFamilyIds(root.id).has(handed.id));
     assert.ok(h.manager.forkFamilyIds(handed.id).has(forkA.id));
+
+    // 8. Lightweight grouped fork starts a fresh agent session without copying history,
+    //    yet still belongs to the fork family and reads the lead thread on demand.
+    const lightRes = await h.req('POST', `/api/threads/${root.id}/fork`, {
+      grouped: true,
+      lightweight: true,
+      forkTag: '轻量讨论',
+    });
+    assert.equal(lightRes.status, 201);
+    const light = await lightRes.json();
+    assert.equal(light.forkGroup, root.id);
+    assert.equal(light.forkTag, '轻量讨论');
+    assert.equal(light.agentSessionId, null);
+    assert.equal(h.store.listEventsOfType(light.id, 'turn.started').length, 0);
+
+    await h.manager.startTurn(light.id, { text: '只聊轻量新话题', fromUser: true });
+    await h.idle(light.id);
+    const lightTurn = h.store.listEventsOfType(light.id, 'turn.started').at(-1)!;
+    assert.match(String(lightTurn.data.text), /<calli-forks>[\s\S]*主线重构[\s\S]*<\/calli-forks>/);
+    const lightReadsRoot = (await h.manager.references.command(light.id, { op: 'history', target: root.id, userInputs: true })) as any;
+    assert.ok(Array.isArray(lightReadsRoot.inputs) && lightReadsRoot.inputs.some((i: any) => String(i.text).includes('主线架构方案')));
   } finally {
     await h.close();
   }

@@ -38,15 +38,31 @@ test('fork as sub-conversation groups under the lead in sidebar with purpose tag
   await page.getByRole('menuitem', { name: '分叉为子对话' }).click();
   await page.locator('.fork-subchat-dialog').waitFor();
 
-  // Fill purpose tag only -> button reads "分叉并进入" -> opens new sub-conversation
+  // Verify context mode toggle defaults to lightweight, and can toggle to full history and back.
+  const lightRadio = page.locator('.fork-subchat-mode [role="radio"]', { hasText: '轻量分支' });
+  const fullRadio = page.locator('.fork-subchat-mode [role="radio"]', { hasText: '带完整历史' });
+  assert.equal(await lightRadio.getAttribute('aria-checked'), 'true');
+  assert.equal(await fullRadio.getAttribute('aria-checked'), 'false');
+
+  // Capture dialog screenshot if requested (lightweight mode visible).
+  const shotDir = process.env.CALLI_FORK_SHOTS;
+  if (shotDir) {
+    await page.screenshot({ path: `${shotDir}/dialog-light.png` });
+    await page.evaluate(() => { document.documentElement.dataset.theme = 'dark'; });
+    await page.screenshot({ path: `${shotDir}/dialog-dark.png` });
+    await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
+  }
+
+  // Fill purpose tag only -> button reads "分叉并进入" -> opens new lightweight sub-conversation
   await page.locator('.fork-subchat-dialog input[type="text"]').fill('分析 one page');
   const confirmBtn = page.locator('.fork-subchat-dialog button', { hasText: '分叉并进入' });
   await confirmBtn.click();
   await page.locator('.fork-subchat-dialog').waitFor({ state: 'detached', timeout: 10_000 });
 
-  // Sidebar now folds the sub-conversation under root with the purpose tag pill.
+  // Lightweight fork starts fresh (no replayed root turn text in message list).
   await page.locator('.sidebar-inner .fork-tag-pill', { hasText: '分析 one page' }).waitFor({ timeout: 10_000 });
-  // Chat on a different topic inside the sub-conversation.
+  assert.equal(await page.locator('.markdown').filter({ hasText: 'hi there 主线第一轮' }).count(), 0);
+  // Chat on a different topic inside the sub-conversation; <calli-forks> still lists the lead thread.
   await page.locator('.composer textarea').click();
   await page.keyboard.type('子话题讨论');
   await page.keyboard.press('Enter');
@@ -54,7 +70,6 @@ test('fork as sub-conversation groups under the lead in sidebar with purpose tag
   await page.locator('.markdown').filter({ hasText: '主线重构' }).last().waitFor({ timeout: 5_000 });
 
   // Verify phone dark & light viewports have no horizontal overflow and capture screenshots if requested.
-  const shotDir = process.env.CALLI_FORK_SHOTS;
   if (shotDir) {
     await page.screenshot({ path: `${shotDir}/desktop-light.png` });
     await page.evaluate(() => { document.documentElement.dataset.theme = 'dark'; });

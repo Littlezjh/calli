@@ -1624,6 +1624,7 @@ export function createHttpServer(deps: HttpDeps): Server {
             worktree: body?.worktree === true,
             ...(typeof body?.agent === 'string' && body.agent ? { agent: body.agent } : {}),
             ...(body?.grouped === true ? { grouped: true } : {}),
+            ...(body?.lightweight === true ? { lightweight: true } : {}),
             ...(typeof body?.forkTag === 'string' ? { forkTag: body.forkTag } : {}),
             ...(typeof body?.firstMessage === 'string' ? { firstMessage: body.firstMessage } : {}),
           }),

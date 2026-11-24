@@ -1858,13 +1858,14 @@ export class Api {
   /** With `turnId` the copy ends where that turn ended; with `worktree` it runs in a git worktree of its own. */
   forkThread(
     threadId: string,
-    opts: { turnId?: string; worktree?: boolean; agent?: string; grouped?: boolean; forkTag?: string | null; firstMessage?: string } = {},
+    opts: { turnId?: string; worktree?: boolean; agent?: string; grouped?: boolean; lightweight?: boolean; forkTag?: string | null; firstMessage?: string } = {},
   ): Promise<Thread> {
     const body = {
       ...(opts.turnId ? { turnId: opts.turnId } : {}),
       ...(opts.worktree ? { worktree: true } : {}),
       ...(opts.agent ? { agent: opts.agent } : {}),
       ...(opts.grouped ? { grouped: true } : {}),
+      ...(opts.lightweight ? { lightweight: true } : {}),
       ...(typeof opts.forkTag === 'string' && opts.forkTag.trim() ? { forkTag: opts.forkTag.trim() } : {}),
       ...(typeof opts.firstMessage === 'string' && opts.firstMessage.trim() ? { firstMessage: opts.firstMessage.trim() } : {}),
     };

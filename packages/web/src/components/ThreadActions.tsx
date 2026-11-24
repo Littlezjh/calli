@@ -473,11 +473,12 @@ export function useThreadActions(deps: Deps) {
       dialogNode = (
         <ForkSubchatDialog
           worktreeAvailable={worktreeAvailable}
-          onConfirm={({ forkTag, firstMessage, worktree }) => {
+          allowLightweight={!turnId}
+          onConfirm={({ forkTag, firstMessage, worktree, lightweight }) => {
             close();
             onBusy({ threadId: thread.id, message: worktree ? t('actions.forkingWorktree') : t('actions.forking') });
             void api
-              .forkThread(thread.id, { turnId, worktree, grouped: true, forkTag, firstMessage })
+              .forkThread(thread.id, { turnId, worktree, grouped: true, lightweight, forkTag, firstMessage })
               .then((copy) => {
                 if (firstMessage) onThreadChange(copy);
                 else onThreadOpen(copy);

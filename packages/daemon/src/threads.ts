@@ -751,18 +751,23 @@ export class ThreadManager {
    */
   async forkThread(
     id: string,
-    opts: { turnId?: string; worktree?: boolean; agent?: string; grouped?: boolean; forkTag?: string | null; firstMessage?: string } = {},
+    opts: { turnId?: string; worktree?: boolean; agent?: string; grouped?: boolean; lightweight?: boolean; forkTag?: string | null; firstMessage?: string } = {},
   ): Promise<ThreadView> {
     const thread = this.getThread(id);
     const adapter = this.adapters.get(thread.agent);
+    const lightweight = opts.lightweight === true;
     // A fork to another agent carries the whole conversation over, the way a resume handover does,
     // instead of copying it in the source agent's own format.
     const across = Boolean(opts.agent && opts.agent !== thread.agent);
     if (!adapter) throw new HttpError(400, `no such agent: ${thread.agent}`);
-    if (!across && (!adapter.capabilities.fork || !adapter.forkSession)) throw new HttpError(400, `${thread.agent} cannot fork a conversation`);
-    if (!thread.agentSessionId) throw new HttpError(400, 'there is nothing to fork yet; send a message first');
+    if (lightweight && opts.turnId) throw new HttpError(400, 'a lightweight fork starts a fresh session and does not accept turnId');
+    if (lightweight && across) throw new HttpError(400, 'a lightweight fork stays on the same agent');
+    if (!lightweight) {
+      if (!across && (!adapter.capabilities.fork || !adapter.forkSession)) throw new HttpError(400, `${thread.agent} cannot fork a conversation`);
+      if (!thread.agentSessionId) throw new HttpError(400, 'there is nothing to fork yet; send a message first');
+    }
     const running = this.running.has(id);
-    if (running && !opts.turnId) throw new HttpError(409, 'wait for the running turn to finish before forking');
+    if (!lightweight && running && !opts.turnId) throw new HttpError(409, 'wait for the running turn to finish before forking');
     if (across) {
       if (!(await this.canForkAcross(id, opts.agent!))) throw new HttpError(400, `${thread.agent}'s conversation cannot be copied to ${opts.agent}`);
       if (opts.turnId) throw new HttpError(400, 'a fork to another agent copies the whole conversation; ask for no particular turn');
@@ -797,11 +802,11 @@ export class ThreadManager {
       if (added) await removeWorktree(added.main, added.tree).catch(() => undefined);
     };
 
-    let forkedSessionId: string;
+    let forkedSessionId: string | null = null;
     try {
-      const forkRef = cut ? await this.agentForkRef(thread, adapter, cut.hubIndex, cut.hubKeys) : undefined;
+      const forkRef = !lightweight && cut ? await this.agentForkRef(thread, adapter, cut.hubIndex, cut.hubKeys) : undefined;
       if (opts.worktree) {
-        if (across && !this.adapters.get(opts.agent!)?.capabilities.forkInto) throw new HttpError(400, WORKTREE_REFUSALS.agent);
+        if (!lightweight && across && !this.adapters.get(opts.agent!)?.capabilities.forkInto) throw new HttpError(400, WORKTREE_REFUSALS.agent);
         const plan = await this.worktreePlan(thread);
         if (!plan.checkout) throw new HttpError(400, WORKTREE_REFUSALS[plan.reason]);
         const tree = await addWorktree(plan.checkout, copyId.slice(0, 8)).catch((err) => {
@@ -813,12 +818,14 @@ export class ThreadManager {
         if (!isWithinWorkdirs(cwd, this.workdirs)) throw new HttpError(400, WORKTREE_REFUSALS.outside_workdirs);
         worktree = { root: tree.root, branch: tree.branch, of: thread.worktree?.of ?? thread.cwd };
       }
-      if (across) {
-        forkedSessionId = await this.importHandoverSession(id, opts.agent!) ?? '';
-        if (!forkedSessionId) throw new HttpError(502, `could not copy the conversation of ${thread.agent} to ${opts.agent}`);
-      } else {
-        // Not across: the guard above made sure the source agent can copy its own conversation.
-        forkedSessionId = await adapter.forkSession!(thread.agentSessionId, thread.cwd, forkRef, added ? cwd : undefined);
+      if (!lightweight) {
+        if (across) {
+          forkedSessionId = await this.importHandoverSession(id, opts.agent!) ?? '';
+          if (!forkedSessionId) throw new HttpError(502, `could not copy the conversation of ${thread.agent} to ${opts.agent}`);
+        } else {
+          // Not across: the guard above made sure the source agent can copy its own conversation.
+          forkedSessionId = await adapter.forkSession!(thread.agentSessionId!, thread.cwd, forkRef, added ? cwd : undefined);
+        }
       }
     } catch (err) {
       await undoWorktree();
@@ -826,7 +833,7 @@ export class ThreadManager {
       throw new HttpError(502, `could not fork the ${thread.agent} session: ${err instanceof Error ? err.message : err}`);
     }
 
-    this.attachments.copyThread(thread.id, copyId);
+    if (!lightweight) this.attachments.copyThread(thread.id, copyId);
     // Another agent has names of its own for models and effort levels; a relay between accounts of
     // the same kind keeps them, across kinds the target starts on its own default.
     const acrossModel = across ? (await this.handoverModel(opts.agent!, thread.model)) ?? null : thread.model;
@@ -863,11 +870,11 @@ export class ThreadManager {
           ...(chainLink ? { handover: chainLink } : {}),
           worktree,
         });
-        this.store.updateThread(copyId, { agentSessionId: forkedSessionId, sectionId: thread.sectionId }, { touch: true });
-        this.store.copyEvents(thread.id, copyId, cut?.upToSeq);
+        this.store.updateThread(copyId, { ...(forkedSessionId ? { agentSessionId: forkedSessionId } : {}), sectionId: thread.sectionId }, { touch: true });
+        if (!lightweight) this.store.copyEvents(thread.id, copyId, cut?.upToSeq);
       });
     } catch (err) {
-      this.attachments.removeThread(copyId);
+      if (!lightweight) this.attachments.removeThread(copyId);
       await undoWorktree();
       throw err;
     }
