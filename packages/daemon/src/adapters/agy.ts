@@ -29,7 +29,7 @@ import type {
   TurnHooks,
 } from './types.js';
 
-/** Antigravity uses ACP for conversations; print mode remains for account queries only. */
+/** Antigravity uses ACP for conversations; print mode remains for account queries only. Per-request usage and fallback thinking are tailed from the native transcript. */
 
 /** How long the command list is reused. Reading it takes two short agy runs. */
 const COMMANDS_TTL_MS = 10 * 60_000;
@@ -176,6 +176,11 @@ export function parseAgyModels(stdout: string): ModelOption[] {
   return models;
 }
 
+/**
+ * Copies a directory's files from one listing of it: a live conversation rotates its newest chunk
+ * away while it is being read, and one entry gone is no reason to lose the rest, let alone to hang
+ * a recursive copy on a folder that keeps changing under it.
+ */
 export async function copyDirectorySnapshot(from: string, to: string): Promise<void> {
   const entries = await readdir(from, { withFileTypes: true });
   await mkdir(to, { recursive: true });
@@ -348,6 +353,7 @@ export class AgyAdapter extends AcpAdapter {
 
   protected readonly modeIds = { ask: ['default'], auto_edit: ['accept-edits'], full_access: ['auto'] };
   protected override resumeVia = 'session/resume' as const;
+  protected override syncThinking = true;
 
   override async forkSession(agentSessionId: string, cwd: string, forkRef?: string): Promise<string> {
     if (forkRef) throw new Error('this agent can only copy a whole conversation');
@@ -357,10 +363,10 @@ export class AgyAdapter extends AcpAdapter {
     return copyId;
   }
 
-  protected override liveUsage(id: string, cwd: string, emit: (sample: UsageSample) => void) {
-    // Per-request telemetry still comes from the transcript; ACP supplies context occupancy and
-    // a per-turn total. AcpSession's ledger subtracts the already reported requests from that total.
-    return agyLiveUsage(id, cwd, this.env, emit);
+  protected override liveUsage(id: string, cwd: string, emit: (sample: UsageSample) => void, onThinking?: (text: string) => void) {
+    // Per-request telemetry and fallback thinking come from the native transcript when ACP does not
+    // stream agent_thought_chunk; ACP supplies context occupancy and a per-turn total.
+    return agyLiveUsage(id, cwd, this.env, emit, onThinking);
   }
 
   createAccount(directory: string): Promise<Record<string, string>> {

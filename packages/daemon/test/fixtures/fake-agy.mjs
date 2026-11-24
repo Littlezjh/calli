@@ -4,7 +4,7 @@ if (process.argv.includes('--version')) { process.stdout.write('fixture 1.2.3\n'
 import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, symlinkSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { createInterface } from 'node:readline';
-import { agyUsage } from './live-usage.mjs';
+import { agyThinking, agyUsage } from './live-usage.mjs';
 import { coordinationFixture } from './coordination.mjs';
 import { join } from 'node:path';
 const args = process.argv.slice(2);
@@ -317,6 +317,34 @@ function runTurn(text) {
         update({ sessionUpdate: 'usage_update', used: 2048, size: 1048576 });
       }, 120);
     }, 20);
+    return;
+  }
+  if (process.env.FAKE_AGY_THINK && text.includes('think')) {
+    const compactOnly = process.env.FAKE_AGY_THINK === 'compact';
+    const native = process.env.FAKE_AGY_THINK === 'native';
+    const planStep = stepIndex++;
+    if (native) update({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: `native-thought:${text}` } });
+    agyThinking(conversation, planStep, `step-thought:${text}`, {
+      compactOnly,
+      truncatedThinking: compactOnly ? `step-thought:${text}` : 'step-thought:<truncated>',
+    });
+    step({ step_index: planStep, state: 'DONE', step_type: 'agent_response' });
+    const toolStep = stepIndex++;
+    const info = { name: 'run_command', parameters: { CommandLine: 'echo think' } };
+    step({ step_index: toolStep, state: 'ACTIVE', step_type: 'tool', tool_name: 'run_command', tool_info: info });
+    step({ step_index: toolStep, state: 'DONE', step_type: 'tool', tool_name: 'run_command', tool_info: { ...info, output: 'think\r\n' } });
+    // Separate planner rounds across ticks so the transcript only holds the completed step, matching real agy.
+    setTimeout(() => {
+      const replyStep = stepIndex++;
+      const reply = `thought-reply:${text}`;
+      step({ step_index: replyStep, state: 'ACTIVE', step_type: 'agent_response', text_delta: reply });
+      agyThinking(conversation, replyStep, `final-thought:${text}`, {
+        compactOnly,
+        truncatedThinking: compactOnly ? `final-thought:${text}` : 'final-thought:<truncated>',
+      });
+      step({ step_index: replyStep, state: 'DONE', step_type: 'agent_response', text_delta: '\n' });
+      result({ status: 'SUCCESS', response: reply + '\n', num_turns: 1 });
+    }, 30);
     return;
   }
   if (text.includes('crash')) {

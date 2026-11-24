@@ -298,6 +298,10 @@ export class AcpSession implements AgentSession {
    * (DeepSeek Harness does) can still show what is being approved. Bounded; the oldest drops out. */
   private readonly toolCalls = new Map<string, { title?: string; kind?: string; rawInput?: unknown; content?: unknown }>();
 
+  private activeLive: LiveUsage | null = null;
+  private nativeThinking = false;
+  private updateQueue: Promise<void> = Promise.resolve();
+
   constructor(
     readonly agentSessionId: string,
     private readonly peer: JsonRpcPeer,
@@ -307,11 +311,13 @@ export class AcpSession implements AgentSession {
     private readonly offeredModes: readonly string[],
     /** The config option this agent uses for effort ("effort", "reasoning_effort"). */
     private readonly effortConfigId: string = 'effort',
-    private readonly liveUsage?: (emit: (sample: UsageSample) => void) => LiveUsage | undefined,
+    private readonly liveUsage?: (emit: (sample: UsageSample) => void, onThinking?: (text: string) => void) => LiveUsage | undefined,
     private configOptions: ConfigOption[] = [],
     /** For ACP agents that do not emit a costed usage_update (e.g. agy), settle an autonomous
      *  background turn after this much silence once no tool call or human request is still open. */
     private readonly backgroundIdleMs: number = 0,
+    /** Poll transcript-tailed thinking before tool calls when the agent does not stream thoughts over ACP. */
+    private readonly syncThinking: boolean = false,
   ) {}
 
   setSessionHooks(hooks: SessionHooks): void { this.sessionHooks = hooks; }
@@ -350,7 +356,25 @@ export class AcpSession implements AgentSession {
 
   /** Called by the peer for every session/update notification. */
   onUpdate(update: unknown): void {
+    if (this.syncThinking && this.activeLive && this.hooks) {
+      const live = this.activeLive;
+      const hooks = this.hooks;
+      this.updateQueue = this.updateQueue.then(async () => {
+        const value = update as any;
+        if (value?.sessionUpdate === 'agent_thought_chunk') this.nativeThinking = true;
+        if (value?.sessionUpdate === 'tool_call' && !this.nativeThinking && this.activeLive === live && this.hooks === hooks) {
+          await live.poll();
+        }
+        this.applyUpdate(update);
+      }).catch(() => undefined);
+      return;
+    }
+    this.applyUpdate(update);
+  }
+
+  private applyUpdate(update: unknown): void {
     const value = update as any;
+    if (value?.sessionUpdate === 'agent_thought_chunk' && this.hooks) this.nativeThinking = true;
     // The account's plan usage, told as the agent answers: account-level, so it counts even during
     // replay or background work, when no turn hooks would carry it anywhere.
     if (value?.sessionUpdate === 'usage_update' && value._meta?.['_claude/rateLimit'] !== undefined) {
@@ -411,6 +435,7 @@ export class AcpSession implements AgentSession {
 
   /** Called by the peer for session/request_permission. */
   async onPermission(params: any): Promise<unknown> {
+    if (this.syncThinking) await this.updateQueue;
     const hooks = this.turnHooks;
     if (!hooks) return { outcome: { outcome: 'cancelled' } };
     const inBackground = !this.hooks && Boolean(this.background);
@@ -576,14 +601,19 @@ export class AcpSession implements AgentSession {
 
   private async promptInternal(input: TurnInput, hooks: TurnHooks): Promise<TurnResult> {
     const start = Date.now();
+    this.nativeThinking = false;
     const emit = (sample: UsageSample) => hooks.emit({ type: 'usage.sample', data: { ...sample } });
-    const live = this.liveUsage?.(emit);
+    const onThinking = this.syncThinking
+      ? (text: string) => { if (!this.nativeThinking) hooks.emit({ type: 'reasoning.delta', data: { text } }); }
+      : undefined;
+    const live = this.liveUsage?.(emit, onThinking);
     let submitted!: () => void;
     this.submission = new Promise(resolve => { submitted = resolve; });
     let samples: UsageSample[] = [];
     // The hub holds prompts until the agent's own work ends; if one gets through, it owns what follows.
     this.finishBackground('end_turn');
     this.hooks = hooks;
+    this.activeLive = live ?? null;
     this.costBefore = this.costReading;
     this.costReported = false;
     try {
@@ -606,6 +636,8 @@ export class AcpSession implements AgentSession {
       return { stopReason: 'error', error: err instanceof Error ? err.message : String(err) };
     } finally {
       submitted();
+      await this.updateQueue;
+      this.activeLive = null;
       await live?.stop();
       for (const sample of samples) {
         const remainder = live ? live.ledger.remainder(sample) : sample;
@@ -643,7 +675,9 @@ export class AcpSession implements AgentSession {
 /** Everything an ACP agent has in common. The agent-specific parts are the abstract members. */
 export abstract class AcpAdapter implements AgentAdapter {
   readonly prewarm = true;
-  protected liveUsage(_id: string, _cwd: string, _emit: (sample: UsageSample) => void): LiveUsage | undefined { return undefined; }
+  protected liveUsage(_id: string, _cwd: string, _emit: (sample: UsageSample) => void, _onThinking?: (text: string) => void): LiveUsage | undefined { return undefined; }
+  /** When true, AcpSession tails transcript thinking via liveUsage unless native agent_thought_chunk arrives. */
+  protected syncThinking = false;
   /** Plan usage observed in-band, as the agent answers; wired by whoever owns the adapter. */
   onQuotaObserved?: (quota: PlanQuota) => void;
   /** Optional protocol extensions supplied by a concrete adapter. */
@@ -879,7 +913,7 @@ export abstract class AcpAdapter implements AgentAdapter {
       const offeredModes: string[] = (info?.modes?.availableModes ?? []).map((m: any) => m.id);
       const configOptions: ConfigOption[] = info?.configOptions ?? [];
 
-      const session = new AcpSession(sessionId, peer, this.modeIds, offeredModes, effortConfigIdOf(configOptions), emit => this.liveUsage(sessionId, opts.cwd, emit), configOptions, this.backgroundIdleMs);
+      const session = new AcpSession(sessionId, peer, this.modeIds, offeredModes, effortConfigIdOf(configOptions), (emit, onThinking) => this.liveUsage(sessionId, opts.cwd, emit, onThinking), configOptions, this.backgroundIdleMs, this.syncThinking);
       if (opts.ephemeral && !opts.resumeId && this.capabilities.deleteSession) {
         session.onEphemeralClose = async () => {
           if (this.deleteSession === AcpAdapter.prototype.deleteSession) {
