@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { startDaemon, openUi, api, launchBrowser } from '../harness.mjs';
+import { startDaemon, openUi, api, launchBrowser, repoRoot } from '../harness.mjs';
 
 test('ruler knows unloaded and folded turns without fetching their bodies', async () => {
   const daemon = await startDaemon();
@@ -67,5 +67,80 @@ test('ruler knows unloaded and folded turns without fetching their bodies', asyn
         }
       } finally { await context.close(); }
     }
+  } finally { await browser?.close(); await daemon.stop(); }
+});
+
+test('side panel hides cramped turn ruler and keeps menus and permission popover inside main column', async () => {
+  const command = [process.execPath, join(repoRoot, 'daemon/test/fixtures/fake-codex.mjs')];
+  const daemon = await startDaemon({ CALLI_AGENTS_JSON: JSON.stringify({ agents: [{ id: 'codex', adapter: 'codex', label: 'Primary', command }] }) });
+  let browser;
+  try {
+    const thread = await (await api(daemon, '/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'codex', cwd: daemon.workdir, title: '侧栏避让校验' }) })).json();
+    const db = new DatabaseSync(join(daemon.dataDir, 'hub.db'));
+    let seq = Number(db.prepare('SELECT MAX(seq) AS n FROM events WHERE thread_id=?').get(thread.id).n ?? 0);
+    const insert = db.prepare('INSERT INTO events VALUES (?, ?, ?, ?, ?, ?)');
+    for (let i = 1; i <= 8; i++) {
+      for (const [type, data] of [['turn.started', { text: `轮次 ${i}` }], ['message.delta', { text: `回复 ${i}` }], ['turn.done', {}]]) {
+        insert.run(thread.id, ++seq, `turn-${i}`, type, new Date().toISOString(), JSON.stringify(data));
+      }
+    }
+    db.close();
+    browser = await launchBrowser();
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    try {
+      const page = await context.newPage();
+      await openUi(page, daemon);
+      await page.locator('.thread-item', { hasText: '侧栏避让校验' }).click();
+      await page.locator('[data-turn="turn-8"]').waitFor();
+      await page.waitForFunction(() => document.querySelectorAll('.turn-ruler .tick').length === 8);
+      assert.equal(await page.locator('.turn-ruler').isVisible(), true, 'ruler visible when main column has gutter');
+
+      // Open FilesPanel via topbar more menu -> narrows main column.
+      await page.locator('.topbar-more').click();
+      const menu = page.locator('.menu-float');
+      await menu.waitFor();
+      // Overview dock (if standing open) yields while more menu is open.
+      if (await page.locator('.pop-panel.overview-dock').count()) {
+        assert.equal(await page.locator('.pop-panel.overview-dock').evaluate(el => getComputedStyle(el).opacity), '0');
+      }
+      await menu.getByRole('menuitem', { name: '文件', exact: true }).click();
+      const files = page.locator('.files-panel');
+      await files.waitFor();
+      await page.waitForTimeout(200);
+      assert.equal(await page.locator('.turn-ruler').isVisible(), false, 'ruler hides when side panel cramps left gutter');
+
+      // Topbar more menu stays strictly inside main column, never overlapping FilesPanel.
+      await page.locator('.topbar-more').click();
+      await menu.waitFor();
+      const filesBox = await files.boundingBox();
+      const menuBox = await menu.boundingBox();
+      assert.ok(menuBox.x + menuBox.width <= filesBox.x + 1, `more menu (${menuBox.x + menuBox.width}) must not overlap side panel (${filesBox.x})`);
+      if (process.env.CALLI_E2E_SHOTS_DIR) {
+        mkdirSync(process.env.CALLI_E2E_SHOTS_DIR, { recursive: true });
+        await page.screenshot({ path: join(process.env.CALLI_E2E_SHOTS_DIR, 'side-panel-menu-no-overlap.png'), animations: 'disabled' });
+      }
+      await page.keyboard.press('Escape');
+      await menu.waitFor({ state: 'detached' });
+
+      // Permission popover shrinks and stays strictly inside main column.
+      const permBtn = page.locator('.composer .composer-permission');
+      await permBtn.waitFor();
+      await permBtn.click();
+      const pop = page.locator('.pop-panel.anchored-pop');
+      await pop.waitFor();
+      await page.waitForTimeout(150);
+      const popBox = await pop.boundingBox();
+      assert.ok(popBox.x + popBox.width <= filesBox.x + 1, `permission popover (${popBox.x + popBox.width}) must not overlap side panel (${filesBox.x})`);
+      if (process.env.CALLI_E2E_SHOTS_DIR) {
+        await page.screenshot({ path: join(process.env.CALLI_E2E_SHOTS_DIR, 'side-panel-permission-no-overlap.png'), animations: 'disabled' });
+      }
+      await page.keyboard.press('Escape');
+      await pop.waitFor({ state: 'detached' });
+
+      // Closing FilesPanel restores the ruler once the layout transition settles.
+      await files.locator('button[title="关闭"]').click();
+      await files.waitFor({ state: 'detached' });
+      await page.locator('.turn-ruler').waitFor({ state: 'visible' });
+    } finally { await context.close(); }
   } finally { await browser?.close(); await daemon.stop(); }
 });

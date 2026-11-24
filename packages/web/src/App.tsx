@@ -3128,7 +3128,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
                 aria-label={t('app.threadMore')}
                 onClick={(e) => {
                   const rect = e.currentTarget.getBoundingClientRect();
-                  threadActions.openPageMenu(selected, rect.right - 200, rect.bottom + 6);
+                  threadActions.openPageMenu(selected, rect.right, rect.bottom + 6);
                 }}
               >
                 <IconMore />
