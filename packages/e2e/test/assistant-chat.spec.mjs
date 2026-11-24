@@ -171,14 +171,15 @@ test('the desk drawer rides beside the conversation on a wide screen and never m
     await page.locator('.chat-home').waitFor();
     await page.locator('.chat-composer textarea').waitFor();
     assert.equal(await page.locator('.chat-drawer').count(), 0, 'the home opens on the conversation alone');
-    await page.locator('.chat-strip').getByText('需要你 1').waitFor();
+    assert.equal(await page.locator('.chat-entries .chat-entry').count(), 2, 'two quiet circle entries: workbench and settings');
 
     // '/' finds her composer from the page.
     await page.keyboard.press('/');
     await page.waitForFunction(() => Boolean(document.activeElement.closest('.chat-composer')));
 
     // The drawer takes real width beside the talk: no cover, no scrim, the composer stays.
-    await page.locator('.chat-entries').getByRole('button', { name: '桌面', exact: true }).click();
+    await page.locator('.chat-entries').getByRole('button', { name: '工作台', exact: true }).click();
+    await page.locator('.chat-drawer-tabs').getByRole('button', { name: '桌面', exact: true }).click();
     await page.locator('.chat-drawer.side .desk-header').waitFor();
     assert.equal(await page.locator('.chat-drawer-scrim').count(), 0, 'a wide screen gives the drawer real width, not a cover');
     assert.equal(await page.locator('.chat-composer').count(), 1);
@@ -194,7 +195,7 @@ test('the desk drawer rides beside the conversation on a wide screen and never m
     await page.locator('.chat-drawer').waitFor({ state: 'detached' });
     assert.equal(await flow.evaluate(el => el.scrollTop), reading, 'closing the drawer does not scroll the conversation');
     assert.equal(new URL(page.url()).hash, '#/desk');
-    await page.locator('.chat-entries').getByRole('button', { name: '桌面', exact: true }).click();
+    await page.locator('.chat-entries').getByRole('button', { name: '工作台', exact: true }).click();
     await page.waitForURL('**/#/desk/desk');
     await page.reload();
     await page.locator('.chat-drawer.side .desk-header').waitFor();
@@ -204,7 +205,8 @@ test('the desk drawer rides beside the conversation on a wide screen and never m
     await page.locator('.chat-drawer').waitFor({ state: 'detached' });
 
     // Her session list is one drawer tab away; the router thread itself is not listed again.
-    await page.locator('.chat-entries').getByRole('button', { name: '会话', exact: true }).click();
+    await page.locator('.chat-entries').getByRole('button', { name: '工作台', exact: true }).click();
+    await page.locator('.chat-drawer-tabs').getByRole('button', { name: '会话', exact: true }).click();
     await page.locator('.chat-drawer .chat-sessions').waitFor();
     assert.equal(await page.locator('.chat-sessions li button').count(), 0, 'the router thread itself is the conversation, not listed again');
     assert.match(await page.locator('.chat-drawer-empty').textContent(), /还没有别的会话/);
@@ -223,7 +225,7 @@ test('a narrower screen covers the talk with the drawer; a phone gives it the wh
     await openUi(page, daemon);
     await page.evaluate(() => { location.hash = '#/desk'; });
     await page.locator('.chat-home').waitFor();
-    await page.locator('.chat-entries').getByRole('button', { name: '事项', exact: true }).click();
+    await page.locator('.chat-entries').getByRole('button', { name: '工作台', exact: true }).click();
     await page.locator('.chat-drawer.over').waitFor();
     await page.locator('.chat-drawer-scrim').waitFor();
     const overlay = await page.locator('.chat-drawer.over').boundingBox();
@@ -231,14 +233,15 @@ test('a narrower screen covers the talk with the drawer; a phone gives it the wh
     await page.locator('.chat-drawer-scrim').click({ position: { x: 5, y: 100 } });
     await page.locator('.chat-drawer').waitFor({ state: 'detached' });
 
-    // A phone: the entries are icons, the drawer is the whole width of the page.
+    // A phone: the entries are two calm circles, the drawer is the whole width of the page.
     const phone = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
     await openUi(phone, daemon);
     await phone.evaluate(() => { location.hash = '#/desk'; });
     await phone.locator('.chat-home').waitFor();
     const label = await phone.locator('.chat-entry-label').first().boundingBox();
     assert.ok(label.width <= 2, 'a phone folds the entry labels away but keeps their names');
-    await phone.locator('.chat-entries').getByRole('button', { name: '桌面', exact: true }).tap();
+    await phone.locator('.chat-entries').getByRole('button', { name: '工作台', exact: true }).tap();
+    await phone.locator('.chat-drawer-tabs').getByRole('button', { name: '桌面', exact: true }).tap();
     await phone.locator('.chat-drawer.over .desk-matrix').waitFor();
     await phone.locator('.chat-drawer.over').evaluate(element => Promise.all(element.getAnimations().map(animation => animation.finished)));
     const full = await phone.locator('.chat-drawer.over').boundingBox();
@@ -269,6 +272,9 @@ test('a dispatch card rides in the conversation; starting it lands in its thread
     await openUi(page, daemon);
     await page.evaluate(() => { location.hash = '#/desk'; });
     await page.locator('.chat-home').waitFor();
+    const orb = page.locator('.chat-ask-orb');
+    await orb.getByText('1 待答').waitFor();
+    await orb.click();
     const card = page.locator('.chat-ask.dispatch');
     await card.waitFor();
     await card.getByText('派活给 pi').waitFor();
@@ -286,33 +292,27 @@ test('a dispatch card rides in the conversation; starting it lands in its thread
   } finally { await browser.close(); await daemon.stop(); }
 });
 
-test('a phone keeps one bar: the entries sit in the app bar and their badges carry the counts', async () => {
+test('a phone keeps one bar: two independent quiet circles with no screaming badges', async () => {
   const daemon = await startDaemon();
   const browser = await launchBrowser();
   try {
     await configurePersonal(daemon);
     await json(daemon, '/api/todos', 'POST', { text: '检查发布清单', lane: 'you', importance: 'high', dueAt: new Date().toISOString() });
     const page = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
-    let release;
-    const gate = new Promise(resolve => { release = resolve; });
-    await page.route(/\/api\/todos$/, async route => { await gate; await route.continue(); });
     await openUi(page, daemon);
     await page.evaluate(() => { location.hash = '#/desk'; });
     const entries = page.locator('.topbar .topbar-desk .chat-entries');
     await entries.waitFor();
     assert.equal(await page.locator('.chat-top').count(), 0, 'no second bar under the app bar');
-    assert.equal(await page.locator('.chat-strip').count(), 0, 'no strip row on a phone');
-    assert.equal(await entries.locator('.chat-badge').count(), 0, 'an unknown count shows no badge, never a zero');
-    release();
-    const matters = entries.getByRole('button', { name: /事项/ });
-    await matters.locator('.chat-badge').getByText('1', { exact: true }).waitFor();
-    for (const [name, tab] of [[/事项/, 'matters'], [/会话/, 'sessions']]) {
-      await entries.getByRole('button', { name }).tap();
-      await page.locator('.chat-drawer.over').waitFor();
-      assert.equal(new URL(page.url()).hash, `#/desk/${tab}`);
-      await page.keyboard.press('Escape');
-      await page.locator('.chat-drawer').waitFor({ state: 'detached' });
-    }
+    assert.equal(await entries.locator('.chat-entry').count(), 2, 'only workbench and settings circles');
+    assert.equal(await entries.locator('.chat-badge').count(), 0, 'no numeric badges on top-right circles');
+    await entries.getByRole('button', { name: '工作台', exact: true }).tap();
+    await page.locator('.chat-drawer.over').waitFor();
+    assert.equal(new URL(page.url()).hash, '#/desk/matters', 'defaults to matters when items wait on you');
+    await page.locator('.chat-drawer-tabs').getByRole('button', { name: '会话', exact: true }).tap();
+    assert.equal(new URL(page.url()).hash, '#/desk/sessions');
+    await page.keyboard.press('Escape');
+    await page.locator('.chat-drawer').waitFor({ state: 'detached' });
     const flowTop = await page.locator('.chat-flow, .chat-fresh').first().evaluate(element => element.getBoundingClientRect().top);
     const barBottom = await page.locator('.topbar').evaluate(element => element.getBoundingClientRect().bottom);
     assert.ok(flowTop <= barBottom + 1, `the conversation starts right under the bar (${flowTop} vs ${barBottom})`);
@@ -344,8 +344,9 @@ test('dispatch can be declined without creating work, and a rejected start remai
     const page = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
     await openUi(page, daemon);
     await page.evaluate(() => { location.hash = '#/desk'; });
-    // Two asks fold into one tray line: open it, then open the one ask to act on.
-    await page.locator('.chat-tray-head').getByText('2 个等你回答').tap();
+    // Asks stay tucked into the bottom-right thumb chip until tapped.
+    assert.equal(await page.locator('.chat-tray').count(), 0, 'tray stays folded into the corner chip');
+    await page.locator('.chat-ask-orb').getByText('2 待答').tap();
     const rejected = page.locator(`.chat-ask[data-run="${declined.id}"]`);
     assert.equal(await page.locator('.chat-ask-detail').count(), 0, 'no ask opens by itself while several wait');
     await rejected.locator('.chat-ask-row').tap();
@@ -356,9 +357,8 @@ test('dispatch can be declined without creating work, and a rejected start remai
     let attempt = 0;
     await page.route(`**/api/personal/proactive/runs/${retry.id}/start`, route => ++attempt === 1
       ? route.fulfill({ status: 409, json: { error: 'Agent 暂时不可用', run: retry } }) : route.continue());
-    // The last ask left stands open on its own.
+    // While the tray is already open, the last ask left stands expanded on its own.
     const card = page.locator(`.chat-ask[data-run="${retry.id}"]`);
-    assert.equal(await page.locator('.chat-tray-head').count(), 0);
     await card.getByRole('button', { name: '开始', exact: true }).tap();
     await card.getByRole('alert').getByText('Agent 暂时不可用', { exact: true }).waitFor();
     assert.equal(await card.getByRole('button', { name: '开始', exact: true }).isEnabled(), true);
@@ -388,12 +388,12 @@ if (process.env.CALLI_ASSISTANT_SHOTS) test('assistant chat screenshot matrix', 
         await openUi(page, daemon);
         await page.evaluate(() => { location.hash = '#/desk'; });
         await page.locator(conversation === 'fresh' ? '.chat-fresh' : '.chat-flow .row').first().waitFor();
-        if (width === 390) await page.locator('.chat-entries .chat-badge').getByText('1', { exact: true }).waitFor();
-        else await page.locator('.chat-strip').getByRole('button', { name: '需要你 1', exact: true }).waitFor();
+        await page.locator('.chat-entries').getByRole('button', { name: '工作台', exact: true }).waitFor();
         await page.locator('.chat-composer textarea').waitFor();
         for (const drawer of ['closed', 'open']) {
           if (drawer === 'open') {
-            await page.locator('.chat-entries').getByRole('button', { name: '桌面', exact: true }).click();
+            await page.locator('.chat-entries').getByRole('button', { name: '工作台', exact: true }).click();
+            await page.locator('.chat-drawer-tabs').getByRole('button', { name: '桌面', exact: true }).click();
             await page.locator('.chat-drawer .desk-header').waitFor();
           }
           await page.mouse.move(0, 0);
@@ -415,6 +415,7 @@ for (const state of ['answered', 'starting']) test(`a dispatch start conflict ${
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
     await openUi(page, daemon);
     await page.evaluate(() => { location.hash = '#/desk'; });
+    await page.locator('.chat-ask-orb').click();
     const card = page.locator(`.chat-ask[data-run="${run.id}"]`);
     await card.waitFor();
     let started;

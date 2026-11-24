@@ -13607,31 +13607,22 @@ button.trace-step-head:hover { background: var(--hover); }
 .chat-top > .sp { flex: 1; }
 .chat-brand { display: inline-flex; align-items: center; gap: 9px; font-size: 14px; font-weight: 600; }
 .chat-ava { display: grid; place-items: center; width: 27px; height: 27px; border: 1px solid var(--border); border-radius: var(--radius-pill); background: var(--surface-2); color: var(--muted); }
-.chat-entries { display: flex; align-items: center; gap: 2px; }
-.chat-entry { position: relative; display: inline-flex; align-items: center; justify-content: center; min-width: 34px; min-height: 34px; padding: 0 8px; border: 0; border-radius: var(--radius-pill); background: none; color: var(--muted); }
-.chat-entry:hover { background: var(--hover); color: var(--text); }
+.chat-entries { display: flex; align-items: center; gap: 8px; }
+.chat-entry { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; padding: 0; border: 0; border-radius: var(--radius-pill); background: var(--glass-lighting), var(--glass-bg); box-shadow: var(--glass-shadow); -webkit-backdrop-filter: var(--glass-filter); backdrop-filter: var(--glass-filter); color: var(--muted); }
+.chat-entry:hover { color: var(--text); background: var(--surface); }
 .chat-entry-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-.chat-badge { min-width: 17px; height: 17px; padding: 0 4px; border-radius: var(--radius-pill); background: var(--hover); color: var(--muted); font-size: 10.5px; line-height: 17px; text-align: center; font-variant-numeric: tabular-nums; }
-.chat-badge.warn { background: var(--warn); color: var(--on-color); }
-.chat-badge.danger { background: var(--danger); color: var(--on-color); }
+.chat-entry-dot { position: absolute; top: 7px; right: 7px; width: 5px; height: 5px; border-radius: var(--radius-pill); background: var(--danger); }
 
-/* The one line of globe kept on the home: quiet, clickable, never hiding a number. */
-/* In the app bar: the strip's words, then the entries in the bar's own glass pill. */
-.topbar-desk { display: flex; align-items: center; gap: 6px; min-width: 0; margin-left: auto; }
-.topbar-desk .chat-strip { width: auto; margin: 0; padding: 0; justify-content: flex-end; min-width: 0; overflow: hidden; }
+.topbar-desk { display: flex; align-items: center; gap: 8px; min-width: 0; margin-left: auto; }
 .topbar-desk .chat-entries { flex: none; }
-.topbar-desk .chat-entry { min-height: 32px; }
-.chat-strip { flex: none; display: flex; align-items: center; justify-content: center; gap: 2px; width: min(760px, 100%); margin: 0 auto; padding: 2px 8px; color: var(--muted); font-size: 12px; }
-.chat-strip button { flex: none; display: inline-flex; align-items: center; min-height: 28px; padding: 0 10px; border: 0; border-radius: var(--radius-pill); background: none; color: var(--muted); font-size: 12px; white-space: nowrap; }
-.chat-strip button:hover { background: var(--hover); color: var(--text); }
-.chat-strip .warn { color: var(--warn); }
 
-/* The conversation: a readable column on its own scroll, the composer under it. */
+/* The conversation: a readable column on its own scroll, the translucent glass composer under it. */
 .chat-flow { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; width: 100%; padding: 0; scrollbar-gutter: stable; scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
-.chat-reading { width: min(760px, 100%); margin: 0 auto; padding: 10px 16px 8px; }
+.chat-reading { width: min(760px, 100%); margin: 0 auto; padding: 10px 16px 42px; }
 .chat-error { margin: 8px 8px 4px; color: var(--warn); font-size: 12.5px; }
-.chat-composer { flex: none; width: min(760px, 100%); margin: 0 auto; padding: 6px 16px calc(12px + var(--safe-bottom)); }
+.chat-composer { position: relative; flex: none; width: min(760px, 100%); margin: 0 auto; padding: 6px 16px calc(12px + var(--safe-bottom)); }
 .chat-composer .composer { width: auto; max-width: none; padding: 0; }
+.chat-composer .composer-box { border-color: transparent; background: color-mix(in srgb, var(--surface) 78%, transparent); box-shadow: var(--glass-shadow), var(--glass-halo); -webkit-backdrop-filter: var(--glass-filter); backdrop-filter: var(--glass-filter); }
 
 /* Nothing said yet: calm title and three quiet prompt pills. */
 .chat-fresh { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; width: min(560px, calc(100% - 40px)); margin: 0 auto; padding-bottom: 6vh; }
@@ -13641,21 +13632,21 @@ button.trace-step-head:hover { background: var(--hover); }
 .chat-starter { display: inline-flex; align-items: center; min-height: 34px; padding: 0 14px; border: 1px solid var(--border); border-radius: var(--radius-pill); background: transparent; color: var(--muted); font-size: 12.5px; text-align: left; }
 .chat-starter:hover { background: var(--hover); color: var(--text); }
 
-/* What cannot wait sits folded above the composer: one line with the count, one row per ask,
-   one row open at a time, so the talk keeps the screen. */
-.chat-earlier { display: block; margin: 10px auto 4px; padding: 4px 12px; border: 0; border-radius: var(--radius-pill); background: none; color: var(--muted); font-size: 12px; }
+/* Pending asks float as a quiet thumb chip at the bottom-right edge above the composer; tapping it
+   opens the frosted tray on demand, so the talk and composer never stack two full-width cards. */
+.chat-earlier, .chat-ask-orb { font-size: 12px; }
+.chat-earlier { display: block; margin: 10px auto 4px; padding: 4px 12px; border: 0; border-radius: var(--radius-pill); background: none; color: var(--muted); }
 .chat-earlier:hover { background: var(--hover); color: var(--text); }
-.chat-asks { flex: none; display: flex; flex-direction: column; gap: 6px; width: min(760px, 100%); margin: 0 auto; padding: 4px 16px 0; }
+.chat-asks { position: absolute; left: 16px; right: 16px; bottom: 100%; display: flex; flex-direction: column; gap: 6px; padding-bottom: 4px; pointer-events: none; }
 .chat-asks:empty { display: none; }
-.chat-tray { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow-card); overflow: hidden; }
-.chat-tray-head { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 38px; padding: 0 12px; border: 0; background: none; color: var(--text); font-size: 12.5px; text-align: left; }
-.chat-tray-head:hover { background: var(--hover); }
-.chat-tray-head svg { flex: none; color: var(--muted); }
-.chat-tray-count { flex: none; color: var(--warn); font-weight: 600; }
-.chat-tray-line { min-width: 0; overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; }
-.chat-tray-head .sp { flex: 1; }
+.chat-asks > * { pointer-events: auto; }
+.chat-ask-orb-row { display: flex; justify-content: flex-end; pointer-events: none; }
+.chat-ask-orb { pointer-events: auto; display: inline-flex; align-items: center; gap: 6px; min-height: 34px; padding: 0 12px 0 10px; border: 0; border-radius: var(--radius-pill); background: var(--glass-lighting), var(--glass-bg); box-shadow: var(--glass-pop-shadow); -webkit-backdrop-filter: var(--glass-filter); backdrop-filter: var(--glass-filter); color: var(--text); font-weight: 540; font-variant-numeric: tabular-nums; }
+.chat-ask-orb:hover { background: var(--surface); }
+.chat-ask-orb svg { flex: none; color: var(--muted); }
+.chat-ask-dot { width: 5px; height: 5px; border-radius: var(--radius-pill); background: var(--warn); flex: none; }
+.chat-tray { border: 1px solid var(--border); border-radius: var(--radius-lg); background: color-mix(in srgb, var(--surface) 92%, transparent); box-shadow: var(--shadow-pop); -webkit-backdrop-filter: var(--glass-filter); backdrop-filter: var(--glass-filter); overflow: hidden; }
 .chat-tray-list { max-height: min(52vh, 420px); margin: 0; padding: 0; overflow-y: auto; list-style: none; overscroll-behavior: contain; }
-.chat-tray-head + .chat-tray-list { border-top: 1px solid var(--border); }
 .chat-ask + .chat-ask { border-top: 1px solid var(--border); }
 .chat-ask-row { display: flex; align-items: baseline; gap: 10px; width: 100%; min-height: 38px; padding: 9px 12px; border: 0; background: none; color: var(--text); text-align: left; }
 .chat-ask-row:not(:disabled):hover { background: var(--hover); }
@@ -13750,17 +13741,15 @@ button.trace-step-head:hover { background: var(--hover); }
 body:has(.chat-home) .pet { visibility: hidden; }
 
 @media (max-width: 640px) {
-  .chat-top { gap: 4px; padding: 6px 8px 2px; }
+  .chat-top { gap: 6px; padding: 6px 8px 2px; }
   .chat-brand { font-size: 13.5px; }
-  .chat-entries { gap: 0; margin-left: auto; }
-  .chat-entry { gap: 0; min-width: 40px; min-height: 36px; padding: 0 8px; justify-content: center; }
+  .chat-entries { gap: 8px; margin-left: auto; }
+  .chat-entry { width: 40px; height: 40px; }
   /* Only the icon fits; the label stays, folded away, so the button keeps its name. */
   .chat-entry-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-  .chat-strip { justify-content: flex-start; }
-  .topbar-desk .chat-entry { min-width: 40px; min-height: 42px; }
-  .topbar-desk .chat-badge { position: absolute; top: 4px; right: 2px; min-width: 15px; height: 15px; padding: 0 3px; font-size: 9.5px; line-height: 15px; }
-  .chat-strip button, .chat-ask-acts .primary, .chat-ask-acts .ghost, .chat-drawer-tabs button, .chat-tray-head, .chat-ask-row, .plan-view .plan-ranges button { min-height: 40px; }
-  .chat-asks { padding: 4px 12px 0; }
+  .chat-ask-acts .primary, .chat-ask-acts .ghost, .chat-drawer-tabs button, .chat-ask-row, .plan-view .plan-ranges button { min-height: 40px; }
+  .chat-ask-orb { min-height: 36px; }
+  .chat-asks { left: 12px; right: 12px; }
   .chat-composer { padding-bottom: calc(8px + var(--safe-bottom)); }
   .chat-drawer.over { top: 0; left: 0; width: auto; padding-top: var(--safe-top); padding-bottom: var(--safe-bottom); border: 0; border-radius: 0; animation: chat-drawer-up .3s cubic-bezier(.2,.8,.2,1); }
 }

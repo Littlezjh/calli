@@ -6,8 +6,8 @@ import { replaceRun, startConflict, askingPins, askLine, needTarget } from '../p
 import { buildDesk, briefStatus, type BriefStatus } from '../desk';
 import { buildTimeline, type StoredEvent } from '../timeline';
 import { restoreVideos } from '../videos';
-import { useIsNarrow, useMinWidth } from '../hooks';
-import { formatTime, t } from '../i18n';
+import { useMinWidth } from '../hooks';
+import { t } from '../i18n';
 import { ActionSheet, type SheetTarget } from './ActionSheet';
 import { Composer } from './Composer';
 import { AgentPicker, ModelPicker, effortsForModel } from './Pickers';
@@ -16,7 +16,7 @@ import { ThreadPeek } from './ThreadPeek';
 import { RunControls, RunSummary, type ProactiveState } from './ProactiveRuns';
 import { DeskPage } from './DeskPage';
 import { PlanView } from './PlanView';
-import { IconAgents, IconChevron, IconClose, IconCompact, IconList, IconSettings, IconSideChat } from './icons';
+import { IconAgents, IconChevron, IconClose, IconDrawer, IconSettings } from './icons';
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -58,7 +58,6 @@ interface Props {
 /** The assistant's home: the conversation itself, with everything else one drawer away. */
 export function AssistantHome({ api, todos, loading, error, threads, threadsKnown, agents, personal, personalError, refreshKey, onReload, onPersonalChange, onPersonalRetry, onOpenThread, onOpenPlans, onConfigure, openFinds, onFindsOpened, onSpreadChange, revealTodoId, onRevealTodo, setupNeeded, onExplore, path, onPathChange, focusSignal, headerSlot }: Props) {
   const wide = useMinWidth(1200);
-  const narrow = useIsNarrow();
   const agentLabel = useCallback((id: string) => agents.find(agent => agent.id === id)?.label ?? id, [agents]);
 
   // ——— Her thread: this page is it, never a copy ———
@@ -306,9 +305,7 @@ export function AssistantHome({ api, todos, loading, error, threads, threadsKnow
   useEffect(() => { const timer = setInterval(() => setNow(new Date()), 60_000); return () => clearInterval(timer); }, []);
   const desk = useMemo(() => buildDesk(todos, now), [todos, now]);
   const sessions = useMemo(() => threads.filter(item => !item.archivedAt && item.id !== threadId), [threads, threadId]);
-  const runningCount = sessions.filter(item => item.status === 'running').length;
   const errorCount = sessions.filter(item => item.status === 'error').length;
-  // The brief's last word, quietly: while unknown the segment simply stays away, never a zero.
   const [brief, setBrief] = useState<BriefStatus | null>(null);
   useEffect(() => {
     if (api.demo) return;
@@ -319,17 +316,28 @@ export function AssistantHome({ api, todos, loading, error, threads, threadsKnow
         if (!settings.enabled) { if (live) setBrief(null); return; }
         const [morning, evening, push] = await Promise.all([api.lastPersonalBrief('morning'), api.lastPersonalBrief('evening'), api.pushStatus(true)]);
         if (live) setBrief(briefStatus({ morning, evening }, push.records, new Date()));
-      } catch { /* The strip says nothing rather than guess. */ }
+      } catch { /* Quiet when unknown. */ }
     })();
     return () => { live = false; };
   }, [api, refreshKey]);
 
-  // Her asks wait above the composer as one folded tray, as Codex and Claude Code keep one prompt at a
-  // time: a line with the count and the newest question, each ask one row, one row open at a time.
+  // Pending asks stay tucked into a quiet right-edge thumb chip above the composer until tapped,
+  // eliminating full-width double-card stacking over the input bar.
   const [trayOpen, setTrayOpen] = useState(false);
   const [openAsk, setOpenAsk] = useState<string | null>(null);
+  useEffect(() => { if (asks.length === 0) setTrayOpen(false); }, [asks.length]);
+  useEffect(() => {
+    if (!trayOpen) return;
+    const onEsc = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !event.isComposing && !event.defaultPrevented && !document.querySelector('.pop-panel, [role=menu], [role=dialog][aria-modal=true]')) {
+        event.preventDefault();
+        setTrayOpen(false);
+      }
+    };
+    document.addEventListener('keydown', onEsc);
+    return () => document.removeEventListener('keydown', onEsc);
+  }, [trayOpen]);
   const single = asks.length === 1;
-  const expanded = single || trayOpen;
   const shownAsk = single ? asks[0].id : openAsk && asks.some(run => run.id === openAsk) ? openAsk : null;
   const askDetail = (run: ProactiveRun) => <div className="chat-ask-detail" id={`ask-${run.id}`}>
     {run.kind === 'dispatch'
@@ -347,60 +355,61 @@ export function AssistantHome({ api, todos, loading, error, threads, threadsKnow
           <RunControls key={run.id} api={api} run={run} state={state} hideQuestion />
         </>}
   </div>;
-  // The tray already says these wait for an answer; a row names its kind only when it is something else.
   const askKind = (run: ProactiveRun) => run.kind === 'dispatch' ? t('desk.chatDispatch', run.agent ?? '') : run.reason === 'done' ? t('proactive.looksDone') : null;
-  // A「需要你」row names either a session or one of her asks (`run:<id>`): the ask lands in the tray
-  // above the composer, where its answer controls are — never as a thread id nothing answers.
   const openNeed = (id: string) => {
     const target = needTarget(id, runs);
     if (target.kind === 'thread') { void api.recordThreadOpen(target.id, 'assistant-link').catch(() => undefined); onOpenThread(target.id); return; }
     if (target.kind === 'ask') { openDrawer(null); setTrayOpen(true); setOpenAsk(target.run.id); return; }
-    loadRuns(); onReload(); // the ask is over and gone; the refreshed list drops the row
+    loadRuns(); onReload();
   };
-  const askCards = <div className="chat-asks" aria-label={t('desk.chatPins')}>
+  const askCards = (needsSetup || runsError || asks.length > 0) ? <div className="chat-asks" aria-label={t('desk.chatPins')}>
     {needsSetup && <p className="chat-ask-error" role="alert">{t('pet.needsSetup')} <button className="ghost" onClick={onConfigure}>{t('desk.configure')}</button></p>}
     {runsError && <p className="chat-ask-error" role="alert">{runsError} <button className="ghost" onClick={loadRuns}>{t('common.retry')}</button></p>}
-    {asks.length > 0 && <section className={`chat-tray${expanded ? ' open' : ''}`}>
-      {!single && <button className="chat-tray-head" aria-expanded={trayOpen} onClick={() => setTrayOpen(open => !open)}>
-        <span className="chat-tray-count">{t('desk.asksCount', asks.length)}</span>
-        {!trayOpen && <span className="chat-tray-line">{askLine(asks[0])}</span>}
-        <span className="sp"></span>
-        <IconChevron size={14} open={trayOpen} />
-      </button>}
-      {expanded && <ul className="chat-tray-list">
-        {asks.map(run => {
-          const open = shownAsk === run.id;
-          return <li key={run.id} className={`chat-ask${open ? ' open' : ''}${run.kind === 'dispatch' ? ' dispatch' : ''}`} data-run={run.id}>
-            <button className="chat-ask-row" aria-expanded={open} aria-controls={`ask-${run.id}`} disabled={single} onClick={() => setOpenAsk(open ? null : run.id)}>
-              {askKind(run) && <span className={`chat-ask-kind${run.kind === 'dispatch' ? '' : ' personal-warning'}`}>{run.kind === 'dispatch' && <IconAgents size={13} />}{askKind(run)}</span>}
-              <span className="chat-ask-line">{askLine(run)}</span>
-            </button>
-            {open && askDetail(run)}
-            {failures[run.id] && <p className="chat-ask-error" role="alert">{failures[run.id]}</p>}
-          </li>;
-        })}
-      </ul>}
-    </section>}
-  </div>;
+    {asks.length > 0 && <>
+      {trayOpen && <section className="chat-tray open">
+        <ul className="chat-tray-list">
+          {asks.map(run => {
+            const open = shownAsk === run.id;
+            return <li key={run.id} className={`chat-ask${open ? ' open' : ''}${run.kind === 'dispatch' ? ' dispatch' : ''}`} data-run={run.id}>
+              <button className="chat-ask-row" aria-expanded={open} aria-controls={`ask-${run.id}`} disabled={single} onClick={() => setOpenAsk(open ? null : run.id)}>
+                {askKind(run) && <span className={`chat-ask-kind${run.kind === 'dispatch' ? '' : ' personal-warning'}`}>{run.kind === 'dispatch' && <IconAgents size={13} />}{askKind(run)}</span>}
+                <span className="chat-ask-line">{askLine(run)}</span>
+              </button>
+              {open && askDetail(run)}
+              {failures[run.id] && <p className="chat-ask-error" role="alert">{failures[run.id]}</p>}
+            </li>;
+          })}
+        </ul>
+      </section>}
+      <div className="chat-ask-orb-row">
+        <button className="chat-ask-orb" aria-expanded={trayOpen} onClick={() => setTrayOpen(open => !open)}>
+          <span className="chat-ask-dot" aria-hidden="true" />
+          <span>{t('desk.asksOrb', asks.length)}</span>
+          <IconChevron size={13} open={trayOpen} />
+        </button>
+      </div>
+    </>}
+  </div> : null;
 
-  // Quiet bar (AgentDock / yetone restraint): show status pills only when non-zero or failed,
-  // and keep the drawer/settings entries as calm monochrome icons with accessible names & tooltips.
+  // Two independent quiet circles at top-right: workbench drawer + settings (no screaming numeric badges).
   const needsCount = loading || error ? null : desk.needsYou + asks.filter(run => !run.matterId).length;
-  const hasStrip = !narrow && ((needsCount ?? 0) > 0 || (threadsKnown && (runningCount > 0 || errorCount > 0)) || brief?.state === 'failed');
-  const header = <>
-    {hasStrip && <div className="chat-strip" role="status">
-      {(needsCount ?? 0) > 0 && <button onClick={() => openDrawer('matters')}><span className="warn">{t('desk.stripNeeds', needsCount)}</span></button>}
-      {threadsKnown && runningCount > 0 && <button onClick={() => openDrawer('sessions')}><span>{t('desk.stripRunning', runningCount)}</span></button>}
-      {threadsKnown && errorCount > 0 && <button onClick={() => openDrawer('sessions')}><span className="warn">{t('desk.stripError', errorCount)}</span></button>}
-      {brief?.state === 'failed' && <button onClick={onConfigure}><span className="warn">{t(`brief.kind.${brief.kind}`)} {t('brief.failed', formatTime(brief.at, { hour: '2-digit', minute: '2-digit' }))}</span></button>}
-    </div>}
-    <nav className={`chat-entries${headerSlot ? ' topbar-actions' : ''}`} aria-label={t('desk.entries')}>
-      <button className="chat-entry" onClick={() => openDrawer('matters')} title={t('desk.entryMatters')}><IconList size={16} /><span className="chat-entry-label">{t('desk.entryMatters')}</span>{narrow && needsCount ? <span className="chat-badge warn" aria-label={t('desk.stripNeeds', needsCount)}>{needsCount}</span> : null}</button>
-      <button className="chat-entry" onClick={() => openDrawer('sessions')} title={t('desk.entrySessions')}><IconSideChat size={16} /><span className="chat-entry-label">{t('desk.entrySessions')}</span>{narrow && errorCount > 0 && <span className="chat-badge danger" aria-label={t('desk.stripError', errorCount)}>{errorCount}</span>}</button>
-      <button className="chat-entry" onClick={() => openDrawer('desk')} title={t('desk.entryDesk')}><IconCompact size={16} /><span className="chat-entry-label">{t('desk.entryDesk')}</span></button>
-      <button className="chat-entry" onClick={onConfigure} title={t('desk.entrySettings')}><IconSettings size={16} /><span className="chat-entry-label">{t('desk.entrySettings')}</span></button>
-    </nav>
-  </>;
+  const lastDrawerTab = useRef<DrawerTab | null>(null);
+  if (drawer) lastDrawerTab.current = drawer;
+  const toggleWorkbench = () => {
+    if (drawer) { openDrawer(null); return; }
+    openDrawer(lastDrawerTab.current ?? ((needsCount ?? 0) > 0 ? 'matters' : 'desk'));
+  };
+  const header = <nav className="chat-entries" aria-label={t('desk.entries')}>
+    <button className="chat-entry" aria-expanded={drawer !== null} onClick={toggleWorkbench} title={t('desk.entryWorkbench')}>
+      <IconDrawer size={17} />
+      <span className="chat-entry-label">{t('desk.entryWorkbench')}</span>
+      {(threadsKnown && errorCount > 0) || brief?.state === 'failed' ? <span className="chat-entry-dot" aria-hidden="true" /> : null}
+    </button>
+    <button className="chat-entry" onClick={onConfigure} title={t('desk.entrySettings')}>
+      <IconSettings size={17} />
+      <span className="chat-entry-label">{t('desk.entrySettings')}</span>
+    </button>
+  </nav>;
 
   // Who she is and which model she thinks with, picked right here as a thread's composer does.
   // Switching updates immediately without locking the composer: handover context is prepared in the
@@ -452,6 +461,7 @@ export function AssistantHome({ api, todos, loading, error, threads, threadsKnow
     onEffort={effort => updateModel({ effort })} /> : null;
 
   const composer = <div className="chat-composer">
+    {askCards}
     <Composer attachBlocked={null} attachmentsBlocked={threadId ? undefined : t('desk.chatAttachFirst')} restore={restore} note={null}
       draftKey="assistant-home" running={running && !handingTo} placeholder={t('desk.chatPlaceholder')}
       onSend={async (text, images, _mentions, videos = []) => {
@@ -494,7 +504,6 @@ export function AssistantHome({ api, todos, loading, error, threads, threadsKnow
             {error_ && <p className="chat-error" role="alert">{error_}</p>}
           </div>
         </div>
-        {askCards}
         {composer}
       </> : <>
         <div className="chat-fresh">
@@ -507,7 +516,6 @@ export function AssistantHome({ api, todos, loading, error, threads, threadsKnow
           </div>
           {error_ && <p className="chat-error" role="alert">{error_}</p>}
         </div>
-        {askCards}
         {composer}
       </>}
 
