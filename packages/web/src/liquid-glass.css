@@ -10,6 +10,7 @@
 :root {
   --lg-fill: color-mix(in srgb, var(--surface) 60%, transparent);
   --lg-composer-fill: color-mix(in srgb, var(--surface) 74%, transparent);
+  --lg-pop-fill: color-mix(in srgb, var(--surface) 76%, transparent);
   --lg-sheen: linear-gradient(
     155deg,
     rgba(255, 255, 255, 0.68) 0%,
@@ -29,8 +30,14 @@
     inset 0 0 0 1px rgba(255, 255, 255, 0.58),
     0 12px 34px rgba(31, 30, 28, 0.10),
     0 2px 8px rgba(31, 30, 28, 0.05);
+  --lg-pop-rim:
+    inset 0 1.25px 0.5px rgba(255, 255, 255, 0.95),
+    inset 0 -0.5px 0.5px rgba(31, 30, 28, 0.07),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.56),
+    var(--shadow-pop);
   --lg-filter: blur(22px) saturate(210%) contrast(103%);
   --lg-composer-filter: blur(26px) saturate(200%) contrast(102%);
+  --lg-pop-filter: blur(28px) saturate(210%) contrast(102%);
   --lg-warn-fill: color-mix(in srgb, var(--warn) 12%, color-mix(in srgb, var(--surface) 64%, transparent));
   --lg-warn-rim:
     inset 0 1px 0.5px rgba(255, 255, 255, 0.75),
@@ -54,6 +61,7 @@
   :root:not([data-theme='light']) {
     --lg-fill: color-mix(in srgb, var(--surface) 48%, transparent);
     --lg-composer-fill: color-mix(in srgb, var(--surface) 62%, transparent);
+    --lg-pop-fill: color-mix(in srgb, var(--surface) 68%, transparent);
     --lg-sheen: linear-gradient(
       155deg,
       rgba(255, 255, 255, 0.17) 0%,
@@ -73,6 +81,11 @@
       inset 0 0 0 1px rgba(255, 255, 255, 0.13),
       0 14px 40px rgba(0, 0, 0, 0.52),
       0 2px 8px rgba(0, 0, 0, 0.34);
+    --lg-pop-rim:
+      inset 0 1.25px 0.5px rgba(255, 255, 255, 0.28),
+      inset 0 -0.5px 0.5px rgba(0, 0, 0, 0.50),
+      inset 0 0 0 1px rgba(255, 255, 255, 0.13),
+      var(--shadow-pop);
     --lg-warn-fill: color-mix(in srgb, var(--warn) 18%, color-mix(in srgb, var(--surface) 52%, transparent));
     --lg-warn-rim:
       inset 0 1px 0.5px rgba(255, 255, 255, 0.22),
@@ -97,6 +110,7 @@
 [data-theme='dark'] {
   --lg-fill: color-mix(in srgb, var(--surface) 48%, transparent);
   --lg-composer-fill: color-mix(in srgb, var(--surface) 62%, transparent);
+  --lg-pop-fill: color-mix(in srgb, var(--surface) 68%, transparent);
   --lg-sheen: linear-gradient(
     155deg,
     rgba(255, 255, 255, 0.17) 0%,
@@ -116,6 +130,11 @@
     inset 0 0 0 1px rgba(255, 255, 255, 0.13),
     0 14px 40px rgba(0, 0, 0, 0.52),
     0 2px 8px rgba(0, 0, 0, 0.34);
+  --lg-pop-rim:
+    inset 0 1.25px 0.5px rgba(255, 255, 255, 0.28),
+    inset 0 -0.5px 0.5px rgba(0, 0, 0, 0.50),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.13),
+    var(--shadow-pop);
   --lg-warn-fill: color-mix(in srgb, var(--warn) 18%, color-mix(in srgb, var(--surface) 52%, transparent));
   --lg-warn-rim:
     inset 0 1px 0.5px rgba(255, 255, 255, 0.22),
@@ -410,6 +429,183 @@
   display: none;
 }
 
+/* ---------- Batch 1: Unify every floating overlay, menu, dialog, and round control ---------- */
+
+/* Floating round buttons & orbs across sidebar, chat, and desk share the exact same glass material. */
+.round-btn,
+.jump-btn,
+.pet-summon,
+.chat-entry,
+.chat-ask-orb,
+.quick-switch-handle {
+  border: 0;
+  background: var(--lg-sheen), var(--lg-fill);
+  box-shadow: var(--lg-rim);
+  -webkit-backdrop-filter: var(--lg-filter);
+  backdrop-filter: var(--lg-filter);
+  transition: transform 0.16s cubic-bezier(0.22, 1.12, 0.36, 1), background 0.16s ease;
+}
+
+.round-btn:hover,
+.jump-btn:hover,
+button.pet-summon:hover,
+.chat-entry:hover,
+.chat-ask-orb:hover {
+  background: var(--lg-sheen), color-mix(in srgb, var(--surface) 84%, transparent);
+}
+
+/* Menus, popovers, slash/mention palettes, approval sheets, quick-switcher, and desk trays. */
+.menu-panel,
+.pop-panel.anchored-pop,
+.selection-menu,
+.command-menu,
+.coord-mention-menu,
+.action-sheet-card,
+.quick-switch-panel,
+.chat-tray {
+  border: 0;
+  border-radius: 20px;
+  background: var(--lg-sheen), var(--lg-pop-fill);
+  box-shadow: var(--lg-pop-rim);
+  -webkit-backdrop-filter: var(--lg-pop-filter);
+  backdrop-filter: var(--lg-pop-filter);
+}
+
+.menu-panel,
+.pop-panel.anchored-pop {
+  padding: 6px;
+}
+
+/* Concentric corner geometry (outer 20px - 6px padding = 14px inner row radius). */
+.menu-row,
+.pop-item,
+.pop-item.compact,
+.quick-switch-card {
+  border-radius: 14px;
+}
+
+.selection-menu:not(.commenting) {
+  border-radius: var(--radius-pill);
+  padding: 4px;
+}
+
+.selection-menu:not(.commenting) button {
+  border-radius: var(--radius-pill);
+}
+
+/* Desk / Assistant floating composer joins the same liquid-glass family. */
+.chat-composer .composer-box {
+  border: 1px solid transparent;
+  background: var(--lg-sheen), var(--lg-composer-fill);
+  box-shadow: var(--lg-composer-rim);
+  -webkit-backdrop-filter: var(--lg-composer-filter);
+  backdrop-filter: var(--lg-composer-filter);
+}
+
+/* Modal dialogs wear translucent Apple Liquid Glass instead of flat bordered web cards. */
+.dialog:not(.desk-spread) {
+  border: 0;
+  border-radius: 26px;
+  background: var(--lg-sheen), var(--lg-pop-fill);
+  box-shadow: var(--lg-pop-rim);
+  -webkit-backdrop-filter: var(--lg-pop-filter);
+  backdrop-filter: var(--lg-pop-filter);
+  animation: pop-in 0.2s cubic-bezier(0.22, 1.12, 0.36, 1);
+}
+
+/* Springy Apple pop-in & tactile press micro-feedback on floating liquid controls. */
+.menu-panel,
+.pop-panel.anchored-pop,
+.action-sheet-card {
+  animation-timing-function: cubic-bezier(0.22, 1.12, 0.36, 1);
+}
+
+.app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar .menu-btn,
+.app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar .topbar-lead .icon-btn,
+.app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar .topbar-actions .icon-btn,
+.app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar .topbar-chip.topbar-lead-link,
+.settings-topbar > .icon-btn {
+  transition: transform 0.16s cubic-bezier(0.22, 1.12, 0.36, 1), background 0.14s ease, color 0.14s ease;
+}
+
+.app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar .menu-btn:active,
+.app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar .topbar-lead .icon-btn:active,
+.app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar .topbar-actions .icon-btn:active,
+.app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar .topbar-chip.topbar-lead-link:active,
+.round-btn:active,
+.jump-btn:active,
+.pet-summon:active,
+.chat-entry:active,
+.chat-ask-orb:active,
+.settings-topbar > .icon-btn:active {
+  transform: scale(0.95);
+}
+
+/* ---------- Batch 2: Settings & mobile sub-pages match the Liquid Glass navigation family ---------- */
+
+.settings-topbar > .icon-btn {
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--lg-sheen), var(--lg-fill);
+  box-shadow: var(--lg-rim);
+  -webkit-backdrop-filter: var(--lg-filter);
+  backdrop-filter: var(--lg-filter);
+}
+
+.settings-actions {
+  border-top: 0;
+  background: var(--lg-sheen), var(--lg-pop-fill);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 -4px 20px rgba(31, 30, 28, 0.05);
+  -webkit-backdrop-filter: var(--lg-pop-filter);
+  backdrop-filter: var(--lg-pop-filter);
+}
+
+@media (max-width: 899.98px) {
+  /* Settings grouped cards & floating pill action bar on phones. */
+  .settings-nav-list {
+    border: 0;
+    border-radius: 20px;
+    box-shadow: var(--shadow-card);
+  }
+
+  .settings-actions {
+    margin: 0 14px calc(12px + var(--safe-bottom));
+    bottom: calc(12px + var(--safe-bottom));
+    padding: 8px 12px;
+    border-radius: var(--radius-pill);
+    box-shadow: var(--lg-composer-rim);
+  }
+
+  /* Mobile full-screen sub-pages (Files, Git, Trace): translucent glass topbar + floating round controls. */
+  .files-panel.phone .files-head,
+  .git-panel.phone .git-head,
+  .trace-side.phone .trace-phone-head {
+    border-bottom: 0;
+    background: color-mix(in srgb, var(--bg) 82%, transparent);
+    -webkit-backdrop-filter: var(--lg-filter);
+    backdrop-filter: var(--lg-filter);
+  }
+
+  .files-panel.phone .files-head .icon-btn,
+  .git-panel.phone .git-head .icon-btn,
+  .trace-side.phone .trace-phone-head .icon-btn {
+    width: 36px;
+    height: 36px;
+    border: 0;
+    border-radius: var(--radius-pill);
+    background: var(--lg-sheen), var(--lg-fill);
+    box-shadow: var(--lg-rim);
+    -webkit-backdrop-filter: var(--lg-filter);
+    backdrop-filter: var(--lg-filter);
+  }
+}
+
+@media (max-width: 640px) {
+  .explore-dialog {
+    border-radius: 26px 26px 0 0;
+  }
+}
+
 /* ---------- Accessibility & unsupported-browser fallbacks ---------- */
 
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
@@ -418,7 +614,12 @@
   .app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar .topbar-lead,
   .app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar:has(.topbar-actions) .topbar-title-pill,
   .app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar .topbar-chip,
-  .main:has(> .composer-slot) > .composer-slot .composer-box {
+  .main:has(> .composer-slot) > .composer-slot .composer-box,
+  .round-btn, .jump-btn, .pet-summon, .chat-entry, .chat-ask-orb, .quick-switch-handle,
+  .menu-panel, .pop-panel.anchored-pop, .selection-menu, .command-menu, .coord-mention-menu,
+  .action-sheet-card, .quick-switch-panel, .chat-tray, .chat-composer .composer-box,
+  .dialog:not(.desk-spread), .settings-topbar > .icon-btn, .settings-actions,
+  .files-panel.phone .files-head .icon-btn, .git-panel.phone .git-head .icon-btn, .trace-side.phone .trace-phone-head .icon-btn {
     background: var(--surface);
   }
   .app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar::before {
@@ -435,7 +636,12 @@
   .app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar .topbar-lead,
   .app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar:has(.topbar-actions) .topbar-title-pill,
   .app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar .topbar-chip,
-  .main:has(> .composer-slot) > .composer-slot .composer-box {
+  .main:has(> .composer-slot) > .composer-slot .composer-box,
+  .round-btn, .jump-btn, .pet-summon, .chat-entry, .chat-ask-orb, .quick-switch-handle,
+  .menu-panel, .pop-panel.anchored-pop, .selection-menu, .command-menu, .coord-mention-menu,
+  .action-sheet-card, .quick-switch-panel, .chat-tray, .chat-composer .composer-box,
+  .dialog:not(.desk-spread), .settings-topbar > .icon-btn, .settings-actions,
+  .files-panel.phone .files-head .icon-btn, .git-panel.phone .git-head .icon-btn, .trace-side.phone .trace-phone-head .icon-btn {
     background: var(--surface);
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
@@ -450,7 +656,19 @@
 
 @media (prefers-reduced-motion: reduce) {
   .main:has(> .composer-slot) > .composer-slot .composer-box,
-  .composer-sheen {
+  .composer-sheen,
+  .round-btn, .jump-btn, .pet-summon, .chat-entry, .chat-ask-orb, .quick-switch-handle,
+  .settings-topbar > .icon-btn,
+  .app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar .menu-btn,
+  .app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar .topbar-lead .icon-btn,
+  .app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar .topbar-actions .icon-btn,
+  .app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar .topbar-chip.topbar-lead-link {
     transition: none;
+  }
+  .dialog:not(.desk-spread),
+  .menu-panel,
+  .pop-panel.anchored-pop,
+  .action-sheet-card {
+    animation: none;
   }
 }
