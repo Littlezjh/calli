@@ -278,15 +278,20 @@ export function AssistantHome({ api, todos, loading, error, threads, threadsKnow
   };
   const state: ProactiveState = { runs, error: runsError, load: loadRuns, pending, failures, act };
 
-  const send = async (text: string, images: { data: string; mimeType: string }[], videos: string[]) => {
+  const switchPromiseRef = useRef<Promise<string | null> | null>(null);
+  const send = async (text: string, images: { data: string; mimeType: string }[], rawVideos: File[]) => {
     try {
-      if (!threadId) {
+      const targetId = switchPromiseRef.current ? await switchPromiseRef.current : threadId;
+      if (!targetId) {
         const started = await api.petSay(text);
         setThreadId(started.threadId);
         return;
       }
-      await api.startTurn(threadId, text, images, { queue: true, videos });
-      await api.thread(threadId).then(setThread).catch(() => undefined);
+      const videos = rawVideos.length
+        ? await Promise.all(rawVideos.map(async file => (await api.uploadVideo(targetId, file)).id))
+        : [];
+      await api.startTurn(targetId, text, images, { queue: true, videos });
+      await api.thread(targetId).then(setThread).catch(() => undefined);
     } catch (e) {
       if (e instanceof ApiError && e.status === 409 && e.message === 'personal agent is not configured') {
         setNeedsSetup(true);
@@ -397,24 +402,38 @@ export function AssistantHome({ api, todos, loading, error, threads, threadsKnow
     </nav>
   </>;
 
-  // Who she is and which model she thinks with, picked right here as a thread's composer does. A new
-  // agent takes over this conversation through the ordinary handover (a brief of what was said), so
-  // it goes on knowing the talk; her matters and notes live in the hub and never needed carrying.
-  const caps = thread ? agents.find(agent => agent.id === thread.agent)?.capabilities : undefined;
-  const [models, setModels] = useState<ModelOption[]>([]);
+  // Who she is and which model she thinks with, picked right here as a thread's composer does.
+  // Switching updates immediately without locking the composer: handover context is prepared in the
+  // background and full earlier history is pulled on demand, so typing can continue at once.
   const [handingTo, setHandingTo] = useState<string | null>(null);
+  const activeAgent = handingTo ?? thread?.agent ?? personal?.agent ?? null;
+  const caps = activeAgent ? agents.find(agent => agent.id === activeAgent)?.capabilities : undefined;
+  const [models, setModels] = useState<ModelOption[]>([]);
   const loadModels = useCallback((refresh = false) => {
-    if (!thread?.agent) return;
-    void api.models(thread.agent, refresh).then(setModels).catch(() => undefined);
-  }, [api, thread?.agent]);
+    if (!activeAgent) return;
+    void api.models(activeAgent, refresh).then(setModels).catch(() => undefined);
+  }, [api, activeAgent]);
   useEffect(() => { setModels([]); loadModels(); }, [loadModels]);
   const switchAgent = (agent: string) => {
-    if (!thread || agent === thread.agent || handingTo) return;
-    setHandingTo(agent); setError('');
-    void api.switchPersonalAgent(agent)
-      .then(result => { onPersonalChange(result.settings); if (result.threadId) setThreadId(result.threadId); })
-      .catch(e => setError(e instanceof ApiError && e.status === 409 ? t('desk.switchBusy') : message(e)))
-      .finally(() => setHandingTo(null));
+    const currentAgent = handingTo ?? thread?.agent ?? personal?.agent;
+    if (!currentAgent || agent === currentAgent) return;
+    setHandingTo(agent);
+    setError('');
+    const promise = api.switchPersonalAgent(agent)
+      .then(result => {
+        onPersonalChange(result.settings);
+        if (result.threadId) setThreadId(result.threadId);
+        return result.threadId;
+      })
+      .catch(e => {
+        setError(message(e));
+        throw e;
+      })
+      .finally(() => {
+        if (switchPromiseRef.current === promise) switchPromiseRef.current = null;
+        setHandingTo(current => current === agent ? null : current);
+      });
+    switchPromiseRef.current = promise;
   };
   const updateModel = (patch: { model?: string | null; effort?: string | null }) => {
     if (!thread) return;
@@ -424,20 +443,19 @@ export function AssistantHome({ api, todos, loading, error, threads, threadsKnow
     // Her setting follows the thread's model, or her next message would start a new conversation.
     if (patch.model !== undefined && personal) void api.savePersonalSettings({ ...personal, model: patch.model }).then(onPersonalChange).catch(report);
   };
-  const composerLeft = thread ? <span aria-busy={Boolean(handingTo)} className="chat-agent-pick">
-    <AgentPicker api={api} agents={agents} value={handingTo ?? thread.agent} onChange={switchAgent} />
+  const composerLeft = activeAgent ? <span className="chat-agent-pick">
+    <AgentPicker api={api} agents={agents} value={activeAgent} onChange={switchAgent} />
   </span> : null;
-  const composerRight = thread && caps ? <ModelPicker catalog={caps.modelCatalog} models={models} model={thread.model ?? null}
+  const composerRight = thread && !handingTo && caps ? <ModelPicker catalog={caps.modelCatalog} models={models} model={thread.model ?? null}
     efforts={caps.effortLevels ?? []} effort={thread.effort ?? null} onOpen={() => loadModels(true)}
     onModel={model => updateModel({ model, effort: thread.effort && effortsForModel(models, model, caps.effortLevels ?? []).includes(thread.effort) ? thread.effort : null })}
     onEffort={effort => updateModel({ effort })} /> : null;
 
   const composer = <div className="chat-composer">
     <Composer attachBlocked={null} attachmentsBlocked={threadId ? undefined : t('desk.chatAttachFirst')} restore={restore} note={null}
-      draftKey={threadId ? `assistant-home:${threadId}` : 'assistant-home:new'} running={running} placeholder={handingTo ? t('desk.handingOver', agentLabel(handingTo)) : t('desk.chatPlaceholder')} disabled={Boolean(handingTo)}
+      draftKey="assistant-home" running={running && !handingTo} placeholder={t('desk.chatPlaceholder')}
       onSend={async (text, images, _mentions, videos = []) => {
-        await send(text, images.map(({ data, mimeType }) => ({ data, mimeType })),
-          await Promise.all(videos.map(async video => (await api.uploadVideo(threadId!, video.file)).id)));
+        await send(text, images.map(({ data, mimeType }) => ({ data, mimeType })), videos.map(video => video.file));
       }}
       onStop={() => threadId && void api.cancel(threadId).then(result => { if (result.dropped.length) setRestore({ text: result.dropped.join('\n\n'), nonce: Date.now() }); refresh(); }).catch(report)} onError={setError}
       header={null} left={composerLeft} right={composerRight} commands={[]} actions={[]} hiddenCommands={[]} onAction={() => undefined}

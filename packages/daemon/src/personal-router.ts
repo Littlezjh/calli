@@ -49,6 +49,14 @@ export interface WorkerReport {
   notified?: boolean;
 }
 
+interface PendingHandover {
+  forThreadId: string;
+  sourceId: string;
+  fromAgent: string;
+  chainIds: string[];
+  digest: string | null;
+}
+
 interface RouterState {
   displayVersion?: number;
   threadId: string | null;
@@ -58,6 +66,8 @@ interface RouterState {
   lastReplyAt: string | null;
   /** Conversations replaced by a settings change, waiting to go quiet and be archived. */
   retiring?: string[];
+  /** Background handover context prepared for a newly switched assistant thread, delivered on its first turn. */
+  pendingHandover?: PendingHandover | null;
 }
 export interface RouterStatus {
   threadId: string | null;
@@ -105,13 +115,61 @@ export class PersonalRouter {
     }
     // Cache only an ended turn. Polling never walks a conversation or transfers tool payloads.
     manager.subscribe(event => {
-      if (this.state().retiring?.includes(event.threadId)) void this.archiveRetired();
+      const currentState = this.state();
+      if (currentState.retiring?.includes(event.threadId)) {
+        if (currentState.pendingHandover?.chainIds.includes(event.threadId) && (event.type === 'turn.done' || event.type === 'turn.error')) {
+          this.prepareHandoverDigest(currentState.pendingHandover.forThreadId);
+        }
+        void this.archiveRetired();
+      }
       if (!event.turnId || event.type !== 'turn.done' || event.data.stopReason === 'cancelled') return;
       const state = this.state();
       if (event.threadId !== state.threadId) return;
       const reply = routerReply(store.voiceAnswerEvents(event.threadId, event.turnId));
       if (reply) store.saveHubSetting(KEY, { ...state, lastReply: reply, lastReplyAt: event.ts });
     });
+  }
+
+  private collectSourceChain(sourceId: string): string[] {
+    const ids: string[] = [];
+    let cursor: string | null = sourceId;
+    while (cursor && ids.length < 6 && !ids.includes(cursor)) {
+      ids.push(cursor);
+      cursor = this.store.getThread(cursor)?.handover?.sourceId ?? null;
+    }
+    return ids;
+  }
+
+  private computeHandoverDigest(chainIds: string[]): string {
+    const turns = this.store.recentTurnTexts(chainIds, 8);
+    if (!turns.length) return '切换前暂无已完成的对话内容。';
+    return turns.map(item => {
+      const who = item.role === 'user' ? '用户' : '上一任助手';
+      const singleLine = item.text.replace(/\s+/g, ' ').trim();
+      return `- ${who}：${singleLine}`;
+    }).join('\n');
+  }
+
+  private prepareHandoverDigest(forThreadId: string): void {
+    const state = this.state();
+    if (!state.pendingHandover || state.pendingHandover.forThreadId !== forThreadId) return;
+    const digest = this.computeHandoverDigest(state.pendingHandover.chainIds);
+    this.store.saveHubSetting(KEY, {
+      ...state,
+      pendingHandover: { ...state.pendingHandover, digest },
+    });
+  }
+
+  private buildHandoverBlock(handover: PendingHandover): string {
+    const fromLabel = this.adapters.get(handover.fromAgent)?.label ?? handover.fromAgent;
+    const digest = handover.digest ?? this.computeHandoverDigest(handover.chainIds);
+    const older = handover.chainIds.slice(1);
+    const olderHint = older.length ? `（更早分段：${older.join(', ')}）` : '';
+    return [
+      `助手切换交接（刚从 ${fromLabel} 无缝切换为你，上一任会话 ID：${handover.sourceId}）：`,
+      digest,
+      `交接规则：无需运行 git status/diff 做仓库交接检查，不要向用户复述交接过程，直接回应当前消息；只有需要核对切换前更早的原话或细节时，才按需运行 calli threads show ${handover.sourceId} --turns 10${olderHint}。`,
+    ].join('\n');
   }
 
   /**
@@ -137,15 +195,35 @@ export class PersonalRouter {
   }
 
   /**
-   * Makes a thread that took over from hers (an agent switch's handover) her conversation. The old
-   * one is archived once it is quiet; the next human message reintroduces her instructions.
+   * Makes a thread that took over from hers (an agent switch) her conversation immediately.
+   * Handover context is prepared asynchronously in the background and delivered quietly on the
+   * next turn, while full earlier history stays readable on demand via `calli threads show`.
    */
-  adopt(threadId: string): void {
+  adopt(threadId: string, sourceId?: string | null): void {
     const state = this.state();
     if (state.threadId === threadId) return;
     const replaced = state.threadId && state.threadId !== threadId ? state.threadId : null;
-    this.store.saveHubSetting(KEY, { ...state, threadId, introduced: false, lastReply: null, lastReplyAt: null,
-      retiring: [...(state.retiring ?? []), ...(replaced ? [replaced] : [])] });
+    const handoverSource = sourceId === undefined ? replaced : sourceId;
+    const sourceThread = handoverSource ? this.store.getThread(handoverSource) : null;
+    const pendingHandover: PendingHandover | null = handoverSource && sourceThread
+      ? {
+          forThreadId: threadId,
+          sourceId: handoverSource,
+          fromAgent: sourceThread.agent,
+          chainIds: this.collectSourceChain(handoverSource),
+          digest: null,
+        }
+      : null;
+    this.store.saveHubSetting(KEY, {
+      ...state,
+      threadId,
+      introduced: false,
+      lastReply: null,
+      lastReplyAt: null,
+      pendingHandover,
+      retiring: [...(state.retiring ?? []), ...(replaced ? [replaced] : [])],
+    });
+    if (pendingHandover) queueMicrotask(() => this.prepareHandoverDigest(threadId));
     void this.archiveRetired();
   }
 
@@ -169,7 +247,29 @@ export class PersonalRouter {
 
   async context(threadId: string) {
     const now = new Date();
-    return personalContext(this.store, this.manager, threadId, now, await this.personal.plan.upcoming(now));
+    const base = personalContext(this.store, this.manager, threadId, now, await this.personal.plan.upcoming(now));
+    const state = this.state();
+    const handover = state.pendingHandover?.forThreadId === threadId ? state.pendingHandover : null;
+    const introduce = !state.introduced || state.instructionsVersion !== INSTRUCTIONS_VERSION;
+    const text = handover
+      ? base.text.replace(/<\/calli-context>\n\n$/, `${this.buildHandoverBlock(handover)}\n</calli-context>\n\n`)
+      : base.text;
+    const suffix = introduce ? `\n\n${INTRO}${this.personal.profileDigest()}` : '';
+    return {
+      text,
+      suffix,
+      commit: () => {
+        base.commit();
+        if (handover || introduce) {
+          const latest = this.state();
+          this.store.saveHubSetting(KEY, {
+            ...latest,
+            ...(introduce ? { introduced: true, instructionsVersion: INSTRUCTIONS_VERSION } : {}),
+            ...(handover && latest.pendingHandover?.forThreadId === threadId ? { pendingHandover: null } : {}),
+          });
+        }
+      },
+    };
   }
 
   say(input: Record<string, unknown>): Promise<{ threadId: string }> {
@@ -213,9 +313,21 @@ export class PersonalRouter {
     // archived, not deleted: it stays restorable, but no longer piles up in the sidebar.
     if (!thread || thread.archivedAt || thread.agent !== settings.agent || thread.cwd !== settings.directory || thread.model !== settings.model) {
       const replaced = thread && !thread.archivedAt ? thread.id : null;
+      const replacedThread = replaced ? this.store.getThread(replaced) : null;
+      const hasTurns = replaced ? this.store.listTurns(replaced).length > 0 : false;
       thread = await this.manager.createThread({ agent: settings.agent!, cwd: settings.directory, title: '助手',
         permissionMode: adapter.capabilities.defaultPermissionMode, ...(settings.model ? { model: settings.model } : {}) });
+      const pendingHandover: PendingHandover | null = replaced && replacedThread && hasTurns
+        ? {
+            forThreadId: thread.id,
+            sourceId: replaced,
+            fromAgent: replacedThread.agent,
+            chainIds: this.collectSourceChain(replaced),
+            digest: this.computeHandoverDigest(this.collectSourceChain(replaced)),
+          }
+        : null;
       state = { threadId: thread.id, introduced: false, lastReply: null, lastReplyAt: null, displayVersion: 1,
+        pendingHandover,
         retiring: [...(state.retiring ?? []), ...(replaced ? [replaced] : [])] };
       this.store.saveHubSetting(KEY, state);
       if (replaced) this.manager.notice(thread.id, '设置已变，这是新的对话；之前的内容在旧对话里');
@@ -225,11 +337,20 @@ export class PersonalRouter {
     // not a one-off. Empty until they actually write something in profile.md.
     const digest = this.personal.profileDigest();
     const introduce = !state.introduced || state.instructionsVersion !== INSTRUCTIONS_VERSION;
-    const body = introduce ? `${text}\n\n${INTRO}` : text;
+    const nonPersonHandover = part.kind !== 'person' && state.pendingHandover?.forThreadId === thread.id ? state.pendingHandover : null;
+    const prefix = nonPersonHandover ? `<calli-context>\n${this.buildHandoverBlock(nonPersonHandover)}\n</calli-context>\n\n` : '';
+    const body = `${prefix}${introduce ? `${text}\n\n${INTRO}` : text}`;
     // While the Router is busy, arrivals fold into one next turn: a burst costs one decision, not one each.
     await this.manager.startTurn(thread.id, { text: body + digest, ...batchShape([part]), fromUser: part.kind === 'person', ...(references !== undefined ? { references } : {}), coalesce: { body, context: digest, parts: [part] }, queue: true });
     // A fast adapter may already have answered; preserve its cached reply when recording the introduction.
-    if (introduce) this.store.saveHubSetting(KEY, { ...this.state(), introduced: true, instructionsVersion: INSTRUCTIONS_VERSION });
+    if (introduce || nonPersonHandover) {
+      const latest = this.state();
+      this.store.saveHubSetting(KEY, {
+        ...latest,
+        ...(introduce ? { introduced: true, instructionsVersion: INSTRUCTIONS_VERSION } : {}),
+        ...(nonPersonHandover && latest.pendingHandover?.forThreadId === thread.id ? { pendingHandover: null } : {}),
+      });
+    }
     return { threadId: thread.id };
   }
 }

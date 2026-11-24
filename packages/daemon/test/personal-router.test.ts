@@ -742,7 +742,7 @@ test('threads say rechecks the same human turn after waiting for target setup', 
   } finally { await h.close(); }
 });
 
-test('switching her agent hands the conversation over in place and keeps it hers', async () => {
+test('switching her agent is instant, starts no eager handover turn, and delivers background digest + on-demand history on the next message', async () => {
   const h = await setup(); try {
     h.adapters.set('pi2', new PiRpcAdapter([process.execPath, resolve('test/fixtures/fake-pi.mjs')]));
     // Without a conversation only the setting changes.
@@ -758,25 +758,33 @@ test('switching her agent hands the conversation over in place and keeps it hers
     assert.notEqual(switched.threadId, first.threadId, 'the new agent goes on in a thread of its own');
     const successor = h.store.getThread(switched.threadId)!;
     assert.equal(successor.agent, 'pi2');
+    assert.equal(successor.title, '助手');
+    assert.equal(successor.handover?.sourceId, first.threadId, 'handover link keeps the earlier talk one tap away');
+    assert.equal(h.store.listEventsOfType(switched.threadId, 'turn.started').length, 0, 'switching starts no eager handover turn');
     assert.equal(switched.settings.agent, 'pi2'); assert.equal(switched.settings.model, successor.model ?? null);
-    assert.equal(h.router.status().threadId, switched.threadId, 'she adopts the successor');
-    const brief = String(h.store.listEventsOfType(switched.threadId, 'turn.started')[0].data.text);
-    assert.match(brief, /接手/, 'the successor starts from the handover brief');
-    await wait(() => h.router.status().status === 'idle');
+    assert.equal(h.router.status().threadId, switched.threadId, 'she adopts the successor immediately');
+    assert.equal(h.router.status().status, 'idle');
     await wait(() => Boolean(h.store.getThread(first.threadId)!.archivedAt));
-    // The next message stays in the successor instead of starting yet another conversation.
-    await wait(() => !h.manager.threadView(switched.threadId).runningSince);
-    const next = await h.say('接着说');
-    assert.equal(next.threadId, switched.threadId);
-    await wait(() => h.store.listEventsOfType(switched.threadId, 'turn.started').length === 2 && !h.manager.threadView(switched.threadId).runningSince);
-    assert.match(String(h.store.listEventsOfType(switched.threadId, 'turn.started')[1].data.text), /<calli-personal-router>/, 'her instructions come back with the next message');
-    // A conversation mid-answer is never cut off. (The fixture's turns end too fast to catch, so the
-    // thread reports itself running.)
+    // Archived earlier segment remains readable on demand via `calli threads show`.
+    const onDemand = h.manager.personal.summary.show({ id: first.threadId, turns: 5 }) as { turns: unknown[] };
+    assert.equal(onDemand.turns.length, 1);
+    // Sending directly to the adopted thread (as AssistantPanel does via startTurn) injects both her
+    // instructions and the background handover digest with the on-demand pull command.
+    await h.manager.startTurn(switched.threadId, { text: '接着说', fromUser: true, queue: true });
+    await wait(() => h.store.listEventsOfType(switched.threadId, 'turn.started').length === 1 && !h.manager.threadView(switched.threadId).runningSince);
+    const firstTurnPrompt = String(h.store.listEventsOfType(switched.threadId, 'turn.started')[0].data.text);
+    assert.match(firstTurnPrompt, /<calli-personal-router>/, 'her instructions ride on the first turn even via direct startTurn');
+    assert.match(firstTurnPrompt, /今天要开周会/, 'background digest carries recent turns from the previous agent');
+    assert.match(firstTurnPrompt, new RegExp(`calli threads show ${first.threadId}`), 'on-demand history pull command is provided');
+    // Switching while the previous agent is mid-turn also succeeds immediately without blocking on 409.
     const view = h.manager.threadView.bind(h.manager);
     h.manager.threadView = (id: string) => id === switched.threadId ? { ...view(id), runningSince: new Date().toISOString() } : view(id);
-    assert.equal((await h.request('/api/personal/agent', { agent:'pi' })).status, 409);
+    const whileBusy = await h.request('/api/personal/agent', { agent:'pi' });
     h.manager.threadView = view;
-    assert.equal(h.router.status().threadId, switched.threadId, 'a refused switch leaves her conversation alone');
-    assert.equal(h.manager.personal.settings().agent, 'pi2');
+    assert.equal(whileBusy.status, 200);
+    const backToPi = await whileBusy.json() as { threadId: string; settings: { agent: string } };
+    assert.notEqual(backToPi.threadId, switched.threadId);
+    assert.equal(backToPi.settings.agent, 'pi');
+    assert.equal(h.store.listEventsOfType(backToPi.threadId, 'turn.started').length, 0);
   } finally { await h.close(); }
 });

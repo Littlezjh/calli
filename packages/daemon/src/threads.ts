@@ -3144,7 +3144,8 @@ export class ThreadManager {
     const personalHuman = this.personal.router.status().threadId === threadId && input.fromUser === true
       && !delivery && !input.scheduled && !input.review && !input.proactive && !input.autoContinuation;
     const context = personalHuman && !slashCommand ? await this.personal.router.context(threadId) : null;
-    const promptText = (context?.text ?? '') + text + this.attachments.videoNote(threadId, storedVideos);
+    const suffix = context?.suffix && !text.includes('<calli-personal-router>') ? context.suffix : '';
+    const promptText = (context?.text ?? '') + text + suffix + this.attachments.videoNote(threadId, storedVideos);
     // Internal callers may attach protocol context. Only the person's words (or a channel
     // summary) belong in the conversation, its queue, and later replay/continuation views.
     const displayText = referenceDisplay(delivery?.displayText ?? input.displayText ?? reference.displayText.split('\n\n[指定协作对象]')[0], reference.references);

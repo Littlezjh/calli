@@ -141,29 +141,50 @@ export class PersonalService {
       defaultDirectory, defaultDirectoryDisplay: display(defaultDirectory), routerThreadId: this.router.status().threadId };
   }
   /**
-   * Switches her agent from the conversation itself. With a conversation under way the new agent takes
-   * it over through the ordinary handover (a summary, or the session itself for another account of the
-   * same agent), so it goes on knowing what was said; without one only the setting changes.
+   * Switches her agent instantly without blocking on an LLM summary or spawning an eager handover turn.
+   * The successor links to the replaced conversation so `换 agent 之前` stays one tap away, a compact
+   * digest is prepared asynchronously in the background, and the new agent can pull full earlier turns
+   * on demand via `calli threads show <sourceId>`.
    */
   async switchAgent(input: Record<string, unknown>): Promise<{ threadId: string | null; settings: PersonalSettings }> {
     const agent = input.agent, model = input.model ?? undefined;
     if (typeof agent !== 'string' || !this.adapters.has(agent)) throw new HttpError(400, 'unknown personal agent');
     if (model !== undefined && (typeof model !== 'string' || !model || model.length > 200)) throw new HttpError(400, 'model must be a string');
-    const current = this.router.status().threadId;
-    const thread = current ? this.store.getThread(current) : null;
-    // A handover branches off a busy thread rather than waiting, so refuse first: a switch never
-    // leaves her answering in one conversation while the new agent starts another.
-    const busy = () => { const view = thread && this.manager.threadView(thread.id); return Boolean(view && (view.runningSince || view.queued.length)); };
-    if (thread && thread.agent !== agent && busy()) throw new HttpError(409, 'the assistant is answering; switch after this turn');
+    const adapter = this.adapters.get(agent)!;
     const info = (await this.manager.listAgents()).find(item => item.id === agent);
     if (!info?.available) throw new HttpError(409, 'agent is not available');
+    const current = this.router.status().threadId;
+    const thread = current ? this.store.getThread(current) : null;
     if (thread && thread.agent !== agent) {
-      if (busy()) throw new HttpError(409, 'the assistant is answering; switch after this turn');
-      const successor = await this.manager.takeOver(thread.id, agent, model, undefined);
-      this.router.adopt(successor.id);
-      // The setting matches the thread exactly, or the Router would replace it on the next message.
-      this.putSettings({ agent, model: successor.model ?? null });
-      return { threadId: successor.id, settings: this.settings() };
+      const view = this.manager.threadView(thread.id);
+      if (view.runningSince || view.queued.length) {
+        void this.manager.cancelTurn(thread.id).catch(() => undefined);
+      }
+      const hasTurns = this.store.listTurns(thread.id).length > 0;
+      let successorId: string;
+      let successorModel: string | null;
+      if (hasTurns) {
+        const successor = await this.manager.createHandoverThread(thread.id, agent, model, 'continue', undefined, false, false);
+        this.store.updateThread(successor.id, {
+          title: '助手',
+          ...(adapter.capabilities.defaultPermissionMode ? { permissionMode: adapter.capabilities.defaultPermissionMode } : {}),
+        });
+        successorId = successor.id;
+        successorModel = successor.model ?? null;
+      } else {
+        const fresh = await this.manager.createThread({
+          agent,
+          cwd: thread.cwd,
+          title: '助手',
+          permissionMode: adapter.capabilities.defaultPermissionMode,
+          ...(model ? { model } : {}),
+        });
+        successorId = fresh.id;
+        successorModel = fresh.model ?? null;
+      }
+      this.router.adopt(successorId, hasTurns ? thread.id : null);
+      this.putSettings({ agent, model: successorModel });
+      return { threadId: successorId, settings: this.settings() };
     }
     this.putSettings({ agent, model: model ?? null });
     return { threadId: current, settings: this.settings() };

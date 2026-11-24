@@ -545,3 +545,41 @@ test('the shared preview frame keeps the original subagent reader working', asyn
     }
   } finally { await browser.close(); await daemon.stop(); }
 });
+
+test('switching the assistant agent updates immediately without locking the composer or spawning an eager handover turn', async () => {
+  const daemon = await startDaemon();
+  const browser = await launchBrowser();
+  try {
+    await configurePersonal(daemon, '整理今天的三项重点');
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    await openUi(page, daemon);
+    await page.evaluate(() => { location.hash = '#/desk'; });
+    await page.locator('.chat-composer textarea').waitFor();
+
+    let releaseSwitch;
+    await page.route('**/api/personal/agent', async route => {
+      await new Promise(resolve => { releaseSwitch = resolve; });
+      await route.continue();
+    });
+
+    // Type half a draft before switching: switching must never wipe the draft or disable the box.
+    const textarea = page.locator('.chat-composer textarea');
+    await textarea.fill('切换后立刻接着聊');
+    await page.locator('.chat-agent-pick button').click();
+    await page.locator('.pop-panel').getByRole('menuitemradio', { name: /Antigravity|agy/i }).click();
+
+    await waitFor(() => releaseSwitch, 'switch request started');
+    assert.equal(await textarea.isDisabled(), false, 'composer stays enabled while switch runs in the background');
+    assert.equal(await textarea.inputValue(), '切换后立刻接着聊', 'unsent draft survives agent switch');
+    assert.match(await page.locator('.chat-agent-pick button').textContent(), /Antigravity|agy/i, 'picker updates optimistically at once');
+
+    releaseSwitch();
+    await page.locator('.chat-earlier').waitFor();
+    assert.equal(await page.locator('.chat-flow .row').count(), 0, 'clean new segment starts with zero eager handover turns');
+    assert.equal(await textarea.inputValue(), '切换后立刻接着聊', 'draft stays intact after successor thread mounts');
+
+    await page.locator('.chat-composer').getByRole('button', { name: '发送', exact: true }).click();
+    await page.locator('.chat-flow .row.user', { hasText: '切换后立刻接着聊' }).waitFor();
+    await page.locator('.chat-flow .row.assistant').first().waitFor({ timeout: 15_000 });
+  } finally { await browser.close(); await daemon.stop(); }
+});

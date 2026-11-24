@@ -1573,6 +1573,17 @@ export class Store {
     return { firstAsk: first?.text ?? null, lastAsk: last?.text ?? null, lastAnswer: answer?.text ?? null, lastAt };
   }
 
+  /** Recent chronological user/assistant turn snippets across a chain of threads, for instant handover digests. */
+  recentTurnTexts(threadIds: string[], limit = 8): Array<{ threadId: string; role: 'user' | 'assistant'; text: string; ts: string }> {
+    const ids = [...new Set(threadIds.filter(Boolean))];
+    if (!ids.length) return [];
+    const placeholders = ids.map(() => '?').join(', ');
+    const rows = this.db.prepare(
+      `SELECT thread_id, role, substr(text, 1, 280) AS text, ts FROM turn_text WHERE thread_id IN (${placeholders}) AND role IN ('user', 'assistant') ORDER BY ts DESC, rowid DESC LIMIT ?`,
+    ).all(...ids, limit) as Array<{ thread_id: string; role: 'user' | 'assistant'; text: string; ts: string }>;
+    return rows.reverse().map(r => ({ threadId: r.thread_id, role: r.role, text: r.text, ts: r.ts }));
+  }
+
   /** Lightweight full-corpus text search across turn_text, returning matching thread IDs with hit counts. */
   matchingTurnTextThreads(terms: string[]): Map<string, number> {
     const counts = new Map<string, number>();
