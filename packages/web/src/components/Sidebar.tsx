@@ -230,6 +230,10 @@ export function Sidebar({
   const [collapsed, toggle] = useStoredSet(`${storagePrefix}.collapsed`);
   // The other way to read the list: by what is going on, not by where a thread is filed. Like Codex's activity view.
   const [byActivity, setByActivity] = useStoredFlag(`${storagePrefix}.activity`);
+  // Finished work folds away closed on arrival — it is storage, not news — the count still saying
+  // how much is in there, and the choice sticking per device. Like T3's Settled shelf.
+  const [doneOpen, setDoneOpen] = useStoredFlag(`${storagePrefix}.doneOpen`);
+  const doneFoldOpen = () => Boolean(search.trim()) || doneOpen;
   // This machine's sessions that are not threads yet mix into the list by their time; every
   // machine's own list (the merged view) shows threads only.
   const withExternal = merged ? threads : withExternalSessions(threads, external);
@@ -577,6 +581,24 @@ export function Sidebar({
     </section>
   );
 
+  // The one bottom fold for finished threads, the same in every sidebar view. While folded, the
+  // thread on screen stays listed — the fold must not hide where you are.
+  const doneShown = (list: Thread[]) => (doneFoldOpen() ? list : list.filter((t) => t.id === selectedId));
+  const doneFold = (count: number, rows: React.ReactNode) =>
+    count > 0 && (
+      <section className="thread-group">
+        <div className="group-head-row">
+          <button className="group-head" aria-expanded={doneFoldOpen()} onClick={() => setDoneOpen(!doneOpen)}>
+            <span className="group-chevron"><IconChevron size={13} open={doneFoldOpen()} /></span>
+            <IconCheck size={13} />
+            <span className="group-name">{t('sidebar.done')}</span>
+            <span className="group-count">{count}</span>
+          </button>
+        </div>
+        {rows}
+      </section>
+    );
+
   const empty = (
     <p className="group-empty top" role={loading ? 'status' : undefined}>
       {loading ? t('sidebar.loading') : search.trim() ? t('sidebar.noMatch') : compact ? t('sidebar.emptyPhone') : t('sidebar.empty')}
@@ -618,17 +640,11 @@ export function Sidebar({
           ))}
         </section>
       ))}
-      {mergedModel.done.length > 0 && (
-        <section className="thread-group">
-          <div className="group-head-row">
-            <button className="group-head" aria-expanded={isOpen('done')} onClick={() => toggle('done')}>
-              <span className="group-chevron"><IconChevron size={13} open={isOpen('done')} /></span>
-              <IconCheck size={13} />
-              <span className="group-name">{t('sidebar.done')}</span>
-              <span className="group-count">{mergedModel.done.length}</span>
-            </button>
-          </div>
-          {isOpen('done') && mergedModel.done.map(({ thread, hostId: on }) => (
+      {doneFold(
+        mergedModel.done.length,
+        mergedModel.done
+          .filter(({ thread }) => doneFoldOpen() || thread.id === selectedId)
+          .map(({ thread, hostId: on }) => (
             <Fragment key={`${on ?? ''}:${thread.id}`}>
               {entry(thread, {
                 label: on === null ? undefined : labelOf.get(on),
@@ -637,8 +653,7 @@ export function Sidebar({
                 agents: on === hostId ? undefined : agentsOf.get(on) ?? null,
               })}
             </Fragment>
-          ))}
-        </section>
+          )),
       )}
     </nav>
   ) : activity ? (
@@ -650,19 +665,7 @@ export function Sidebar({
           {groupedRows(g.threads, true)}
         </section>
       ))}
-      {activity.done.length > 0 && (
-        <section className="thread-group">
-          <div className="group-head-row">
-            <button className="group-head" aria-expanded={isOpen('done')} onClick={() => toggle('done')}>
-              <span className="group-chevron"><IconChevron size={13} open={isOpen('done')} /></span>
-              <IconCheck size={13} />
-              <span className="group-name">{t('sidebar.done')}</span>
-              <span className="group-count">{activity.done.length}</span>
-            </button>
-          </div>
-          {isOpen('done') && groupedRows(activity.done, true)}
-        </section>
-      )}
+      {doneFold(activity.done.length, groupedRows(doneShown(activity.done), true))}
     </nav>
   ) : (
     <nav className="thread-groups" aria-label={t('sidebar.threads')}>
@@ -727,16 +730,7 @@ export function Sidebar({
           model.scratch,
           <GroupAdd label={t('sidebar.newScratch')} onClick={() => onNewIn({ scratch: true })} />,
         )}
-      {model.done.length > 0 &&
-        group(
-          'done',
-          <>
-            <IconCheck size={13} />
-            <span className="group-name">{t('sidebar.done')}</span>
-          </>,
-          model.done,
-          <span className="group-count">{model.done.length}</span>,
-        )}
+      {doneFold(model.done.length, groupedRows(doneShown(model.done)))}
     </nav>
   );
 
