@@ -290,7 +290,7 @@ const tree = {
       { name: 'codex', files: [['README.md','12 KB']] },
       { name: 'pi', files: [['pi.py','45 KB']] },
     ]},
-    { name: 'workdir', dirs: [ { name: 'alliance_ai', dirs: [{ name: 'cmd' }, { name: 'conf' }, { name: 'docs' }] } ] },
+    { name: 'workdir', dirs: [ { name: 'sample_service', dirs: [{ name: 'cmd' }, { name: 'conf' }, { name: 'docs' }] } ] },
     { name: '.pi', files: [['auth.json','1 KB']], dirs: [{ name: 'agent', dirs: [{ name: 'sessions' }] }] },
     { name: '.claude', files: [['settings.json','3 KB']] },
   ],
@@ -381,7 +381,7 @@ function renderB() {
 }
 
 /* ---------- C ---------- */
-let cPath = HOME_DIR + '/workdir/alliance_ai', cSel = null;
+let cPath = HOME_DIR + '/workdir/sample_service', cSel = null;
 function renderC() {
   const node = find(cPath);
   const rail = (label, items) => `<div class="rail-label">${label}</div>` + items.map((i) => `<div class="rail-item${i.on ? ' on' : ''}" data-go="${i.path}">${i.icon}${i.name}</div>`).join('');
@@ -392,7 +392,7 @@ function renderC() {
     <div class="vC-body">
       <div class="vC-rail">
         ${rail('位置', [{ name: '家目录', path: HOME_DIR, icon: HOMEI(13) }, { name: '可用目录', path: HOME_DIR + '/code', icon: FOLDERS2(13), on: true }])}
-        ${rail('项目', [ { name: 'remote-agent-hub', path: HOME_DIR + '/code/remote-agent-hub', icon: FOLDER(13) }, { name: 'alliance_ai', path: HOME_DIR + '/workdir/alliance_ai', icon: FOLDER(13) }, { name: 'magpie', path: HOME_DIR + '/code/magpie', icon: FOLDER(13) } ])}
+        ${rail('项目', [ { name: 'remote-agent-hub', path: HOME_DIR + '/code/remote-agent-hub', icon: FOLDER(13) }, { name: 'sample_service', path: HOME_DIR + '/workdir/sample_service', icon: FOLDER(13) }, { name: 'magpie', path: HOME_DIR + '/code/magpie', icon: FOLDER(13) } ])}
       </div>
       <div class="vC-main">
         <div class="vC-crumbs">${crumbsHTML(cPath, true)}</div>

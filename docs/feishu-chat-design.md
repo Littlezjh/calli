@@ -17,9 +17,9 @@
 
 参考 BotMux 的[零注入说明](https://github.com/deepcoldy/botmux/blob/master/docs/zero-prompt-injection.md)、按话题隔离会话和 [`registerApp` 设备授权流程](https://github.com/deepcoldy/botmux/blob/master/src/setup/register-app.ts)；传输直接使用 [Lark CLI](https://github.com/larksuite/cli)。Calli 已经管理多个 agent 和线程，再接 BotMux 会多出一套会话归属、进程生命周期与权限入口，所以借鉴交互和隔离原则，不把它作为运行依赖。
 
-mew 是内部闭源 CLI（npm 包 `@byted-codebase/mew`）。以下依据本机 `mew lark --help` 及子命令帮助，未读其源码；只比较可见命令能力，不据此推断内部调度、存储或恢复保证。
+另一款飞书桥接 CLI（下称桥接 CLI）仅依据其 `lark --help` 及子命令帮助比较可见命令能力，未读其源码，不据此推断内部调度、存储或恢复保证。
 
-| 关注点 | mew 命令帮助可见能力 | Calli 首版取舍 |
+| 关注点 | 桥接 CLI 命令帮助可见能力 | Calli 首版取舍 |
 |---|---|---|
 | 何时触发、交给谁 | `bind-chat` 的 `trigger-policy` 有 `mention / all / topic_starter_and_mentions`，并指定 `default-agent-id` | 只接受主人直接私聊，使用设置里的 agent；不根据关键词或模型判断发起工作 |
 | 回复方式 | `bind-chat` 的 `reply-policy` 有 `thread / direct` | 回答回复来信；用户回复已关联消息才续 Calli 线程 |
@@ -28,7 +28,7 @@ mew 是内部闭源 CLI（npm 包 `@byted-codebase/mew`）。以下依据本机 
 | 按需上下文 | `read-context` 可按事件、轮次或快照查当前及历史上下文 | 借鉴 agent 自己按需读取的入口思路，不在飞书用户消息中塞上下文；首版不接历史读取 |
 | 连接方式与诊断 | `update-workspace-bot` 的 `transport-mode` 有 `callback / long_connection / auto`，另有 `test-connection` | 仅用 Lark CLI 长连接，保留连接状态与测试发送 |
 
-取舍是把触发、收件记录、发件记录和重试分开。mew 帮助未说明的持久化与恢复细节不作结论；Calli 首版明确只有入站去重与消息映射持久化，待回复、重试和最近记录在内存中。
+取舍是把触发、收件记录、发件记录和重试分开。桥接 CLI 帮助未说明的持久化与恢复细节不作结论；Calli 首版明确只有入站去重与消息映射持久化，待回复、重试和最近记录在内存中。
 
 ## 一条消息的流转
 

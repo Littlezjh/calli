@@ -8,7 +8,7 @@ import { threadLinkIndex, threadMentions, trimAutolinkJunk } from '../src/markdo
 import { linkTarget } from '../src/paths.js';
 
 const THREADS = [
-  { id: '37958237-dd35-413c-8981-7d0b9ce55234', title: '🧪调取Bjev resolver' },
+  { id: '37958237-dd35-413c-8981-7d0b9ce55234', title: '🧪调取GraphQL resolver' },
   { id: '0de90e6b-578f-4ca8-b4fb-34bd0ca29051', title: '🗂️盘点Calli会话未完事项与待办' },
   { id: '11111111-2222-3333-4444-555555555555', title: '重复标题' },
   { id: '66666666-7777-3333-4444-555555555555', title: '重复标题' },
@@ -34,15 +34,15 @@ test('a thread address parses whole ids, short prefixes and case, and refuses em
 
 test('「标题」（id 前缀） becomes a jump link when both name the same thread', () => {
   assert.equal(
-    render('是会话「🧪调取Bjev resolver」（37958237）。'),
-    '<p>是会话<a href="thread://37958237-dd35-413c-8981-7d0b9ce55234" title="🧪调取Bjev resolver">「🧪调取Bjev resolver」（37958237）</a>。</p>',
+    render('是会话「🧪调取GraphQL resolver」（37958237）。'),
+    '<p>是会话<a href="thread://37958237-dd35-413c-8981-7d0b9ce55234" title="🧪调取GraphQL resolver">「🧪调取GraphQL resolver」（37958237）</a>。</p>',
   );
 });
 
 test('half-width parentheses around the id prefix link as well', () => {
   assert.equal(
-    render('见「🧪调取Bjev resolver」(37958237) 的分支'),
-    '<p>见<a href="thread://37958237-dd35-413c-8981-7d0b9ce55234" title="🧪调取Bjev resolver">「🧪调取Bjev resolver」(37958237)</a> 的分支</p>',
+    render('见「🧪调取GraphQL resolver」(37958237) 的分支'),
+    '<p>见<a href="thread://37958237-dd35-413c-8981-7d0b9ce55234" title="🧪调取GraphQL resolver">「🧪调取GraphQL resolver」(37958237)</a> 的分支</p>',
   );
 });
 
@@ -55,7 +55,7 @@ test('a whole thread id in prose becomes a jump link', () => {
 
 test('a title alone or an id that disagrees with it stays plain text', () => {
   // The id prefix belongs to another thread: a document or PR quoted the same way is not rewired.
-  assert.equal(render('看文档「🧪调取Bjev resolver」（12345678）'), '<p>看文档「🧪调取Bjev resolver」（12345678）</p>');
+  assert.equal(render('看文档「🧪调取GraphQL resolver」（12345678）'), '<p>看文档「🧪调取GraphQL resolver」（12345678）</p>');
   // No thread carries this title.
   assert.equal(render('是会话「不存在的标题」（37958237）'), '<p>是会话「不存在的标题」（37958237）</p>');
   // Too short to be a thread prefix at all.
@@ -81,12 +81,12 @@ test('a link of its own keeps its label and destination', () => {
 
 test('two mentions in one message each become their own link', () => {
   assert.equal(
-    render('先看「🧪调取Bjev resolver」（37958237），再看 0de90e6b-578f-4ca8-b4fb-34bd0ca29051。'),
-    '<p>先看<a href="thread://37958237-dd35-413c-8981-7d0b9ce55234" title="🧪调取Bjev resolver">「🧪调取Bjev resolver」（37958237）</a>，'
+    render('先看「🧪调取GraphQL resolver」（37958237），再看 0de90e6b-578f-4ca8-b4fb-34bd0ca29051。'),
+    '<p>先看<a href="thread://37958237-dd35-413c-8981-7d0b9ce55234" title="🧪调取GraphQL resolver">「🧪调取GraphQL resolver」（37958237）</a>，'
       + '再看 <a href="thread://0de90e6b-578f-4ca8-b4fb-34bd0ca29051" title="🗂️盘点Calli会话未完事项与待办">0de90e6b-578f-4ca8-b4fb-34bd0ca29051</a>。</p>',
   );
 });
 
 test('without threads to match, the text stays as it was written', () => {
-  assert.equal(render('是会话「🧪调取Bjev resolver」（37958237）。', false), '<p>是会话「🧪调取Bjev resolver」（37958237）。</p>');
+  assert.equal(render('是会话「🧪调取GraphQL resolver」（37958237）。', false), '<p>是会话「🧪调取GraphQL resolver」（37958237）。</p>');
 });
