@@ -168,7 +168,26 @@ test('by activity: what wants attention or is at work comes first, the rest by t
   const found = buildActivity(list, 'UNREAD', now, null);
   assert.deepEqual(found.groups.map((g) => [g.label, ids(g.threads)]), [['优先级', ['unread-new', 'unread-old']]]);
   assert.equal(found.count, 2);
-  assert.deepEqual(buildActivity([], '', now, null), { groups: [], count: 0 });
+  assert.deepEqual(buildActivity([], '', now, null), { groups: [], done: [], count: 0 });
+});
+
+test('by activity: finished threads leave the day order for the bottom fold, newest finish first', () => {
+  const now = new Date(2026, 9, 12, 15, 0);
+  const at = (daysAgo: number, hour = 12) => new Date(2026, 9, 12 - daysAgo, hour).toISOString();
+  const list = [
+    thread('busy', { updatedAt: at(0, 10) }),
+    thread('newer-done', { doneAt: at(0, 9), updatedAt: at(0, 9), status: 'error' }),
+    thread('older-done', { doneAt: at(3), updatedAt: at(3) }),
+  ];
+  const model = buildActivity(list, '', now, null);
+  // Finished leaves the activity order entirely — even a failure mark on it stops counting there.
+  assert.deepEqual(model.groups.map((g) => [g.label, ids(g.threads)]), [['今天', ['busy']]]);
+  assert.deepEqual(ids(model.done), ['newer-done', 'older-done']);
+  assert.equal(model.count, 3);
+  // Search still reaches a done thread, through the same fold.
+  const hit = buildActivity(list, 'NEWER', now, null);
+  assert.deepEqual(ids(hit.done), ['newer-done']);
+  assert.deepEqual(hit.groups.map((g) => ids(g.threads)), []);
 });
 
 test('by activity: a handover chain stays together under its most pressing member, and folds into one row', () => {
@@ -355,6 +374,13 @@ test('the merged list puts every machine in one activity order, names where each
   assert.equal(model.count, 5, 'the member is under its lead, not a row of its own');
   assert.deepEqual(model.notes.map((n) => `${n.hostId}:${n.state}`), ['gpu:offline', 'new:loading'], 'a remembered list being refreshed needs no note');
   assert.deepEqual(buildMerged(sources, 'there', now, null).groups.flatMap((g) => g.items.map((i) => i.thread.id)), ['there']);
+  // Whatever machine finished a thread, it folds the same way at the bottom.
+  const finished = buildMerged([
+    { hostId: null, label: '本机', state: 'live', at: null, threads: [th('local-done', '2026-10-21T11:00:00', { doneAt: '2026-10-21T10:00:00' })] },
+    { hostId: 'devbox', label: 'devbox', state: 'live', at: null, threads: [th('remote-done', '2026-10-20T11:00:00', { doneAt: '2026-10-20T11:30:00' })] },
+  ], '', now, null);
+  assert.deepEqual(finished.done.map((i) => `${i.hostId}:${i.thread.id}`), ['null:local-done', 'devbox:remote-done']);
+  assert.deepEqual(finished.groups.flatMap((g) => g.items), []);
 });
 
 test("a machine's sessions mix into the list by their time, as threads of their directory", () => {
