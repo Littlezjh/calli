@@ -37,15 +37,15 @@
     inset 0 0 0 1px color-mix(in srgb, var(--warn) 28%, rgba(255, 255, 255, 0.4)),
     0 6px 20px color-mix(in srgb, var(--warn) 10%, rgba(31, 30, 28, 0.06));
   --lg-pointer-glow: radial-gradient(
-    190px circle at var(--lg-mx, 30%) var(--lg-my, 15%),
-    rgba(255, 255, 255, 0.52) 0%,
-    rgba(255, 255, 255, 0.14) 38%,
-    transparent 72%
+    180px circle at var(--lg-mx, 30%) var(--lg-my, 15%),
+    rgba(255, 255, 255, 0.28) 0%,
+    rgba(255, 255, 255, 0.06) 42%,
+    transparent 70%
   );
   --lg-pointer-rim: radial-gradient(
-    150px circle at var(--lg-mx, 30%) var(--lg-my, 15%),
-    rgba(255, 255, 255, 0.95) 0%,
-    rgba(130, 175, 255, 0.35) 40%,
+    140px circle at var(--lg-mx, 30%) var(--lg-my, 15%),
+    rgba(255, 255, 255, 0.92) 0%,
+    rgba(255, 255, 255, 0.24) 44%,
     transparent 72%
   );
 }
@@ -79,15 +79,15 @@
       inset 0 0 0 1px color-mix(in srgb, var(--warn) 38%, rgba(255, 255, 255, 0.12)),
       0 8px 24px rgba(0, 0, 0, 0.42);
     --lg-pointer-glow: radial-gradient(
-      190px circle at var(--lg-mx, 30%) var(--lg-my, 15%),
-      rgba(255, 255, 255, 0.19) 0%,
-      rgba(255, 255, 255, 0.05) 42%,
-      transparent 74%
+      180px circle at var(--lg-mx, 30%) var(--lg-my, 15%),
+      rgba(255, 255, 255, 0.11) 0%,
+      rgba(255, 255, 255, 0.03) 42%,
+      transparent 72%
     );
     --lg-pointer-rim: radial-gradient(
-      150px circle at var(--lg-mx, 30%) var(--lg-my, 15%),
-      rgba(255, 255, 255, 0.55) 0%,
-      rgba(130, 175, 255, 0.28) 40%,
+      140px circle at var(--lg-mx, 30%) var(--lg-my, 15%),
+      rgba(255, 255, 255, 0.42) 0%,
+      rgba(255, 255, 255, 0.12) 44%,
       transparent 72%
     );
   }
@@ -122,15 +122,15 @@
     inset 0 0 0 1px color-mix(in srgb, var(--warn) 38%, rgba(255, 255, 255, 0.12)),
     0 8px 24px rgba(0, 0, 0, 0.42);
   --lg-pointer-glow: radial-gradient(
-    190px circle at var(--lg-mx, 30%) var(--lg-my, 15%),
-    rgba(255, 255, 255, 0.19) 0%,
-    rgba(255, 255, 255, 0.05) 42%,
-    transparent 74%
+    180px circle at var(--lg-mx, 30%) var(--lg-my, 15%),
+    rgba(255, 255, 255, 0.11) 0%,
+    rgba(255, 255, 255, 0.03) 42%,
+    transparent 72%
   );
   --lg-pointer-rim: radial-gradient(
-    150px circle at var(--lg-mx, 30%) var(--lg-my, 15%),
-    rgba(255, 255, 255, 0.55) 0%,
-    rgba(130, 175, 255, 0.28) 40%,
+    140px circle at var(--lg-mx, 30%) var(--lg-my, 15%),
+    rgba(255, 255, 255, 0.42) 0%,
+    rgba(255, 255, 255, 0.12) 44%,
     transparent 72%
   );
 }
@@ -314,13 +314,18 @@
   background: color-mix(in srgb, var(--surface-2) 55%, transparent);
 }
 
-/* Pointer-tracking liquid specular highlight on desktop mouse hover */
+/* Pointer-tracking liquid specular highlight sits strictly BEHIND text and controls so it never hazes typed letters. */
+.main:has(> .composer-slot) > .composer-slot .composer-box > :not(.composer-sheen):not(.coord-mention-menu) {
+  position: relative;
+  z-index: 1;
+}
+
 .composer-sheen {
   position: absolute;
   inset: 0;
   border-radius: inherit;
   pointer-events: none;
-  z-index: 2;
+  z-index: 0;
   opacity: 0;
   transition: opacity 0.24s ease;
 }

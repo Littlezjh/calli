@@ -49,6 +49,8 @@ test('glass chrome has scrolling content behind it without hiding either end of 
           const titlePill = document.querySelector('.topbar-title-pill');
           const pill = document.querySelector('.topbar-actions');
           const box = document.querySelector('.composer-box');
+          const sheen = box.querySelector('.composer-sheen');
+          const textarea = box.querySelector('textarea');
           const cs = (el, pseudo) => getComputedStyle(el, pseudo);
           return {
             border: cs(top).borderBottomWidth,
@@ -57,6 +59,8 @@ test('glass chrome has scrolling content behind it without hiding either end of 
             titlePill: cs(titlePill).backdropFilter,
             pill: cs(pill).backdropFilter,
             box: cs(box).backdropFilter,
+            sheenZ: Number(cs(sheen).zIndex),
+            textareaZ: Number(cs(textarea).zIndex),
           };
         });
         assert.equal(glass.border, '0px', 'the top bar draws no hairline');
@@ -64,6 +68,7 @@ test('glass chrome has scrolling content behind it without hiding either end of 
         assert.notEqual(glass.titlePill, 'none', 'the title wears a floating liquid glass capsule');
         assert.notEqual(glass.pill, 'none', 'the top bar buttons keep their liquid glass capsule');
         assert.notEqual(glass.box, 'none', 'the desktop composer wears floating liquid glass');
+        assert.ok(glass.sheenZ < glass.textareaZ, 'the hover sheen stays behind typed text so it never hazes letters');
       }
       await scroller.evaluate(el => { el.scrollTop = 0; });
       bounds = await measure();
