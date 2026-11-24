@@ -10,6 +10,7 @@ import { Children, createContext, Fragment, isValidElement, memo, useCallback, u
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { threadLinkIndex, threadMentions, trimAutolinkJunk, type ThreadLinkIndex } from '../markdown-links';
+import { MARKDOWN_REHYPE_PLUGINS, preserveNonHtmlTags } from '../markdown-html';
 import { placeImages, stripPaths } from '../image-places';
 import { highlightLanguage, languageName } from '../code-language';
 import { enlargeMermaidDiagram, renderMermaidDiagram } from '../mermaid';
@@ -1085,7 +1086,8 @@ function BreakableCode({ children, ...props }: ComponentProps<'code'>) {
 }
 
 const MARKDOWN_COMPONENTS = { pre: CodeBlock, img: MarkdownImage, a: MarkdownLink, div: MarkdownDiv, code: BreakableCode };
-const MARKDOWN_PLUGINS = [remarkGfm, trimAutolinkJunk];
+const MARKDOWN_PLUGINS = [remarkGfm, trimAutolinkJunk, preserveNonHtmlTags];
+const QUOTE_REMARK_PLUGINS = [remarkGfm, preserveNonHtmlTags];
 
 /**
  * A message as a block quote for another app's editor. Plain Markdown, none of this page's own
@@ -1094,7 +1096,7 @@ const MARKDOWN_PLUGINS = [remarkGfm, trimAutolinkJunk];
 function quoteHtml(text: string, pointer?: string): string {
   const box = document.createElement('div');
   const root = createRoot(box);
-  flushSync(() => root.render(<Markdown remarkPlugins={[remarkGfm]}>{text.trim()}</Markdown>));
+  flushSync(() => root.render(<Markdown remarkPlugins={QUOTE_REMARK_PLUGINS} rehypePlugins={MARKDOWN_REHYPE_PLUGINS}>{text.trim()}</Markdown>));
   const html = box.innerHTML;
   root.unmount();
   const heading = document.createElement('p');
@@ -1139,7 +1141,7 @@ const AssistantMessage = memo(function AssistantMessage({ text, done, roots, loa
     <div className="row assistant" data-message-key={messageKey}>
       <div className="markdown">
         <FileImages.Provider value={images}>
-          <Markdown remarkPlugins={plugins} components={MARKDOWN_COMPONENTS} urlTransform={keepUrl}>
+          <Markdown remarkPlugins={plugins} rehypePlugins={MARKDOWN_REHYPE_PLUGINS} components={MARKDOWN_COMPONENTS} urlTransform={keepUrl}>
             {text}
           </Markdown>
         </FileImages.Provider>
@@ -1152,7 +1154,7 @@ const AssistantMessage = memo(function AssistantMessage({ text, done, roots, loa
 export function Prose({ text, className = '' }: { text: string; className?: string }) {
   return (
     <div className={`markdown ${className}`.trim()}>
-      <Markdown remarkPlugins={MARKDOWN_PLUGINS} components={MARKDOWN_COMPONENTS} urlTransform={keepUrl}>
+      <Markdown remarkPlugins={MARKDOWN_PLUGINS} rehypePlugins={MARKDOWN_REHYPE_PLUGINS} components={MARKDOWN_COMPONENTS} urlTransform={keepUrl}>
         {text}
       </Markdown>
     </div>
@@ -1491,7 +1493,7 @@ function WorkGroup({ item, roots, thoughtLive = !item.done }: { item: Extract<It
 const WorkNote = memo(function WorkNote({ text }: { text: string }) {
   return (
     <div className="work-note markdown">
-      <Markdown remarkPlugins={MARKDOWN_PLUGINS} components={MARKDOWN_COMPONENTS} urlTransform={keepUrl}>
+      <Markdown remarkPlugins={MARKDOWN_PLUGINS} rehypePlugins={MARKDOWN_REHYPE_PLUGINS} components={MARKDOWN_COMPONENTS} urlTransform={keepUrl}>
         {text}
       </Markdown>
     </div>
