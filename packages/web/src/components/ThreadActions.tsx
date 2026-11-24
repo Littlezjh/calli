@@ -509,6 +509,7 @@ export function useThreadActions(deps: Deps) {
         <ChoiceDialog
           title={t('actions.forkTitle')}
           choices={[
+            { id: 'lightweight', icon: <IconFork size={18} />, label: t('actions.forkModeLightweight'), hint: t('actions.forkModeLightweightHint') },
             { id: 'here', icon: <IconFork size={18} />, label: t('actions.forkHere'), hint: t('actions.forkHereHint') },
             {
               id: 'worktree',
@@ -520,7 +521,8 @@ export function useThreadActions(deps: Deps) {
           ]}
           onPick={(id) => {
             close();
-            if (id === 'agent') setDialog({ kind: 'fork-agent', thread });
+            if (id === 'lightweight') setDialog({ kind: 'fork-subchat', thread, worktreeAvailable: true });
+            else if (id === 'agent') setDialog({ kind: 'fork-agent', thread });
             else void fork(thread, turnId, id === 'worktree' ? 'worktree' : 'here');
           }}
           onCancel={close}

@@ -90,3 +90,39 @@ test('fork as sub-conversation groups under the lead in sidebar with purpose tag
   }
   await phoneCtx.close();
 });
+
+test('reply-footer fork icon offers lightweight sub-conversation in ChoiceDialog', async () => {
+  const { execFileSync } = await import('node:child_process');
+  const { writeFileSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  execFileSync('git', ['init', '-b', 'main'], { cwd: daemon.workdir, stdio: 'ignore' });
+  execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: daemon.workdir, stdio: 'ignore' });
+  execFileSync('git', ['config', 'user.name', 'Test'], { cwd: daemon.workdir, stdio: 'ignore' });
+  writeFileSync(join(daemon.workdir, 'README.md'), 'hello\n');
+  execFileSync('git', ['add', 'README.md'], { cwd: daemon.workdir, stdio: 'ignore' });
+  execFileSync('git', ['commit', '-m', 'init'], { cwd: daemon.workdir, stdio: 'ignore' });
+
+  await openUi(page, daemon);
+  await page.locator('.sidebar-inner').getByText('主线重构').first().click();
+  const replyForkBtn = page.locator('.message-actions button[aria-label="分叉"]').last();
+  await replyForkBtn.waitFor({ timeout: 10_000 });
+  await replyForkBtn.click();
+
+  const choiceDialog = page.locator('.choice-dialog');
+  await choiceDialog.waitFor({ timeout: 10_000 });
+  const lightChoice = choiceDialog.locator('button', { hasText: '轻量分支（省 Token）' });
+  await lightChoice.waitFor({ timeout: 5_000 });
+
+  const shotDir = process.env.CALLI_FORK_SHOTS;
+  if (shotDir) {
+    await page.waitForTimeout(250);
+    await page.screenshot({ path: `${shotDir}/choice-light.png` });
+    await page.evaluate(() => { document.documentElement.dataset.theme = 'dark'; });
+    await page.screenshot({ path: `${shotDir}/choice-dark.png` });
+    await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
+  }
+
+  await lightChoice.click();
+  await page.locator('.fork-subchat-dialog').waitFor({ timeout: 5_000 });
+  assert.equal(await page.locator('.fork-subchat-mode [role="radio"]', { hasText: '轻量分支' }).getAttribute('aria-checked'), 'true');
+});
