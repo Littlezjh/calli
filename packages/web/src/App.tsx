@@ -3783,6 +3783,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           effort={sideAsk.source ? sideAsk.source.effort : effort}
           quoteText={sideAsk.text}
           sourceTitle={(sideAsk.source ?? selected)?.title ?? null}
+          sourceThreadId={(sideAsk.source ?? selected)?.id ?? null}
           forkSourceId={sideAsk.source ? (capsOf(sideAsk.source.agent)?.fork && !forkBlocked(sideAsk.source) ? sideAsk.source.id : null) : selected && activeCaps?.fork && !forkBlocked(selected) ? selected.id : null}
           attachBlocked={sideAgentInfo?.capabilities.images === false ? t('app.noImages', agentLabel(sideAgent)) : null}
           onClose={() => setSideAsk(null)}

@@ -1,3 +1,5 @@
+import { splitNotes, withNotes } from './timeline';
+
 /** Metadata only. The daemon authorizes and reads the source when requested by the agent. */
 export interface ContextReference {
   id: string;
@@ -94,6 +96,17 @@ export function referenceThreads<T extends { id: string; title: string; cwd: str
   const matches = threads.filter(thread => thread.id !== source.threadId && `${thread.title} ${thread.cwd}`.toLowerCase().includes(term))
     .sort((a, b) => rank(a) - rank(b));
   return term ? matches : [...matches.filter(thread => rank(thread) < 2), ...matches.filter(thread => rank(thread) === 2).slice(0, 8)];
+}
+
+/** Attaches a fallback reference after leading notes, skipping duplicates or texts already at the limit. */
+export function attachFallbackReference(text: string, reference?: ContextReference | null): string {
+  if (!reference) return text;
+  const noted = splitNotes(text);
+  const referenced = splitReferences(noted.body);
+  if (reference.kind === 'thread' && reference.sourceId
+    && referenced.references.some(item => item.kind === 'thread' && item.sourceId === reference.sourceId)) return text;
+  if (referenced.references.length >= 12) return text;
+  return withNotes(noted.notes, withReferences(mergeReferences(referenced.references, [reference]), referenced.body));
 }
 
 /** Compact queue/search labels never expose the metadata wire format. */
