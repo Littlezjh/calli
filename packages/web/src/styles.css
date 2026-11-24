@@ -11070,6 +11070,9 @@ div.file-card:hover { background: var(--surface); }
   .agent-panel, .agent-panel.detail { position: absolute; inset: 0; width: 100%; z-index: 45; border-left: 0; }
   .agent-panel-resize { display: none; }
   .agent-panel-head { padding: 16px; }
+  .main:has(.chat-home > .agent-panel) > .topbar { display: none; }
+  .chat-home > .agent-panel { padding-top: var(--safe-top); padding-bottom: var(--safe-bottom); }
+  .chat-home > .agent-panel > .agent-panel-head { padding: 10px 12px; }
 }
 
 /* The agents panel over a narrow window of the installed app covers the whole screen, so its head

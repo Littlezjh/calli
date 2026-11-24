@@ -93,6 +93,8 @@ test('assistant thread links preview beside the retained conversation on desktop
           const mainBox = await page.locator('.chat-main').boundingBox(), panelBox = await panel.boundingBox();
           if (phone) {
             assert.equal(Math.round(panelBox.width), Math.round(mainBox.width));
+            assert.equal(Math.round(panelBox.y), 0, 'phone preview merges into one top bar without stacking below .topbar');
+            assert.equal(await page.locator('.topbar').isVisible(), false, 'global topbar yields on phone while preview is open');
             assert.equal(await page.locator('.chat-main').evaluate(el => el.inert), true);
           } else assert.ok(panelBox.x >= mainBox.x + mainBox.width - 1, 'beside the talk like a subagent');
           if (kind === 'table') {

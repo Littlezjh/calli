@@ -7,7 +7,8 @@ import { ActionSheet, type SheetTarget } from './ActionSheet';
 import { Composer } from './Composer';
 import { effortsForModel, imagesBlocked, imagesNote, ModelPicker, PermissionPicker, speedsForModel, UsageMeter } from './Pickers';
 import { ThreadView } from './ThreadView';
-import { IconClose, IconExternal } from './icons';
+import { IconChevron, IconClose, IconExternal } from './icons';
+import { useMinWidth } from '../hooks';
 import { t } from '../i18n';
 import { AgentPanelFrame } from './AgentPanelFrame';
 
@@ -16,6 +17,7 @@ export function ThreadPeek({ api, initial, agents, draftKey, returnFocus, onClos
   api: Api; initial: Thread | string; agents?: AgentInfo[]; side?: boolean; draftKey: string; returnFocus: HTMLElement | null;
   onClose: () => void; onOpen: () => void; onChange: (thread: Thread) => void;
 }) {
+  const fullOverlay = side && !useMinWidth(901);
   const id = typeof initial === 'string' ? initial : initial.id;
   const [thread, setThread] = useState<Thread | null>(typeof initial === 'string' ? null : initial);
   const [fetchedAgents, setFetchedAgents] = useState<AgentInfo[]>([]);
@@ -235,10 +237,11 @@ export function ThreadPeek({ api, initial, agents, draftKey, returnFocus, onClos
   const title = thread?.title || t('view.openThread');
   const content = <>
     <header className={side ? "agent-panel-head" : "thread-peek-head"}>
+      {fullOverlay && <button ref={close} className="icon-btn" onClick={onClose} title={t('threadPeek.back')} aria-label={t('threadPeek.back')}><span className="coord-back"><IconChevron /></span></button>}
       <div className="agent-panel-heading"><strong title={title}>{title}</strong></div>
       {(running || thread?.status === 'error') && <span className="thread-peek-status" role="status">{t(thread?.status === 'error' ? 'status.error' : 'status.running')}</span>}
       <button disabled={!thread} className="icon-btn" onClick={onOpen} title={t('threadPeek.open')} aria-label={t('threadPeek.open')}><IconExternal /></button>
-      <button ref={close} className="icon-btn" onClick={onClose} title={t(side ? 'threadPeek.back' : 'common.close')} aria-label={t(side ? 'threadPeek.back' : 'common.close')}><IconClose /></button>
+      {!fullOverlay && <button ref={close} className="icon-btn" onClick={onClose} title={t(side ? 'threadPeek.back' : 'common.close')} aria-label={t(side ? 'threadPeek.back' : 'common.close')}><IconClose /></button>}
     </header>
     {error && <p className="thread-peek-error" role="alert">{error} <button className="ghost" onClick={() => setRetry(value => value + 1)}>{t('common.retry')}</button></p>}
     {thread?.waiting && waiting.length === 0 && <button className="thread-peek-attention ghost" onClick={onOpen}>{t('threadPeek.needsAction')}</button>}
