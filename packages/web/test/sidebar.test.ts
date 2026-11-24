@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { ExternalSession, Section, Thread } from '../src/api.js';
-import { boardStage, buildActivity, buildMerged, buildSidebar, clampSidebarWidth, externalThreadRow, forkGroupsByRoot, handoverGroups, markTerms, ownRows, navOverflow, defaultSidebarWidth, savedSidebarWidth, searchTerms, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH, taggedAgents, threadAttention, withExternalSessions, type HostSource } from '../src/sidebar.js';
+import { boardStage, buildActivity, buildMerged, buildSidebar, clampSidebarWidth, externalThreadRow, forkGroupsByRoot, handoverGroups, markTerms, ownRows, navOverflow, defaultSidebarWidth, savedSidebarWidth, searchTerms, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH, snoozeTimeLabel, taggedAgents, threadAttention, withExternalSessions, type HostSource } from '../src/sidebar.js';
 import { threadMark } from '../src/notices.js';
 
 let clock = 0;
@@ -78,6 +78,24 @@ test('sections follow their position; empty ones stay visible so threads can be 
 test('a thread whose section no longer exists goes back under its project', () => {
   const model = buildSidebar([thread('x', { sectionId: 'deleted' })], sections, '');
   assert.deepEqual(model.projects.map((p) => ids(p.threads)), [['x']]);
+});
+
+test('done threads gather at the bottom, finished first, ahead of any pin or section', () => {
+  const model = buildSidebar([
+    thread('fresh', { pinned: true }),
+    thread('newer-done', { doneAt: '2026-01-03T10:00:00Z', pinned: true, sectionId: 's1' }),
+    thread('older-done', { doneAt: '2026-01-01T10:00:00Z', cwd: '/work/other' }),
+  ], sections, '');
+  // Done outranks a pin and a section: finishing is where it went, un-done it returns to them.
+  assert.deepEqual(ids(model.done), ['newer-done', 'older-done']);
+  assert.deepEqual(ids(model.pinned), ['fresh']);
+  assert.deepEqual(model.sections.map((s) => ids(s.threads)), [[], []]);
+  assert.deepEqual(model.projects.map((p) => ids(p.threads)), []);
+  assert.equal(model.count, 3);
+  // Search still reaches a done thread, through the same group.
+  const found = buildSidebar([thread('newer-done', { doneAt: '2026-01-03T10:00:00Z' }), thread('fresh')], sections, 'newer');
+  assert.deepEqual(ids(found.done), ['newer-done']);
+  assert.deepEqual(ids(found.pinned), []);
 });
 
 test('projects are ordered by their most recent thread', () => {
@@ -280,6 +298,21 @@ test('threadAttention: waits first, in the kind asked, then results nobody has l
   assert.equal(threadAttention(thread('a', { unread: true, status: 'error' }), 'a'), null, 'the thread on screen is being read');
   assert.equal(threadAttention(thread('a', { status: 'error' }), null), null, 'a failure already looked at wants nothing');
   assert.equal(threadAttention(thread('a', { status: 'running' }), null), null);
+});
+
+test('snooze: a quiet thread joins no attention surface until its time passes, then it is back', () => {
+  const until = new Date(Date.now() + 3600_000).toISOString();
+  // Held back even while waiting or unread — that is the whole point of the quiet.
+  assert.equal(threadAttention(thread('a', { waiting: true, waitingReason: 'approval', snoozedUntil: until }), null), null);
+  assert.equal(threadAttention(thread('a', { unread: true, snoozedUntil: until }), null), null);
+  assert.equal(boardStage(thread('a', { waiting: true, waitingReason: 'approval', snoozedUntil: until })), 'review', 'the board does not count a snoozed wait as blocked');
+  assert.equal(threadMark(thread('a', { unread: true, snoozedUntil: until }), false), null, 'no dot while quiet');
+  // A time already past no longer quiets anything; older daemons never send the field at all.
+  assert.deepEqual(threadAttention(thread('a', { unread: true, snoozedUntil: new Date(Date.now() - 1000).toISOString() }), null), { kind: 'unread' });
+  assert.deepEqual(threadAttention(thread('a', { unread: true }), null), { kind: 'unread' });
+  // The label says the clock time today and the date on a later day.
+  assert.equal(snoozeTimeLabel(new Date('2026-01-02T09:05:00').toISOString(), new Date('2026-01-02T08:00:00')), '09:05');
+  assert.equal(snoozeTimeLabel(new Date('2026-01-03T09:00:00').toISOString(), new Date('2026-01-02T08:00:00')), '1/3 09:00');
 });
 
 test('the sidebar dot, the activity order and threadAttention agree', () => {
