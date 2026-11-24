@@ -1395,6 +1395,12 @@ html.list-open body {
   background: var(--text);
 }
 
+/* Unsent draft in the thread's composer: a quiet grey dot with the same soft ring. */
+.dot.draft {
+  background: var(--muted);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--muted) 22%, transparent);
+}
+
 .sidebar .dot.waiting {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 22%, transparent);
   animation: pulse 1.6s ease-in-out infinite;

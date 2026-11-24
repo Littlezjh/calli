@@ -120,13 +120,15 @@ interface Props {
   /** More external sessions are known but not shown; the call brings the next page. */
   moreExternal?: boolean;
   onLoadMoreExternal?: () => void;
+  /** Composer draft keys that currently hold unsent content, for the quiet grey draft dot. */
+  draftKeys?: ReadonlySet<string>;
   /** A line over the list, such as the demo's way to connect. */
   notice?: ReactNode;
 }
 
 /** In the merged list, the machine a row's thread is on when that is not the hub's own, and how to open it if it is not the one on screen. */
 /** `agents`: that machine's, by id, when the row is another machine's; null while not known. */
-interface Elsewhere { label?: string; offline?: string; open?: () => void; agents?: Map<string, AgentMarkInfo> | null }
+interface Elsewhere { hostId?: string | null; label?: string; offline?: string; open?: () => void; agents?: Map<string, AgentMarkInfo> | null }
 
 /** Where a menu opened from a "more" button should appear: just under the button. */
 function below(e: MouseEvent<HTMLElement>): [number, number] {
@@ -199,6 +201,7 @@ export function Sidebar({
   externalError = null,
   moreExternal = false,
   onLoadMoreExternal,
+  draftKeys,
 }: Props) {
   const [search, setSearch] = useState('');
   // What was said, looked up a moment after the typing stops. `for` is the search the hits answer.
@@ -244,7 +247,8 @@ export function Sidebar({
   // While searching, everything is expanded so matches are never hidden inside a closed group.
   const isOpen = (key: string) => Boolean(search.trim()) || !collapsed.has(key);
 
-  const MARK_LABELS = { waiting: t('notices.unknown.label'), running: t('status.running'), error: t('status.error'), unread: t('sidebar.unread') } as const;
+  const MARK_LABELS = { waiting: t('notices.unknown.label'), running: t('status.running'), error: t('status.error'), unread: t('sidebar.unread'), draft: t('sidebar.draft') } as const;
+  const hasDraft = (threadId: string, onHost: string | null = hostId) => Boolean(draftKeys?.has(onHost ? `host:${onHost}:${threadId}` : threadId));
   const agentById = new Map((agents ?? []).map((a) => [a.id, a]));
   const tagged = taggedAgents(agents ?? []);
 
@@ -255,7 +259,7 @@ export function Sidebar({
    */
   const row = (thread: Thread, title = thread.title, preview = thread.preview, chain?: Thread[], on?: Elsewhere) => {
     const open = on?.open;
-    const mark = threadMark(thread, thread.id === selectedId);
+    const mark = threadMark(thread, thread.id === selectedId, hasDraft(thread.id, on ? (on.hostId ?? null) : hostId));
     const offline = on?.offline ?? (!on && hostDown ? t('sidebar.hostDown') : undefined);
     // A row of another machine is marked by that machine's agents, not by the ones on screen.
     const theirs = on && on.agents !== undefined;
@@ -339,10 +343,10 @@ export function Sidebar({
       {chips.length > shown.length && <span className="stack-more" aria-hidden="true">+{chips.length - shown.length}</span>}
     </span>;
   };
-  // One dot stands for the whole run: waiting, then error, unread, running; none when all is quiet.
+  // One dot stands for the whole run: waiting, then error, unread, running, draft; none when all is quiet.
   const runDot = (list: Thread[]) => {
-    const marks = [...new Set(list.map((m) => threadMark(m, m.id === selectedId)).filter(Boolean))] as ThreadMark[];
-    const mark = (['waiting', 'error', 'unread', 'running'] as const).find((m) => marks.includes(m));
+    const marks = [...new Set(list.map((m) => threadMark(m, m.id === selectedId, hasDraft(m.id))).filter(Boolean))] as ThreadMark[];
+    const mark = (['waiting', 'error', 'unread', 'running', 'draft'] as const).find((m) => marks.includes(m));
     return mark ? <span className={`dot ${mark}`} role="img" aria-label={MARK_LABELS[mark]} title={MARK_LABELS[mark]} /> : null;
   };
 
@@ -435,7 +439,7 @@ export function Sidebar({
     const sortedTeam = [...team].sort(teamOrder);
     return <div className="handover-members">
       {forkItems.map(({ thread: f, handedOver }) => {
-        const mark = threadMark(f, f.id === selectedId);
+        const mark = threadMark(f, f.id === selectedId, hasDraft(f.id));
         return <button
           key={f.id}
           className={`handover-member${f.id === selectedId ? ' active' : ''}`}
@@ -454,7 +458,7 @@ export function Sidebar({
       })}
       {sortedTeam.map((m) => {
         const agent = agentById.get(m.agent);
-        const mark = threadMark(m, m.id === selectedId);
+        const mark = threadMark(m, m.id === selectedId, hasDraft(m.id));
         return <button
           key={m.id}
           className={`handover-member${m.id === selectedId ? ' active' : ''}`}
@@ -497,9 +501,9 @@ export function Sidebar({
     if (members.length === 1) return entry(latest);
     const storageKey = `${hostId ?? 'local'}:${key}`;
     const expanded = Boolean(search.trim()) || expandedHandovers.has(storageKey);
-    const marks = [...new Set(members.filter((thread) => thread.id !== latest.id).map((thread) => threadMark(thread, thread.id === selectedId)).filter(Boolean))] as ThreadMark[];
+    const marks = [...new Set(members.filter((thread) => thread.id !== latest.id).map((thread) => threadMark(thread, thread.id === selectedId, hasDraft(thread.id))).filter(Boolean))] as ThreadMark[];
     const chainStack = stackLine(members, false);
-    const chainDot = (['waiting', 'error', 'unread', 'running'] as const).find((m) => marks.includes(m));
+    const chainDot = (['waiting', 'error', 'unread', 'running', 'draft'] as const).find((m) => marks.includes(m));
     // The team and grouped forks move along with a handover, so any segment on the chain carries them.
     const lead = members.find((thread) => teamOf(thread)?.length) ?? latest;
     const team = teamOf(lead) ?? [];
@@ -539,7 +543,7 @@ export function Sidebar({
       })()}
       {expanded && <div className="handover-members handover-chain">{members.map((thread) => {
         const agent = agentById.get(thread.agent);
-        const mark = threadMark(thread, thread.id === selectedId);
+        const mark = threadMark(thread, thread.id === selectedId, hasDraft(thread.id));
         return <button
           key={thread.id}
           className={`handover-member${thread.id === selectedId ? ' active' : ''}`}
@@ -607,6 +611,7 @@ export function Sidebar({
           {g.items.map(({ thread, hostId: on }) => (
             <Fragment key={`${on ?? ''}:${thread.id}`}>
               {entry(thread, {
+                hostId: on,
                 // The hub's own machine is the usual one; only threads elsewhere are named.
                 label: on === null ? undefined : labelOf.get(on),
                 offline: unavailableOf.get(on),
