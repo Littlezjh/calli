@@ -61,7 +61,9 @@ if (fstatSync(0).isFIFO()) fail('internal_error: Unable to connect standard inpu
 // The adapter supplies null input: print mode has no stdin protocol or login/update answer.
 process.stdin.resume();
 await new Promise(resolve => process.stdin.on('end', resolve));
-const text = flags.get('-p');
+let text = flags.get('-p');
+// Fixture commands belong to the current ask, not the interrupted request in its envelope.
+if (text.includes('[Calli interrupted-turn context]\n')) text = text.split('\nCurrent user message:\n').at(-1);
 const stream = flags.get('--output-format') === 'stream-json';
 if (process.env.FAKE_DOUBAO_LEGACY && flags.has('--output-format')) fail('invalid_arguments: Unknown output format.');
 if (stream) {

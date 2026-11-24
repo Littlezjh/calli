@@ -147,6 +147,8 @@ const ensureConversationDb = id => {
 let advanceIndex = 0;
 let advanceScript = '';
 function runTurn(text) {
+  // Fixture commands belong to the current ask, not the interrupted request in its envelope.
+  if (text.includes('[Calli interrupted-turn context]\n')) text = text.split('\nCurrent user message:\n').at(-1);
   step({ step_index: stepIndex++, state: 'DONE', step_type: 'user_input' });
   if (process.env.FAKE_AGY_WEB && text.startsWith('Search the web using')) {
     const index = stepIndex++;

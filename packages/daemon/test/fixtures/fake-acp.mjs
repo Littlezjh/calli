@@ -427,19 +427,21 @@ rl.on('line', async (line) => {
     case 'session/prompt': {
       if (!process.env.FAKE_CLAUDE_RECORD_TURNS) recordSession(dsh ? 'dsh' : traex ? 'traex' : 'claude', msg.params.sessionId);
       const blocks = msg.params.prompt;
-      const text = blocks.filter((p) => p.type === 'text').map((p) => p.text).join('');
-      const contextRead = contextReaderFixture(text);
+      const rawText = blocks.filter((p) => p.type === 'text').map((p) => p.text).join('');
+      const contextRead = contextReaderFixture(rawText);
       if (contextRead !== null) {
         update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: contextRead } });
         out({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } }); return;
       }
-      if (process.env.FAKE_CLAUDE_RECORD_TURNS && !dsh && !traex && !text.includes('out of plan') && !text.includes('flaky')) {
-        appendClaudeTurn(msg.params.sessionId, text, text.split('\n')[0] === 'rate-limit-tell' ? 'told' : `echo:${text}`, text.includes('mid-compact'));
+      if (process.env.FAKE_CLAUDE_RECORD_TURNS && !dsh && !traex && !rawText.includes('out of plan') && !rawText.includes('flaky')) {
+        appendClaudeTurn(msg.params.sessionId, rawText, rawText.split('\n')[0] === 'rate-limit-tell' ? 'told' : `echo:${rawText}`, rawText.includes('mid-compact'));
       }
       if (refusedModelWarning) {
         update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `**Warning:** ${refusedModelWarning}` }, _meta: { claudeCode: { kind: 'informational', level: 'warning' } } });
         refusedModelWarning = null;
       }
+      // Fixture commands belong to the current ask, not the interrupted request in its envelope.
+      const text = rawText.includes('[Calli interrupted-turn context]\n') ? rawText.split('\nCurrent user message:\n').at(-1) : rawText;
       const lifecycle = text.match(/approval lifecycle (after-cancel|error|end|exit)/)?.[1];
       if (lifecycle) {
         if (lifecycle === 'after-cancel') {
