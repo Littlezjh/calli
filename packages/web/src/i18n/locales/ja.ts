@@ -2165,6 +2165,7 @@ export const ja: Messages = {
 
   // Sidebar
   'sidebar.unread': '新しい結果',
+  'sidebar.draft': '下書き',
   'sidebar.failed': 'エラー',
   'sidebar.externalHint': 'このマシンにある会話。クリックで取り込んで続けます',
   'sidebar.externalImporting': '取り込み中…',

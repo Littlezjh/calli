@@ -18,15 +18,17 @@ export function pageTitle(base: string, count: number): string {
   return count > 0 ? `(${count}) ${plain}` : plain;
 }
 
-export type ThreadMark = 'waiting' | 'running' | 'error' | 'unread' | null;
+export type ThreadMark = 'waiting' | 'running' | 'error' | 'unread' | 'draft' | null;
 
 /**
  * The one dot a thread gets in the list. Waiting for the user outranks everything else. A failure is
  * news like any other result: once the thread has been looked at, the dot goes; the error stays in the thread.
+ * An unsent draft takes the slot only when nothing louder is going on.
  */
-export function threadMark(thread: Thread, selected: boolean): ThreadMark {
+export function threadMark(thread: Thread, selected: boolean, hasDraft = false): ThreadMark {
   const attention = threadAttention(thread, selected ? thread.id : null);
   if (isWait(attention)) return 'waiting';
   if (thread.status === 'running') return 'running';
-  return attention?.kind === 'error' || attention?.kind === 'unread' ? attention.kind : null;
+  if (attention?.kind === 'error' || attention?.kind === 'unread') return attention.kind;
+  return hasDraft ? 'draft' : null;
 }

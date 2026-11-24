@@ -2167,6 +2167,7 @@ export const zh = {
 
   // Sidebar
   'sidebar.unread': '有新结果',
+  'sidebar.draft': '有草稿',
   'sidebar.failed': '出错了',
   'sidebar.externalHint': '这台机器上已有的会话，点一下接进来继续',
   'sidebar.externalImporting': '接入中…',
