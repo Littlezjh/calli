@@ -208,6 +208,8 @@ export interface TeamDefinition {
 }
 export interface Coordination {
   autoHandover?: boolean;
+  /** False keeps root-scoped settings without starting collaboration; missing means enabled. */
+  enabled?: boolean;
   team?: { taskId: string; status: TeamStatus; entry: string; snapshot: { name: string }; error?: string };
   rootId: string; paused: boolean; directories: string[]; agents: string[];
   /** By instance id. Absent from older daemons. */
@@ -217,6 +219,14 @@ export interface Coordination {
   /** `host`: the member runs on another machine, and its thread is that machine's. */
   members: Array<{ id: string; name: string; host?: string; hostLabel?: string; thread: Thread | null; latest: CoordinationMessage | null }>;
   messages: CoordinationMessage[];
+}
+/** Activating a saved-only root keeps its policy; device preferences fill only missing fields. */
+export function coordinationSettings(view: Coordination | null, fallback: { directories?: string[]; defaults: Record<string, MemberDefault>; permission: string }) {
+  return {
+    directories: view?.directories ?? fallback.directories,
+    defaults: view?.defaults ?? fallback.defaults,
+    permission: view?.permission ?? fallback.permission,
+  };
 }
 export interface CoordinationMessage {
   id: string; from: string; to: string; text: string; kind: string; state: string; result: string; createdAt: string; turnId: string | null;
@@ -269,13 +279,17 @@ export interface ThreadBrief {
 }
 
 export interface Thread {
+  /** Excludes only this session from collaboration; manual chat and history stay available. Missing on older daemons. */
+  disabled?: boolean;
   autoHandover?: AutoHandoverView;
   /** Present when the daemon retries this thread's transient failure; absent on older daemons. */
   autoRetry?: AutoRetryView | null;
   /** Present when the daemon advances this thread by itself; absent on older daemons. */
   advance?: AdvanceView | null;
   /** `doing`, on a member: its latest task while it works, the opening of its answer once it has returned. */
-  coordination?: { retired?: boolean; rootId: string; children: number; paused: boolean; doing?: string; team?: { name: string; status: TeamStatus; role: string; error?: string } };
+  coordination?: { retired?: boolean;
+    /** False means saved settings, not an active collaboration. */ enabled?: boolean;
+    rootId: string; children: number; paused: boolean; doing?: string; team?: { name: string; status: TeamStatus; role: string; error?: string } };
   id: string;
   agent: string;
   cwd: string;
@@ -1762,6 +1776,8 @@ export class Api {
   updateThread(
     threadId: string,
     updates: {
+      /** Changes collaboration eligibility only, never the session's input or running turn. */
+      disabled?: boolean;
       rememberModelChoice?: boolean;
       workMode?: WorkMode;
       speed?: string | null;

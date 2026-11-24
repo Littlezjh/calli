@@ -1,5 +1,5 @@
 import brandIcon from '../assets/calli.svg';
-import { Fragment, useEffect, useState, type MouseEvent, type ReactNode } from 'react';
+import { Fragment, useEffect, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
 import type { ExternalSession, HostInfo, SearchHit, Section, Thread } from '../api';
 import type { AgentMarkInfo } from '../thread-cache';
 import { isThreadLinkQuery, parseThreadLink, type ThreadDeepLink } from '../thread-deep-links';
@@ -128,8 +128,8 @@ interface Props {
 /** `agents`: that machine's, by id, when the row is another machine's; null while not known. */
 interface Elsewhere { label?: string; offline?: string; open?: () => void; agents?: Map<string, AgentMarkInfo> | null }
 
-/** Where a menu opened from a "more" button should appear: just under the button. */
-function below(e: MouseEvent<HTMLElement>): [number, number] {
+/** Where a row or "more" button's menu should appear: just below its anchor. */
+function below(e: MouseEvent<HTMLElement> | KeyboardEvent<HTMLElement>): [number, number] {
   const rect = e.currentTarget.getBoundingClientRect();
   return [rect.left, rect.bottom + 4];
 }
@@ -243,6 +243,12 @@ export function Sidebar({
   };
   // A long press on a row is the phone's right click.
   const longPress = useLongPress<Thread>(onThreadMenu);
+  // Touch layouts hide "more"; the focused session still has its keyboard menu entry.
+  const keyboardMenu = (thread: Thread) => (e: KeyboardEvent<HTMLElement>) => {
+    if (e.key !== 'ContextMenu' && !(e.key === 'F10' && e.shiftKey)) return;
+    e.preventDefault();
+    onThreadMenu(thread, ...below(e));
+  };
   const inTitlebar = useInTitlebar() && !compact;
   const [collapsed, toggle] = useStoredSet(`${storagePrefix}.collapsed`);
   // The other way to read the list: by what is going on, not by where a thread is filed. Like Codex's activity view.
@@ -295,6 +301,7 @@ export function Sidebar({
     <div
       key={thread.id}
       className={`thread-row${thread.id === selectedId ? ' active' : ''}${mark === 'unread' || mark === 'waiting' ? ' attention' : ''}`}
+      onKeyDown={keyboardMenu(thread)}
       onContextMenu={(e) => {
         e.preventDefault();
         onThreadMenu(thread, e.clientX, e.clientY);
@@ -438,6 +445,7 @@ export function Sidebar({
       aria-current={m.id === selectedId ? 'true' : undefined}
       title={m.title}
       onClick={() => onSelect(m.id)}
+      onKeyDown={keyboardMenu(m)}
       onContextMenu={(e) => { e.preventDefault(); onThreadMenu(m, e.clientX, e.clientY); }}
       {...longPress(m)}
     >
@@ -510,6 +518,7 @@ export function Sidebar({
           aria-current={thread.id === selectedId ? 'true' : undefined}
           title={`${thread.title} · ${agent?.label ?? thread.agent}`}
           onClick={() => onSelect(thread.id)}
+          onKeyDown={keyboardMenu(thread)}
           onContextMenu={(e) => { e.preventDefault(); onThreadMenu(thread, e.clientX, e.clientY); }}
           {...longPress(thread)}
         >

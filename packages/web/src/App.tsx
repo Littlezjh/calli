@@ -16,6 +16,7 @@ import { forkBlocked, useThreadActions } from './components/ThreadActions';impor
 import type { Theme } from './appearance';
 import {
   Api,
+  coordinationSettings,
   ApiError,
   AuthError,
   MAX_QUEUED,
@@ -55,7 +56,7 @@ import { ArchivePanel } from './components/ArchivePanel';
 import { Composer, prefillComposerDraft, type DraftNote } from './components/Composer';
 import { HandToAssistant, type MessageSnapshot } from './components/MessageActions';
 import type { ContextReference } from './context-references';
-import { CollaborationMenu } from './components/CollaborationMenu';
+import { CollaborationMenu, collaborationMembers } from './components/CollaborationMenu';
 import { DirectoryPicker } from './components/DirectoryPicker';
 import { Dialog } from './components/Dialog';
 import { HostDown, HostsPanel, MachinePicker } from './components/Hosts';
@@ -830,6 +831,8 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   const [memberPermission, setMemberPermission] = useState(() => localStorage.getItem(`${memberDefaultsKey}.permission`) ?? 'full_access');
   const [agentsOpen, setAgentsOpen] = useState(false);
   const [draftCollaboration, setDraftCollaboration] = useState(false);
+  const draftTransferSource = useRef<{ key: string; transfer: (targetKey: string) => void } | null>(null);
+  const createdDraftScope = useRef<{ id: string; hostId: string | null } | null>(null);
   const [collaborationDirectories, setCollaborationDirectories] = useState<string[]>([]);
   const [historyTurnIds, setHistoryTurnIds] = useState<string[]>([]);
   const [events, setEvents] = useState<StoredEvent[]>([]);
@@ -1035,6 +1038,8 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   const [restore, setRestore] = useState<{ text: string; nonce: number; mentions?: AgentMention[] } | null>(null);
   // Text quoted out of a message by selecting it.
   const composerDraftKey = hostId ? `host:${hostId}:${selectedId ?? (draftTeam ? `new:team:${draftTeam}` : 'new')}` : selectedId ?? (draftTeam ? `new:team:${draftTeam}` : 'new');
+  const composerScope = useRef({ selectedId, hostId, api, draftKey: composerDraftKey });
+  composerScope.current = { selectedId, hostId, api, draftKey: composerDraftKey };
   const [noteSignal, setNoteSignal] = useState<{ draftKey: string; note: DraftNote & { nonce: number } } | null>(null);
   const [messageReference, setMessageReference] = useState<{ draftKey: string; value: ContextReference; nonce: number } | null>(null);
   const [assistantMessage, setAssistantMessage] = useState<MessageSnapshot | null>(null);
@@ -1143,7 +1148,13 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
     void api.coordination(selected.id).then(value => { if (!cancelled) setCoordination(value); }).catch(() => undefined);
     return () => { cancelled = true; };
   }, [api, selectedId, threads]);
-  useEffect(() => { setAgentsOpen(false); setDraftCollaboration(false); setCollaborationDirectories([]); }, [selectedId, hostId]);
+  useEffect(() => {
+    setAgentsOpen(false);
+    // Initial creation is not navigation: keep setup until its first send can be retried.
+    if (createdDraftScope.current?.id === selectedId && createdDraftScope.current.hostId === hostId) return;
+    createdDraftScope.current = null;
+    setDraftCollaboration(false); setCollaborationDirectories([]);
+  }, [selectedId, hostId]);
   const onSettings = view === 'settings';
   const onDesk = view === 'desk' && !selectedId;
   const onTodos = view === 'todos' && !selectedId;
@@ -1222,7 +1233,25 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
     void voice.start();
   }, [voiceOnSelect, selectedId, voice]);
   const startDraftVoice = async () => {
-    try { setVoiceOnSelect(await createDraftThread(true)); void refreshThreads(); }
+    const origin = { selectedId, draftKey: composerDraftKey };
+    let id: string | null = null;
+    try {
+      id = await createDraftThread(true);
+      // Selection may not have painted yet; accept only the created target or its still-current origin.
+      const scope = composerScope.current;
+      if (scope.api === api && scope.hostId === hostId && (scope.selectedId === id
+        || createdDraftScope.current?.id === id && createdDraftScope.current.hostId === hostId
+          && scope.selectedId === origin.selectedId && scope.draftKey === origin.draftKey)) setVoiceOnSelect(id);
+      void refreshThreads();
+    } catch (e) {
+      handleError(e);
+      if (!(e instanceof AuthError)) setErrorState({ text: message(e), thread: id ?? createdDraftScope.current?.id ?? selectedId });
+      void refreshThreads();
+    }
+  };
+  const startVoice = async () => {
+    if (!selectedId) return;
+    try { if (composerScope.current.selectedId === selectedId && composerScope.current.api === api) await voice.start(); }
     catch (e) { handleError(e); }
   };
 
@@ -2139,6 +2168,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
 
   // A new thread is created by its first message, or by starting voice on the draft.
   const createDraftThread = async (isNewThread: boolean) => {
+    const origin = { selectedId, draftKey: composerDraftKey, transfer: draftTransferSource.current?.key === composerDraftKey ? draftTransferSource.current.transfer : null };
     const t = await api.createThread({
       warmupId: consumeDraftWarmup(),
       agent: draftAgent,
@@ -2152,22 +2182,31 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
       ...(draftScratch ? { scratch: true } : beside ? { besideThread: beside.threadId } : draftWorktree && offer ? { worktree: true } : {}),
     });
     const id = t.id;
+    // Bind migration to the returned root, never whichever composer is now on screen.
+    const targetKey = hostId ? `host:${hostId}:${id}` : id;
+    origin.transfer?.(targetKey);
+    const sameMachine = () => composerScope.current.api === api && composerScope.current.hostId === hostId;
+    const inOrigin = sameMachine() && composerScope.current.selectedId === origin.selectedId && composerScope.current.draftKey === origin.draftKey;
+    if (sameMachine()) setThreads(prev => [t, ...prev.filter(value => value.id !== id)]);
+    if (inOrigin) {
+      createdDraftScope.current = { id, hostId };
+      setSelectedId(id);
+      setDraftSectionId(null);
+      // Every worktree is a new branch; the next thread starts in place unless asked again.
+      setDraftWorktree(false);
+    }
     if (draftWriting) {
       const updated = await api.setWriting(id, draftWriting);
-      setThreads(prev => [updated, ...prev.filter(v => v.id !== updated.id)]);
-      setDraftWriting(null);
+      if (sameMachine()) setThreads(prev => [updated, ...prev.filter(v => v.id !== updated.id)]);
+      if (sameMachine() && composerScope.current.draftKey === targetKey) setDraftWriting(null);
     }
-    setSelectedId(id);
-    setDraftSectionId(null);
-    // Every worktree is a new branch; the next thread starts in place unless asked again.
-    setDraftWorktree(false);
     return id;
   };
 
   const performSend = async (text: string, images: PreparedImage[], isNewThread: boolean, mentions?: AgentMention[], videos: PreparedVideo[] = []) => {
     setError(null);
+    let id = selectedId;
     try {
-      let id = selectedId;
       if (!id && draftTeam) {
         if (videos.length) throw new Error(t('teams.attachments'));
         const task = await api.dispatchTeam(draftTeam, text, draftCwd, images.map(({ data, mimeType }) => ({ data, mimeType })));
@@ -2175,9 +2214,16 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
         setView('thread'); void refreshThreads(); return;
       }
       if (!id) id = await createDraftThread(isNewThread);
-      // Bringing an agent in with @ is itself the request to collaborate; there is no switch to find first.
-      const collaboration = (draftCollaboration || mentions?.length) && !selected?.coordination
-        ? { directories: collaborationDirectories.length ? collaborationDirectories : undefined, defaults: startingDefaults, permission: memberPermission } : undefined;
+      let policy = coordination?.rootId === id ? coordination : null;
+      if ((draftCollaboration || mentions?.length) && selected?.coordination && !policy) {
+        // Activating a saved-only configuration keeps its settings; ordinary manual turns need no policy request.
+        policy = await api.coordination(id);
+        if (!policy) throw new Error(t('collab.loadFailed'));
+      }
+      // Saved-only settings are not an active collaboration; the first real assignment enables it.
+      const initializingDraft = !selectedId || createdDraftScope.current?.id === id && createdDraftScope.current.hostId === hostId;
+      const collaboration = (draftCollaboration || mentions?.length) && (!policy || policy.enabled === false)
+        ? coordinationSettings(initializingDraft ? null : policy, { directories: collaborationDirectories.length ? collaborationDirectories : undefined, defaults: startingDefaults, permission: memberPermission }) : undefined;
       stickToBottom.current = true;
       // "queue" only matters while a turn is running: then the message waits instead of being refused.
       await api.startTurn(
@@ -2186,6 +2232,9 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
         images.map(({ data, mimeType }) => ({ data, mimeType })),
         { queue: true, mentions, collaboration, videos: await Promise.all(videos.map(async video => (await api.uploadVideo(id!, video.file)).id)) },
       );
+      if (createdDraftScope.current?.id === id && composerScope.current.api === api && composerScope.current.selectedId === id) {
+        createdDraftScope.current = null; setDraftCollaboration(false); setCollaborationDirectories([]);
+      }
       void refreshThreads();
     } catch (e) {
       // The composer keeps the draft; the dialog says it will still be there.
@@ -2193,7 +2242,11 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
         if (showcase) showcase.onInstall();
         else setConnectAsk({ reason: t('app.connectToSend') });
       }
-      else handleError(e);
+      else {
+        handleError(e);
+        if (!(e instanceof AuthError) && !(e instanceof ApiError && e.details.code === 'host_offline')) setErrorState({ text: message(e), thread: id ?? (createdDraftScope.current?.hostId === hostId ? createdDraftScope.current.id : selectedId) });
+      }
+      void refreshThreads();
       throw e;
     }
   };
@@ -2852,28 +2905,35 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
     );
   };
 
+  const rootCoordination = coordination?.rootId === selectedId ? coordination : null;
   const collaborationOptions: AgentMention[] = (!draftTeam && !selected?.coordination?.team && (selected?.coordination ? selected.coordination.rootId === selected.id : activeCaps?.coordination)) ? [
-            ...(coordination?.members.map(m => ({ id: m.id, label: m.name, kind: 'member' as const })) ?? []),
-            // An instance hidden on purpose stays out; the roster follows the hub's live list, so
-            // instances that joined after the collaboration started are offered here too.
-            ...agents.filter(a => a.available && a.capabilities.coordination && (coordination ? coordination.agents.includes(a.id) || !a.hidden : !a.hidden)).map(a => ({ id: a.id, label: a.label, kind: 'agent' as const })),
-            ...remoteAgents.map(a => ({ id: a.id, label: a.label, name: a.name, machine: a.machine, kind: 'agent' as const, host: a.host, directories: [...new Set([...recentRemoteDirs(a.host), ...a.directories])] })),
+            ...(rootCoordination ? collaborationMembers(rootCoordination) : []),
+            ...agents.filter(a => a.available && a.capabilities.coordination && (rootCoordination ? rootCoordination.agents.includes(a.id) || !a.hidden : !a.hidden))
+              .map(a => ({ id: a.id, label: a.label, kind: 'agent' as const })),
+            ...remoteAgents.map(a => ({ id: a.id, label: a.label, name: a.name, machine: a.machine, kind: 'agent' as const, host: a.host,
+              directories: [...new Set([...recentRemoteDirs(a.host), ...a.directories])] })),
           ] : [];
   const collaborationIcon = (m: AgentMention) => [...agents, ...remoteAgents].find((a) => a.id === (m.kind === 'agent' ? m.id : coordination?.members.find((v) => v.id === m.id)?.thread?.agent))?.icon;
 
-  const collaborationControl: NonNullable<ComponentProps<typeof Composer>['collaboration']> = (select, chosen, anchorRef, openSignal) => (<Popover label={t('app.collab')} panelClassName="coord-picker-panel" anchorRef={anchorRef} openSignal={openSignal}>
+  const collaborationControl: NonNullable<ComponentProps<typeof Composer>['collaboration']> = (select, chosen, anchorRef, openSignal) => {
+    return (<Popover label={t('app.collab')} panelClassName="coord-picker-panel" anchorRef={anchorRef} openSignal={openSignal}>
       {close => <CollaborationMenu options={collaborationOptions} selected={chosen} icon={collaborationIcon}
         onSelect={mention => { close(); select(mention); }}
         unavailable={selected?.coordination && !leading ? t('app.collabBack') : t('app.collabNone')}
         settings={<div className="coord-setup">
         <p>{t('app.collabHint')}</p>
-        {!selected?.coordination && <>
+        {(!selected?.coordination || selected.coordination.enabled === false) && <>
           <div className="coord-caption">{t('app.collabDirs')}</div>
           {[...new Set([activeCwd, ...workdirs].filter(Boolean))].map(dir => <button className="pop-item compact" role="menuitemcheckbox" aria-checked={(collaborationDirectories.length ? collaborationDirectories : [activeCwd]).includes(dir)} key={dir} onClick={() => setCollaborationDirectories(prev => { const current = prev.length ? prev : [activeCwd]; return current.includes(dir) ? current.filter(v => v !== dir) : [...current, dir]; })}>{(collaborationDirectories.length ? collaborationDirectories : [activeCwd]).includes(dir) ? `${t('app.chosen')} · ` : ''}{dir}</button>)}
           {!running && <button className="pop-item compact" onClick={() => {
-            if (selected) void api.configureCoordination(selected.id, { directories: collaborationDirectories.length ? collaborationDirectories : [selected.cwd], defaults: startingDefaults, permission: memberPermission }).then(value => { setCoordination(value); void refreshThreads(); close(); }).catch(handleError);
+            if (selected) void (async () => {
+              const saved = await api.coordination(selected.id);
+              if (selected.coordination && !saved) throw new Error(t('collab.loadFailed'));
+              const value = await api.configureCoordination(selected.id, coordinationSettings(saved, { directories: collaborationDirectories.length ? collaborationDirectories : [selected.cwd], defaults: startingDefaults, permission: memberPermission }));
+              if (composerScope.current.selectedId === selected.id && composerScope.current.api === api) { setCoordination(value); void refreshThreads(); close(); }
+            })().catch(handleError);
             else { setDraftCollaboration(v => !v); close(); }
-          }}>{draftCollaboration ? t('app.collabOff') : t('app.collabEnable')}</button>}
+          }}>{!selected && draftCollaboration ? t('app.collabOff') : t('app.collabEnable')}</button>}
         </>}
         {(!selected?.coordination || leading) && teamAgents.length > 0 && <>
           <div className="coord-caption">{t('app.memberPermission')}</div>
@@ -2891,6 +2951,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
         {selected?.coordination && <button className="pop-item compact" onClick={() => { setAgentsOpen(true); setFiles(null); close(); }}>{t('team.view')}</button>}
       </div>} />}
     </Popover>);
+  };
 
   const left = (<>
     <PermissionPicker
@@ -3682,7 +3743,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           }} />}
         {showcase ? showcase.composer(selectedId) : <>
         {selected?.coordination?.team && selected.coordination.rootId === selected.id && ['awaiting_confirm', 'needs_attention'].includes(selected.coordination.team.status) && <div className="team-task-notice">{selected.coordination.team.status === 'needs_attention' && <span>{selected.coordination.team.error}</span>}{selected.coordination.team.status === 'awaiting_confirm' && <button className="ghost" onClick={() => void api.configureCoordination(selected.id, { action: 'confirm' }).then(value => { setCoordination(value); void refreshThreads(); }).catch(handleError)}>{t('teams.confirm')}</button>}</div>}
-        {voice.state.error ? <div className="voice-reconnect-row"><button className="voice-reconnect" onClick={() => void voice.start()}>{t('voice.reconnect')}</button><VoiceControls session={voice.state} onMute={voice.toggleMute} onStop={voice.dismissError} /></div> : focusedThread ? <HandoverComposer
+        {voice.state.error ? <div className="voice-reconnect-row"><button className="voice-reconnect" onClick={() => void startVoice()}>{t('voice.reconnect')}</button><VoiceControls session={voice.state} onMute={voice.toggleMute} onStop={voice.dismissError} /></div> : focusedThread ? <HandoverComposer
           key={focusedThread.id} api={api} thread={focusedThread} mark={<SendTargetMark label={agentLabel(focusedThread.agent)} title={focusedThread.title} icon={agents.find(a => a.id === focusedThread.agent)?.icon} onBack={goLatest} />} hostId={hostId}
           attachBlocked={capsOf(focusedThread.agent)?.images ? null : t('app.noImages', agentLabel(focusedThread.agent))}
           onRefresh={() => { void refreshThreads(); }} onError={handleError}
@@ -3705,9 +3766,11 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           reference={messageReference?.draftKey === composerDraftKey ? messageReference : null}
           onReferenceConsumed={id => setMessageReference(current => current?.value.id === id ? null : current)}
           mentionOptions={collaborationOptions}
+          explicitDraftTransfer
+          onDraftTransfer={transfer => { draftTransferSource.current = { key: composerDraftKey, transfer }; }}
           mentionIcon={collaborationIcon}
           collaboration={!draftTeam && !selected?.coordination?.team && (activeCaps?.coordination || selected?.coordination) ? collaborationControl : undefined}
-          collaborationActive={Boolean(selected?.coordination || draftCollaboration)}
+          collaborationActive={Boolean(selected?.coordination && selected.coordination.enabled !== false || draftCollaboration)}
           mentionExtra={(m) => { const a = agents.find((v) => v.id === m.id) ?? remoteAgents.find((v) => v.id === m.id); return a ? memberModel(a) : null; }}
           onBrowseMentionDir={(m, choose) => {
             const a = remoteAgents.find((v) => v.id === m.id);
@@ -3734,7 +3797,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
               type="button"
               className={`tool-btn composer-voice${voice.state.active ? ' active' : ''}`}
               disabled={modeBusy}
-              onClick={voice.state.active ? () => void voice.stop() : canVoiceDraft ? () => void startDraftVoice() : () => void voice.start()}
+              onClick={voice.state.active ? () => void voice.stop() : canVoiceDraft ? () => void startDraftVoice() : () => void startVoice()}
               title={voice.state.active ? t('voice.end') : t('voice.start')}
               aria-label={voice.state.active ? t('voice.end') : t('voice.start')}
             >

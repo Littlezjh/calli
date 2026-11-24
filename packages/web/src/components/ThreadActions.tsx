@@ -11,7 +11,7 @@ import { TakeoverDialog } from './TakeoverDialog';
 import { Menu, type MenuEntry } from './Menu';
 import { AgentPicker } from './Pickers';
 import { ChatQuotaMenu } from './ChatQuotaMenu';
-import { IconDesktop, IconArchive, IconBack, IconBoard, IconCheck, IconCopy, IconDot, IconEdit, IconFiles, IconFork, IconHand, IconHandover, IconList, IconPin, IconPlus, IconSparkle, IconTerminal, IconTrace, IconTrash, IconWorktree } from './icons';
+import { IconDesktop, IconArchive, IconBack, IconBoard, IconCheck, IconCopy, IconDot, IconEdit, IconFiles, IconFork, IconHand, IconHandover, IconList, IconPause, IconPin, IconPlay, IconPlus, IconSparkle, IconTerminal, IconTrace, IconTrash, IconWorktree } from './icons';
 import { formatList, t } from '../i18n';
 import { boardStage, threadAttention, type BoardStage } from '../sidebar';
 
@@ -298,6 +298,13 @@ export function useThreadActions(deps: Deps) {
           },
         ],
       },
+      // Only current members can opt out; ordinary mains and retired lead segments have no switch.
+      ...(typeof thread.disabled === 'boolean' && thread.coordination && !thread.coordination.retired && thread.coordination.rootId !== thread.id ? [{
+        id: thread.disabled ? 'enable' : 'disable',
+        label: thread.disabled ? t('actions.enable') : t('actions.disable'),
+        icon: thread.disabled ? IconPlay : IconPause,
+        onSelect: () => void patch(thread, { disabled: !thread.disabled }),
+      }] : []),
       'separator',
       thread.archivedAt
         ? { id: 'restore', label: t('archive.restore'), icon: IconArchive, onSelect: () => run('restore', thread) }

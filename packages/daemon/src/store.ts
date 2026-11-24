@@ -54,6 +54,8 @@ export interface ThreadRecord {
   agentSessionId: string | null;
   status: 'idle' | 'running' | 'error';
   pinned: boolean;
+  /** Exits collaboration only; user input and conversation history remain available. */
+  disabled: boolean;
   speed?: string | null;
   workMode?: 'execute' | 'plan';
   permissionMode: string;
@@ -368,6 +370,8 @@ interface ThreadRow {
   agent_session_id: string | null;
   status: string;
   pinned: number;
+  /** SQLite boolean for this thread's collaboration switch, not an input lock. */
+  disabled: number;
   permission_mode: string;
   model: string | null;
   effort: string | null;
@@ -408,6 +412,7 @@ const toThread = (r: ThreadRow): ThreadRecord => ({
   agentSessionId: r.agent_session_id,
   status: r.status as ThreadRecord['status'],
   pinned: r.pinned === 1,
+  disabled: r.disabled === 1,
   permissionMode: r.permission_mode,
   model: r.model,
   effort: r.effort,
@@ -525,8 +530,10 @@ export class Store {
     } catch {
       // Column already exists
     }
-    // Migration: threads created before permission modes existed get the default level.
     const cols = this.db.prepare('PRAGMA table_info(threads)').all() as Array<{ name: string }>;
+    // Migration: exit collaboration only, never lock input or inherit legacy member/instance switches.
+    if (!cols.some((c) => c.name === 'disabled')) this.db.exec('ALTER TABLE threads ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0');
+    // Migration: threads created before permission modes existed get the default level.
     if (!cols.some((c) => c.name === 'permission_mode')) {
       this.db.exec("ALTER TABLE threads ADD COLUMN permission_mode TEXT NOT NULL DEFAULT 'auto_edit'");
     }
@@ -939,6 +946,7 @@ export class Store {
       | 'updatedAt'
       | 'agentSessionId'
       | 'pinned'
+      | 'disabled'
       | 'archivedAt'
       | 'sectionId'
       | 'forkedFrom'
@@ -956,9 +964,10 @@ export class Store {
     },
   ): ThreadRecord {
     const now = new Date().toISOString();
+    // New threads and forks start eligible; ignore a source record's collaboration switch.
     this.db
       .prepare(
-        'INSERT INTO threads (id, agent, cwd, title, status, pinned, permission_mode, model, effort, forked_from, worktree, section_id, created_at, updated_at, handover, schedule, work_mode, speed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO threads (id, agent, cwd, title, status, pinned, disabled, permission_mode, model, effort, forked_from, worktree, section_id, created_at, updated_at, handover, schedule, work_mode, speed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       )
       .run(
         t.id,
@@ -966,6 +975,7 @@ export class Store {
         t.cwd,
         t.title,
         'idle',
+        0,
         0,
         t.permissionMode,
         t.model,
@@ -1077,6 +1087,7 @@ export class Store {
         | 'status'
         | 'agentSessionId'
         | 'pinned'
+        | 'disabled'
         | 'workMode'
         | 'speed'
         | 'permissionMode'
@@ -1101,13 +1112,14 @@ export class Store {
     const next = { ...current, ...patch, updatedAt: opts.touch ? new Date().toISOString() : current.updatedAt };
     this.db
       .prepare(
-        'UPDATE threads SET title = ?, status = ?, agent_session_id = ?, pinned = ?, permission_mode = ?, model = ?, effort = ?, archived_at = ?, section_id = ?, unread = ?, preview = ?, hub_turn_at = ?, external_at = ?, updated_at = ?, work_mode = ?, speed = ? WHERE id = ?',
+        'UPDATE threads SET title = ?, status = ?, agent_session_id = ?, pinned = ?, disabled = ?, permission_mode = ?, model = ?, effort = ?, archived_at = ?, section_id = ?, unread = ?, preview = ?, hub_turn_at = ?, external_at = ?, updated_at = ?, work_mode = ?, speed = ? WHERE id = ?',
       )
       .run(
         next.title,
         next.status,
         next.agentSessionId,
         next.pinned ? 1 : 0,
+        next.disabled ? 1 : 0,
         next.permissionMode,
         next.model,
         next.effort,

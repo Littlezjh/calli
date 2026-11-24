@@ -150,6 +150,10 @@ interface Props {
   disabled?: boolean;
   placeholder: string;
   mentionOptions?: AgentMention[];
+  /** Main App binds migration to a returned root; other composers retain their existing send flow. */
+  explicitDraftTransfer?: boolean;
+  /** Captures the source box before an asynchronous creation can navigate elsewhere. */
+  onDraftTransfer?: (transfer: (targetKey: string) => void) => void;
   collaboration?: (select: (mention: AgentMention) => void, selected: AgentMention[], anchorRef: RefObject<HTMLButtonElement>, openSignal: number) => ReactNode;
   collaborationActive?: boolean;
   mentionDirectories?: string[];
@@ -287,6 +291,8 @@ export function Composer({
   quoteSource,
   lastSent = null,
   mentionOptions = [],
+  explicitDraftTransfer,
+  onDraftTransfer,
   collaboration,
   collaborationActive,
   mentionDirectories = [],
@@ -525,6 +531,7 @@ export function Composer({
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const previousDraftKey = useRef(draftKey);
+  const transferredDraftKey = useRef<string | null>(null);
   useLayoutEffect(() => {
     if (draftKey === undefined) return;
     const previous = previousDraftKey.current;
@@ -532,7 +539,8 @@ export function Composer({
     // Creating a thread changes its draft key before uploads finish. Keep that first message
     // in the new thread so an interrupted upload still has an editable, retryable draft.
     const pending = pendingSend.current;
-    const firstMessage = pending?.dispatching && pending.key === previous && (previous === 'new' || previous?.endsWith(':new'));
+    const firstMessage = pending?.dispatching && pending.key === previous && (previous === 'new' || previous?.endsWith(':new'))
+      && (!explicitDraftTransfer || pending.targetKey === draftKey);
     const saved = loadDraft(draftKey) ?? (firstMessage ? pending.draft : undefined);
     if (firstMessage) { pending.targetKey = draftKey; if (saved) keepDraft(draftKey, saved); }
     inFlight.current = saved?.sending ?? null;
@@ -553,8 +561,11 @@ export function Composer({
       // thread mid-send, and the text must not stay behind in the next new thread.
       const pending = pendingSend.current;
       // Link lookups have not sent anything yet: switching away must retain their original draft.
-      const leavingNew = pending?.dispatching && pending.key === draftKey && (draftKey === 'new' || draftKey.endsWith(':new'));
-      keepDraft(draftKey, leavingNew ? null : draft);
+      const leavingNew = pending?.dispatching && pending.key === draftKey && (draftKey === 'new' || draftKey.endsWith(':new'))
+        && (!explicitDraftTransfer || pending.targetKey !== pending.key);
+      const transferred = transferredDraftKey.current === draftKey;
+      if (transferred) transferredDraftKey.current = null;
+      keepDraft(draftKey, leavingNew || transferred ? null : draft);
     };
   }, [draftKey]);
 
@@ -573,6 +584,19 @@ export function Composer({
   // is when it fires, so a switch to another thread in between saves under the right one.
   const keyRef = useRef(draftKey);
   keyRef.current = draftKey;
+  const transferDraft = (targetKey: string) => {
+    const sourceKey = draftKey;
+    if (sourceKey === undefined || sourceKey === targetKey) return;
+    // The captured origin may no longer be visible; never transfer the newly selected box.
+    const origin = keyRef.current === sourceKey ? draftRef.current : loadDraft(sourceKey);
+    if (!origin) return;
+    keepDraft(targetKey, origin);
+    keepDraft(sourceKey, null);
+    const pending = pendingSend.current;
+    if (pending?.key === sourceKey) pending.targetKey = targetKey;
+    if (keyRef.current === sourceKey) transferredDraftKey.current = sourceKey;
+  };
+  useLayoutEffect(() => { onDraftTransfer?.(transferDraft); });
   useEffect(() => {
     if (draftKey === undefined) return;
     const timer = setTimeout(() => {

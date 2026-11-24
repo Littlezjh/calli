@@ -41,9 +41,17 @@ const ARM_DELAY_MS = 400;
 
 /** Fingers on the screen right now. A menu opened by a long press appears under one of them. */
 let fingers = 0;
+const touchPointers = new Set<number>();
 if (typeof document !== 'undefined') {
-  const count = (e: TouchEvent) => { fingers = e.touches.length; };
+  const count = (e: TouchEvent) => { fingers = e.touches.length; if (!fingers) touchPointers.clear(); };
+  // Removing the source popover can detach its touchend target; pointer release still reaches the document.
+  const pointer = (e: PointerEvent) => {
+    if (e.pointerType !== 'touch') return;
+    if (e.type === 'pointerdown') touchPointers.add(e.pointerId); else touchPointers.delete(e.pointerId);
+    fingers = touchPointers.size;
+  };
   for (const type of ['touchstart', 'touchend', 'touchcancel'] as const) document.addEventListener(type, count, { capture: true, passive: true });
+  for (const type of ['pointerdown', 'pointerup', 'pointercancel'] as const) document.addEventListener(type, pointer, { capture: true, passive: true });
 }
 
 /**
@@ -69,19 +77,20 @@ export function Menu({ label, x, y, corner = 'top-left', items, header, dense, o
       e.preventDefault();
       e.stopImmediatePropagation();
     };
-    const up = (e: TouchEvent) => {
-      if (e.touches.length) return;
+    const up = (e: TouchEvent | PointerEvent) => {
+      if ('touches' in e ? e.touches.length : e.pointerType !== 'touch' || fingers) return;
       if (e.cancelable) e.preventDefault();
       window.clearTimeout(timer);
-      timer = window.setTimeout(() => setArmed(true), ARM_DELAY_MS);
+      // A new finger during the compatibility-click delay must keep the menu unarmed.
+      timer = window.setTimeout(() => { if (!fingers) setArmed(true); }, ARM_DELAY_MS);
     };
-    const touch = ['touchend', 'touchcancel'] as const;
+    const release = ['touchend', 'touchcancel', 'pointerup', 'pointercancel'] as const;
     const mouse = ['mousedown', 'mouseup', 'click'] as const;
-    for (const type of touch) document.addEventListener(type, up, true);
+    for (const type of release) document.addEventListener(type, up, true);
     for (const type of mouse) document.addEventListener(type, swallow, true);
     return () => {
       window.clearTimeout(timer);
-      for (const type of touch) document.removeEventListener(type, up, true);
+      for (const type of release) document.removeEventListener(type, up, true);
       for (const type of mouse) document.removeEventListener(type, swallow, true);
     };
   }, [armed]);

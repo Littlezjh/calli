@@ -1234,6 +1234,9 @@ export const ja: Messages = {
   'ruler.position': (n: number, total: number) => `全 ${total} ターン中 ${n} 番目`,
   'ruler.image': '（画像）',
 
+  // Saved collaboration settings
+  'collab.loadFailed': '保存したコラボレーション設定を読み込めませんでした。有効にする前に再試行してください。',
+
   // Choosing a collaborator
   'collab.back': 'エージェントの選択に戻る',
   'collab.settings': 'コラボレーション設定',
@@ -2353,6 +2356,8 @@ export const ja: Messages = {
   'actions.copyMarkdown': '会話全体（Markdown）',
   'actions.resumeCommand': 'ターミナルでの再開コマンド',
   'actions.cwd': '作業ディレクトリ',
+  'actions.disable': '無効にする',
+  'actions.enable': '有効にする',
   'actions.archive': 'アーカイブ',
   'actions.renameSection': 'セクション名を変更',
   'actions.deleteSection': 'セクションを削除',

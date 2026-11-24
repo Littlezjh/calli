@@ -145,7 +145,10 @@ export type ThreadView = Omit<ThreadRecord, 'worktree' | 'handover' | 'writing'>
   /** The daemon advancing this thread by itself (an external wait, an unfinished turn); null when nothing is pending. */
   advance?: AdvanceView | null;
   /** `doing`, on a member: its latest task while it works, the opening of its answer once it has returned. */
-  coordination?: { retired?: boolean; rootId: string; children: number; paused: boolean; doing?: string; team?: { name: string; status: import('./teams.js').TaskStatus; role: string; error?: string } };
+  coordination?: { retired?: boolean; rootId: string; children: number; paused: boolean; doing?: string;
+    /** False is configuration only, not an active collaboration. */
+    enabled?: boolean;
+    team?: { name: string; status: import('./teams.js').TaskStatus; role: string; error?: string } };
   /** Working in the hub's scratch area: a thread that is in no project. */
   scratch: boolean;
   /** The project directory no longer exists, e.g. a temporary checkout removed after a run. */
@@ -357,6 +360,7 @@ export class ThreadManager {
   private readonly running = new Map<string, { turnId: string; cancelRequested: boolean; since: string }>();
   readonly inputs = new UserInputs((thread, turn, type, data) => this.emitThreadEvent(thread, turn, type, data));
   private readonly dispatchingQueues = new Set<string>();
+  /** Keep the preparing item reachable by synchronous coordination switches. */
   private readonly startingTurns = new Map<string, Promise<unknown>>();
   private readonly changingModes = new Set<string>();
   /** Turns that asked the agent for a `[进度]` line, read back when they end. */
@@ -1864,6 +1868,8 @@ export class ThreadManager {
     updates: {
       /** Only an explicit composer edit changes defaults for future threads. */
       rememberModelChoice?: boolean;
+      /** Exits collaboration only; human input and history remain available. */
+      disabled?: boolean;
       title?: string;
       pinned?: boolean;
       workMode?: WorkMode;
@@ -1880,6 +1886,8 @@ export class ThreadManager {
     },
   ): Promise<ThreadView> {
     const thread = this.getThread(id);
+    // Reject malformed switches before any model, progress or runtime side effects.
+    if (updates.disabled !== undefined && typeof updates.disabled !== 'boolean') throw new HttpError(400, 'disabled must be true or false');
     const rememberChoice = updates.rememberModelChoice === true &&
       (updates.model !== undefined || updates.effort !== undefined || updates.speed !== undefined);
     if (rememberChoice && updates.model !== undefined) {
@@ -1891,6 +1899,7 @@ export class ThreadManager {
       };
     }
     const patch: Record<string, unknown> = {};
+    if (updates.disabled !== undefined) patch.disabled = updates.disabled;
     if (updates.done !== undefined) {
       if (typeof updates.done !== 'boolean') throw new HttpError(400, 'done must be true or false');
       // The person's word; whatever the agent said before no longer stands.
@@ -2002,6 +2011,8 @@ export class ThreadManager {
       await this.applyLive(thread, 'speed', s => s.setSpeed?.(patch.speed as string | null) ?? Promise.resolve(false));
     }
     this.store.updateThread(id, patch as any);
+    // Withdraw only collaboration mailboxes, synchronously with the persisted thread switch.
+    if (updates.disabled !== undefined) this.coordination?.threadChanged(id);
     if (rememberChoice) {
       const chosen = this.getThread(id);
       this.rememberModelPreference(thread.agent, { model: chosen.model, effort: chosen.effort, speed: chosen.speed ?? null });
@@ -2058,7 +2069,7 @@ export class ThreadManager {
   async deleteThread(id: string, opts: { agentSession?: boolean; worktree?: boolean; force?: boolean } = {}): Promise<void> {
     const thread = this.getThread(id);
     if (this.running.has(id)) throw new HttpError(409, 'cancel the running turn before deleting this thread');
-    if (this.coordination?.metadata(id)) throw new HttpError(409, '协作线程请先归档，保留成员关系与消息记录');
+    if (this.coordination?.enabled(id)) throw new HttpError(409, '协作线程请先归档，保留成员关系与消息记录');
     let doomed: { main: string; tree: ThreadWorktree } | null = null;
     if (opts.worktree) {
       const tree = thread.worktree;
@@ -2104,6 +2115,7 @@ export class ThreadManager {
     this.modelQueues.delete(id);
     this.goals.delete(id);
     this.store.deleteThread(id);
+    this.coordination?.forgetConfiguration(id);
     this.attachments.removeThread(id);
   }
 
@@ -2862,7 +2874,7 @@ export class ThreadManager {
   private async startTurnReady(
     threadId: string,
     input: { voiceSummary?: string; workMode?: unknown; text?: unknown; displayText?: string; channel?: TurnChannel; coalesce?: TurnBatch; images?: unknown; videos?: unknown; queue?: unknown; mentions?: unknown; collaboration?: CoordinationSetup; handoverFrom?: string; autoContinuation?: boolean; handover?: unknown; scheduled?: unknown; review?: boolean; proactive?: unknown; fromUser?: boolean; dispatchRunId?: string },
-    delivery?: { turnId: string; source: Record<string, unknown>; displayText: string; claim: () => void },
+    delivery?: { turnId: string; source: Record<string, unknown>; displayText: string; prepare?: () => Promise<void>; claim: () => void },
     fromQueue = false,
     reservedTurnId?: string,
     beforeStart?: (turnId: string) => void,
@@ -2874,9 +2886,11 @@ export class ThreadManager {
     const originalText = typeof input.text === 'string' ? input.text.trim() : '';
     const reference = this.references.prepare(threadId, originalText, input.fromUser === true, input.handoverFrom);
     if (thread.workMode === 'plan' && /^\/goal(?:\s|$)/.test(originalText) && !['/goal', '/goal pause', '/goal clear'].includes(originalText)) throw new HttpError(409, '请切到执行模式后启动目标');
-    const mentions = Array.isArray(input.mentions) && input.mentions.length ? input.mentions : undefined;
-    if ((mentions || input.collaboration) && !this.coordination) throw new HttpError(400, '协作不可用');
-    let rawText = await this.coordination?.previewMentions(threadId, originalText, mentions, input.collaboration) ?? originalText;
+    // An exited thread still accepts the person's text, without stale collaboration setup/mentions.
+    const mentions = !thread.disabled && Array.isArray(input.mentions) && input.mentions.length ? input.mentions : undefined;
+    const collaboration = thread.disabled ? undefined : input.collaboration;
+    if ((mentions || collaboration) && !this.coordination) throw new HttpError(400, '协作不可用');
+    let rawText = await this.coordination?.previewMentions(threadId, originalText, mentions, collaboration) ?? originalText;
     const rawImages = Array.isArray(input.images) ? input.images : [];
     const storedVideos = this.attachments.videos(threadId, input.videos);
     const videoIds = storedVideos.map(v => v.id);
@@ -2919,16 +2933,16 @@ export class ThreadManager {
       }
       if (queue.length >= MAX_QUEUED) throw new HttpError(409, `at most ${MAX_QUEUED} messages can wait in a thread`);
       this.attachments.check(rawImages); // a bad image is refused now, not when its turn comes
-      const queued: QueuedTurn = { ...(personalControl ? { assistantSay: personalControl.assistantSay } : {}), ...(input.dispatchRunId ? { dispatchRunId: input.dispatchRunId } : {}), voiceSummary: input.voiceSummary, workMode: thread.workMode ?? 'execute', id: randomUUID(), text: originalText, displayText: input.displayText, channel: input.channel, ...(input.coalesce ? { coalesce: input.coalesce } : {}), images: rawImages, videos: videoIds, ...(mentions ? { mentions } : {}), ...(input.collaboration ? { collaboration: input.collaboration } : {}), ...(input.fromUser ? { fromUser: true } : {}) };
+      const queued: QueuedTurn = { ...(personalControl ? { assistantSay: personalControl.assistantSay } : {}), ...(input.dispatchRunId ? { dispatchRunId: input.dispatchRunId } : {}), voiceSummary: input.voiceSummary, workMode: thread.workMode ?? 'execute', id: randomUUID(), text: originalText, displayText: input.displayText, channel: input.channel, ...(input.coalesce ? { coalesce: input.coalesce } : {}), images: rawImages, videos: videoIds, ...(mentions ? { mentions } : {}), ...(collaboration ? { collaboration } : {}), ...(input.fromUser ? { fromUser: true } : {}) };
       this.references.grant(threadId, reference.references);
       this.queues.set(threadId, [...queue, queued]);
       this.emitThreadEvent(threadId, null, 'thread.updated', {});
       return { queued: true, id: queued.id };
     }
 
-    if ((mentions || input.collaboration) && !this.coordination?.metadata(threadId)) {
+    if ((mentions || collaboration) && !this.coordination?.enabled(threadId)) {
       if (!this.coordination) throw new HttpError(400, '协作不可用');
-      await this.coordination.enable(threadId, input.collaboration);
+      await this.coordination.enable(threadId, collaboration);
     }
     rawText = this.coordination?.mentionText(threadId, reference.text, mentions) ?? reference.text;
     // Slash commands have their own argument grammar; hidden instructions become unwanted arguments.
@@ -2964,7 +2978,13 @@ export class ThreadManager {
     const personalHuman = this.personal.router.status().threadId === threadId && input.fromUser === true
       && !delivery && !input.scheduled && !input.review && !input.proactive && !input.autoContinuation;
     const context = personalHuman && !slashCommand ? await this.personal.router.context(threadId) : null;
-    const promptText = (context?.text ?? '') + text + this.attachments.videoNote(threadId, storedVideos);
+    // Refresh automatic delivery endpoints after all async preparation, then claim synchronously.
+    if (delivery?.prepare) await delivery.prepare();
+    // Recheck mentions and summaries immediately before the irreversible local commit.
+    this.coordination?.mentionText(threadId, reference.text, mentions);
+    const promptText = this.coordination?.filterInstructions(input.handoverFrom ?? threadId,
+      (context?.text ?? '') + text + this.attachments.videoNote(threadId, storedVideos))
+      ?? (context?.text ?? '') + text + this.attachments.videoNote(threadId, storedVideos);
     // Internal callers may attach protocol context. Only the person's words (or a channel
     // summary) belong in the conversation, its queue, and later replay/continuation views.
     const displayText = delivery?.displayText ?? input.displayText ?? originalText.split('\n\n[指定协作对象]')[0];
@@ -3255,7 +3275,7 @@ export class ThreadManager {
     // re-reads it; past this size a brief and `calli history` cost far less than carrying it over.
     if ((this.store.lastContextUsed(id) ?? 0) > RESUME_HANDOVER_MAX_CONTEXT) return false;
     // A teammate's place moves with the successor's first turn; without a failed turn to resend there is none.
-    if (!failedTurn && this.coordination?.metadata(id)) return false;
+    if (!failedTurn && this.coordination?.enabled(id)) return false;
     const agents = await this.listAgents();
     const kind = (agent: string) => agents.find(a => a.id === agent)?.adapter;
     return kind(thread.agent) !== undefined && kind(thread.agent) === kind(target);
@@ -3457,7 +3477,8 @@ export class ThreadManager {
 
   /** Sends the next waiting message, if there is one. Called whenever a turn has finished. */
   private startNextQueued(threadId: string): void {
-    if (this.autoHandover.queuePaused(threadId) || this.running.has(threadId) || this.startingTurns.has(threadId) || this.dispatchingQueues.has(threadId)) return;
+    // Late preparation cleanup must not read the store or dispatch more work after shutdown.
+    if (this.stopping || this.autoHandover.queuePaused(threadId) || this.running.has(threadId) || this.startingTurns.has(threadId) || this.dispatchingQueues.has(threadId)) return;
     if (this.store.getThread(threadId)?.status === 'error' && this.store.lastTurnFailure(threadId)?.code === 'session_in_use') return;
     const queue = this.queues.get(threadId);
     const next = queue?.find(q => !q.error);
@@ -3677,7 +3698,7 @@ export class ThreadManager {
   voiceProvider(threadId: string, fallbackProviderId?: string): { providerId: string } {
     const thread = this.getThread(threadId);
     const native = this.adapters.get(thread.agent)?.capabilities.realtimeVoice;
-    if (!native && !this.coordination?.metadata(threadId) && this.running.has(threadId)) {
+    if (!native && !this.coordination?.enabled(threadId) && this.running.has(threadId)) {
       throw new HttpError(409, 'voice_target_busy');
     }
     const providerId = native ? thread.agent : fallbackProviderId;
@@ -3754,8 +3775,9 @@ export class ThreadManager {
         authorize();
         if (provider !== this.getThread(threadId).agent) {
           nativeThreadId = await this.coordination!.voiceThread(threadId, provider);
-        } else if (this.coordination && !this.coordination.metadata(threadId) && !this.running.has(threadId)) {
-          await this.coordination.enable(threadId, { permission: this.getThread(threadId).permissionMode });
+        } else if (this.coordination && !this.getThread(threadId).disabled && this.coordination.metadata(threadId)?.enabled !== false
+          && !this.coordination.enabled(threadId) && !this.running.has(threadId)) {
+          await this.coordination.enable(threadId, { permission: this.getThread(threadId).permissionMode }, true);
         }
         if (ended) throw new Error('voice_session_ended');
         authorize();
@@ -3769,7 +3791,7 @@ export class ThreadManager {
         if (this.voiceProvider(threadId, provider).providerId !== provider || this.adapters.get(provider) !== adapter) {
           throw new Error('voice_provider_changed');
         }
-        let instructions = this.coordination?.metadata(nativeThreadId)
+        let instructions = !this.getThread(threadId).disabled && this.coordination?.enabled(nativeThreadId)
           ? this.coordination.instructions(nativeThreadId, '你在处理实时语音委托。普通聊天不派发任务。用户指定其他智能体时使用协作命令；先查现有成员，后续修改继续同一成员。派发立即返回，不等待任务结束、不轮询。结果自动交回后按真实状态简短汇报，失败或待处理要明确说出。不能把已派发或本轮已返回当作需求已完成。停止播报、结束语音和停止工作是不同动作，指代不清时先澄清。')
           : undefined;
         if (instructions && nativeThreadId !== threadId) {

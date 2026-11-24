@@ -148,6 +148,63 @@ test('Codex writes a file, Claude reviews it, and peer feedback resumes the orig
   } finally { await h.close(); }
 });
 
+test('CLI status filters the actual preview source when newer work is queued', async t => {
+  for (const withheld of [false, true]) await t.test(withheld ? 'suppressed result' : 'allowed result', async () => {
+    const h = await setup();
+    const text = withheld ? 'PRIVATE_PREVIEW_RESULT' : 'previous allowed result';
+    let reached = false, release = () => {};
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    try {
+      const adapter = h.adapters.get('pi')!;
+      const start = adapter.start.bind(adapter);
+      adapter.start = async opts => {
+        const session = await start(opts);
+        const prompt = session.prompt.bind(session);
+        session.prompt = async (input, hooks) => {
+          if (input.text.includes(text)) { reached = true; await gate; }
+          return prompt(input, hooks);
+        };
+        return session;
+      };
+      await h.team.enable(h.root.id);
+      const job = await h.team.command(h.root.id, spawn('preview-worker', 'pi', text)) as { id: string; to: string };
+      await wait(() => reached && h.team.view(h.root.id)!.members[0].latest?.state === 'running');
+      if (withheld) await h.manager.updateThread(job.to, { disabled: true });
+      release();
+      await wait(() => h.team.view(h.root.id)!.messages.find(d => d.id === job.id)?.state === 'returned');
+      const completed = h.team.view(h.root.id)!.messages.find(d => d.id === job.id)!;
+      assert.equal(Boolean('suppressed' in completed && completed.suppressed), withheld);
+      assert.match(completed.result, new RegExp(text), 'the fixture really produced the old result');
+      if (withheld) await h.manager.updateThread(job.to, { disabled: false });
+      await wait(() => h.manager.threadView(h.root.id).status === 'idle');
+      for (let n = 0; n < 3; n++) await h.team.command(h.root.id, spawn(`busy-${n}`, 'pi', 'slow'));
+      await wait(() => h.team.view(h.root.id)!.members.filter(m => m.thread?.status === 'running').length === 3);
+      const queued = await h.team.command(h.root.id, { op: 'send', target: job.to, text: 'new allowed request', requestId: 'preview-next' }) as { id: string };
+      const browser = h.team.view(h.root.id)!;
+      const member = browser.members.find(m => m.id === job.to)!;
+      assert.equal(member.latest!.id, queued.id);
+      assert.equal(member.latest!.state, 'queued');
+      assert.equal(member.thread!.status, 'idle');
+      assert.ok(browser.messages.some(d => d.id === job.id && d.result.includes(text)), 'browser history still contains the old result');
+      const status = await h.team.command(h.root.id, { op: 'status' }) as any;
+      const visible = status.members.find((m: any) => m.id === job.to);
+      assert.equal(visible.latest.id, queued.id, 'the legitimate queued task remains visible');
+      if (withheld) {
+        assert.doesNotMatch(visible.thread.coordination.doing ?? '', new RegExp(text), 'the selected old preview is withheld even though latest is allowed');
+        assert.doesNotMatch(JSON.stringify(status), new RegExp(text));
+      } else {
+        assert.match(visible.thread.coordination.doing, new RegExp(text), 'an allowed result stays visible while its follow-up is queued');
+      }
+      const held = browser.members.find(m => m.name === 'busy-0')!;
+      await h.team.command(h.root.id, { op: 'send', target: held.id, text: 'queued behind active', requestId: 'preview-active-next' });
+      const active = (await h.team.command(h.root.id, { op: 'status' }) as any).members.find((m: any) => m.id === held.id);
+      assert.equal(active.thread.status, 'running');
+      assert.equal(active.latest.state, 'queued');
+      assert.equal(active.thread.coordination.doing, 'slow', 'the genuine running task keeps its preview');
+    } finally { release(); await h.close(); }
+  });
+});
+
 test('idempotency, member scope and real-path directory validation', async () => {
   const h = await setup();
   try {
@@ -720,7 +777,8 @@ test('the lead reads and writes a remote member folder over relay; other members
     await h.team.enable(h.root.id);
     writeFileSync(join(far.cwd, 'data.txt'), 'remote content\n');
     await h.team.command(h.root.id, spawn('far', 'pi@devbox', 'TASK', { cwd: far.cwd }));
-    const member = h.team.view(h.root.id)!.members[0];
+    // Only local members have a calli caller identity; remote workers remain relay targets.
+    const peer = await h.team.command(h.root.id, spawn('local', 'pi', 'LOCAL_TASK', {})) as { to: string };
     const listed = await h.team.command(h.root.id, { op: 'remote', action: 'ls', target: 'far' }) as { entries: Array<{ name: string }> };
     assert.ok(listed.entries.some(e => e.name === 'data.txt'));
     const read = await h.team.command(h.root.id, { op: 'remote', action: 'read', target: 'far', path: 'data.txt' }) as { text: string; hash: string; size: number; truncated: boolean };
@@ -733,8 +791,8 @@ test('the lead reads and writes a remote member folder over relay; other members
     const written = await h.team.command(h.root.id, { op: 'remote', action: 'write', target: 'far', path: 'data.txt', text: 'changed\n', expectHash: read.hash }) as { size: number };
     assert.equal(written.size, 8);
     assert.equal(readFileSync(join(far.cwd, 'data.txt'), 'utf8'), 'changed\n');
-    assert.equal((await h.team.command(member.id, { op: 'remote', action: 'read', target: 'far', path: 'data.txt' }) as { text: string }).text, 'changed\n');
-    await assert.rejects(h.team.command(member.id, { op: 'remote', action: 'write', target: 'far', path: 'data.txt', text: 'no' }), (err: any) => err.status === 403);
+    assert.equal((await h.team.command(peer.to, { op: 'remote', action: 'read', target: 'far', path: 'data.txt' }) as { text: string }).text, 'changed\n');
+    await assert.rejects(h.team.command(peer.to, { op: 'remote', action: 'write', target: 'far', path: 'data.txt', text: 'no' }), (err: any) => err.status === 403);
     // A stale hash does not overwrite what someone else wrote.
     await assert.rejects(
       h.team.command(h.root.id, { op: 'remote', action: 'write', target: 'far', path: 'data.txt', text: 'stale', expectHash: '0'.repeat(64) }),
@@ -750,7 +808,6 @@ test('the lead reads and writes a remote member folder over relay; other members
     writeFileSync(join(far.cwd, 'bin'), Buffer.from([0, 1, 2]));
     await assert.rejects(h.team.command(h.root.id, { op: 'remote', action: 'read', target: 'far', path: 'bin' }), (err: any) => err.status === 415);
     // A local member has no folder on another machine.
-    await h.team.command(h.root.id, spawn('local', 'pi', 'LOCAL_TASK', {}));
     await assert.rejects(h.team.command(h.root.id, { op: 'remote', action: 'read', target: 'local', path: 'x' }), (err: any) => err.status === 400);
   } finally { await h.close(); await far.close(); }
 });
@@ -863,6 +920,447 @@ test('the person talking to a member directly is answered there and told to the 
     const later = h.store.listEvents(h.root.id, 0, -1).filter(e => e.type === 'turn.started').at(-1)!;
     assert.doesNotMatch(String(later.data.text), /用户对 worker 说/);
   } finally { await h.close(); }
+});
+
+/** A switch commits while the serialized pump is waiting, before its local claim can start a turn. */
+test('disabling a preparing local delivery commits promptly and stops its old queue permanently', async () => {
+  const h = await setup();
+  let release!: () => void;
+  const gate = new Promise<void>(r => { release = r; });
+  const start = h.manager.startTurn.bind(h.manager);
+  let preparing = false;
+  h.manager.startTurn = async (id, input, delivery) => { if (delivery) { preparing = true; await gate; } return start(id, input, delivery); };
+  try {
+    await h.team.enable(h.root.id);
+    const job = await h.team.command(h.root.id, spawn('claim')) as { to: string; id: string };
+    await wait(() => preparing);
+    await Promise.race([h.manager.updateThread(job.to, { disabled: true }), new Promise<never>((_, reject) => setTimeout(() => reject(new Error('switch waited behind pump')), 500))]);
+    assert.equal(h.team.view(h.root.id)!.messages.find(d => d.id === job.id)!.state, 'stopped');
+    release(); await h.team.command(h.root.id, { op: 'status' });
+    assert.equal(h.store.listEvents(job.to, 0, -1).some(e => e.type === 'turn.started'), false);
+    await h.manager.updateThread(job.to, { disabled: false });
+    assert.equal((await h.team.command(h.root.id, spawn('claim')) as any).state, 'stopped');
+    await h.team.command(h.root.id, { op: 'send', target: 'claim', text: 'new work', requestId: 'claim-new' });
+    await wait(() => h.team.view(h.root.id)!.members[0].latest?.state === 'returned');
+    assert.equal(h.store.listEvents(job.to, 0, -1).filter(e => e.type === 'turn.started').length, 1);
+  } finally { release(); await h.close(); }
+});
+
+/** Only completed results are sticky-suppressed; the active member turn is not cancelled. */
+test('local results received while disabled remain in history and cannot revive on enabling or restart', async () => {
+  const h = await setup();
+  let restored: CoordinationManager | undefined;
+  try {
+    await h.team.enable(h.root.id);
+    const job = await h.team.command(h.root.id, spawn('late-result', 'pi', 'slowthink')) as { to: string; id: string };
+    await wait(() => h.manager.threadView(job.to).status === 'running');
+    await h.manager.updateThread(job.to, { disabled: true });
+    assert.equal((h.team.view(h.root.id)!.messages.find(d => d.id === job.id) as any).suppressed, undefined);
+    await wait(() => h.team.view(h.root.id)!.members[0].latest?.state === 'returned');
+    const messages = h.team.view(h.root.id)!.messages;
+    assert.equal((messages.find(d => d.id === job.id) as any).suppressed, true);
+    assert.ok(messages.some(d => d.kind === 'result' && d.state === 'stopped' && 'suppressed' in d && d.suppressed));
+    const ending = h.store.listEvents(job.to, 0, -1).find(e => e.type === 'turn.done')!;
+    assert.notEqual(ending.data.stopReason, 'cancelled');
+    assert.equal(h.store.listEvents(h.root.id, 0, -1).some(e => e.type === 'turn.started'), false);
+    await h.manager.updateThread(job.to, { disabled: false });
+    await assert.rejects(h.team.command(h.root.id, { op: 'result', target: job.id }), /抑制/);
+    await assert.rejects(h.team.command(h.root.id, spawn('late-result', 'pi', 'slowthink')), /抑制/);
+    const execution = await h.team.command(h.root.id, { op: 'status' }) as any;
+    assert.equal(execution.members[0].latest, null);
+    assert.equal(execution.members[0].thread?.coordination?.doing, undefined);
+    assert.equal(execution.members[0].thread?.preview, undefined);
+    assert.equal(execution.members[0].thread?.title, 'late-result', 'an existing collaboration title is preserved');
+    assert.ok(h.team.view(h.root.id)!.members[0].latest?.result, 'browser history retains the member answer');
+    h.team.dispose();
+    restored = new CoordinationManager(h.store, h.manager, join(h.dir, 'restored.sock'));
+    assert.ok(restored.view(h.root.id)!.messages.some(d => d.kind === 'result' && d.state === 'stopped' && 'suppressed' in d && d.suppressed));
+    await restored.command(h.root.id, { op: 'status' });
+    assert.equal(h.store.listEvents(h.root.id, 0, -1).some(e => e.type === 'turn.started'), false);
+    assert.ok(h.store.listEvents(job.to, 0, -1).some(e => e.type === 'message.delta'), 'member history remains readable');
+  } finally { restored?.dispose(); await h.close(); }
+});
+
+/** Re-enabling before completion preserves the original turn's normal result path. */
+test('a member re-enabled before its original turn finishes can return its result', async () => {
+  const h = await setup();
+  try {
+    await h.team.enable(h.root.id);
+    const job = await h.team.command(h.root.id, spawn('restored-turn', 'pi', 'slowthink')) as { to: string; id: string };
+    await wait(() => h.manager.threadView(job.to).status === 'running');
+    await h.manager.updateThread(job.to, { disabled: true });
+    await h.manager.updateThread(job.to, { disabled: false });
+    await wait(() => h.team.view(h.root.id)!.members[0].latest?.state === 'returned');
+    assert.equal((h.team.view(h.root.id)!.messages.find(d => d.id === job.id) as any).suppressed, undefined);
+    await wait(() => h.store.listEvents(h.root.id, 0, -1).some(e => e.type === 'turn.started'));
+    assert.ok(h.team.view(h.root.id)!.messages.some(d => d.kind === 'result' && !('suppressed' in d && d.suppressed)));
+  } finally { await h.close(); }
+});
+
+/** An already queued notification is actually withheld and cannot become work after enabling. */
+test('disabling a queued local result suppresses its related delivery permanently', async () => {
+  const h = await setup();
+  try {
+    await h.team.enable(h.root.id);
+    await h.manager.startTurn(h.root.id, { text: 'slow' });
+    const job = await h.team.command(h.root.id, spawn('queued-result')) as { to: string; id: string };
+    await wait(() => h.team.view(h.root.id)!.messages.some(d => d.kind === 'result' && d.state === 'queued'));
+    await h.manager.updateThread(job.to, { disabled: true });
+    await h.manager.updateThread(job.to, { disabled: false });
+    assert.equal((h.team.view(h.root.id)!.messages.find(d => d.id === job.id) as any).suppressed, true);
+    await h.manager.cancelTurn(h.root.id, { keepQueue: true });
+    await h.team.command(h.root.id, { op: 'status' });
+    assert.equal(h.store.listEvents(h.root.id, 0, -1).filter(e => e.type === 'turn.started').length, 1);
+  } finally { await h.close(); }
+});
+
+/** A preparation error arriving after a switch is history, not a fresh notification. */
+test('a late local start error is suppressed without reviving its stopped delivery', async () => {
+  const h = await setup();
+  let release!: () => void;
+  const gate = new Promise<void>(r => { release = r; });
+  const start = h.manager.startTurn.bind(h.manager);
+  let preparing = false;
+  h.manager.startTurn = async (id, input, delivery) => {
+    if (delivery) { preparing = true; await gate; throw new Error('delayed startup failure'); }
+    return start(id, input, delivery);
+  };
+  try {
+    await h.team.enable(h.root.id);
+    const job = await h.team.command(h.root.id, spawn('error-gate')) as { to: string; id: string };
+    await wait(() => preparing);
+    await h.manager.updateThread(job.to, { disabled: true });
+    await h.manager.updateThread(job.to, { disabled: false });
+    release(); await h.team.command(h.root.id, { op: 'status' });
+    const message = h.team.view(h.root.id)!.messages.find(d => d.id === job.id) as any;
+    assert.equal(message.state, 'stopped'); assert.equal(message.suppressed, true);
+    assert.match(message.result, /startup failure/);
+    assert.ok(h.team.view(h.root.id)!.messages.some(d => d.key === `start-error:${job.id}` && 'suppressed' in d && d.suppressed && d.state === 'stopped'));
+    assert.equal(h.store.listEvents(h.root.id, 0, -1).some(e => e.type === 'turn.started'), false);
+  } finally { release(); await h.close(); }
+});
+
+/** Legacy local records default to enabled and recover withheld results without replay. */
+test('legacy local records recover suppressed results without reconstructing runnable notifications', async () => {
+  const h = await setup();
+  let restored: CoordinationManager | undefined;
+  try {
+    await h.team.enable(h.root.id);
+    const job = await h.team.command(h.root.id, spawn('legacy')) as { id: string; to: string };
+    await wait(() => h.team.view(h.root.id)!.members[0].latest?.state === 'returned');
+    await wait(() => h.manager.threadView(h.root.id).status === 'idle');
+    h.team.dispose();
+    const row = JSON.parse(h.store.coordinationRecords()[0].data);
+    delete row.enabled;
+    row.deliveries = row.deliveries.filter((d: any) => d.id === job.id);
+    row.deliveries[0].state = 'running'; row.deliveries[0].suppressed = true;
+    h.store.saveCoordination(h.root.id, JSON.stringify(row));
+    restored = new CoordinationManager(h.store, h.manager, join(h.dir, 'legacy.sock'));
+    const view = restored.view(h.root.id)!;
+    assert.equal(view.enabled, true);
+    assert.equal(view.members[0].thread!.disabled, false);
+    assert.equal(view.messages.find(d => d.id === job.id)!.state, 'returned');
+    assert.ok(view.messages.some(d => d.kind === 'result' && d.state === 'stopped' && 'suppressed' in d && d.suppressed));
+    const before = h.store.listEvents(h.root.id, 0, -1).filter(e => e.type === 'turn.started').length;
+    await restored.command(h.root.id, { op: 'status' });
+    assert.equal(h.store.listEvents(h.root.id, 0, -1).filter(e => e.type === 'turn.started').length, before);
+  } finally { restored?.dispose(); await h.close(); }
+});
+
+/** A told DirectTalk hides only its current failure in CLI execution, while browser history remains intact. */
+test('a suppressed DirectTalk failure cannot leak through CLI member metadata after enabling', async () => {
+  const h = await setup();
+  try {
+    await h.team.enable(h.root.id);
+    const member = await h.manager.createThread({ agent: 'pi', cwd: h.cwd });
+    const raw = (h.team as any).teams.get(h.root.id);
+    raw.members.push({ id: member.id, name: 'direct-failure' });
+    (h.team as any).changed(raw);
+    await h.manager.updateThread(member.id, { disabled: true });
+    const direct = await h.manager.startTurn(member.id, { text: 'private fail', fromUser: true });
+    await wait(() => raw.direct?.some((d: any) => d.turnId === direct.turnId && d.told));
+    assert.match(h.manager.threadView(member.id).failure!.message, /provider exploded/);
+    await h.manager.updateThread(member.id, { disabled: false });
+    const status = await h.team.command(h.root.id, { op: 'status' }) as any;
+    assert.equal(status.members.find((m: any) => m.id === member.id).thread.failure, undefined);
+    assert.doesNotMatch(JSON.stringify(status), /provider exploded|private fail/);
+    assert.equal(status.members[0].thread.preview, undefined);
+    assert.equal(status.members[0].thread.title, 'direct-failure');
+    assert.equal(status.messages.some((d: any) => d.text === 'private fail'), false);
+    assert.equal(h.team.view(h.root.id)!.members[0].thread!.preview, 'private fail');
+    assert.equal(h.team.view(h.root.id)!.members[0].thread!.title, 'private fail');
+    assert.match(h.team.view(h.root.id)!.members[0].thread!.failure!.message, /provider exploded/);
+    assert.ok(h.store.listTurnEvents(member.id, direct.turnId).some(e => e.type === 'turn.error' && String(e.data.message).includes('provider exploded')));
+    // A later legitimate collaboration failure must not be masked by that old told turn.
+    await h.manager.startTurn(h.root.id, { text: 'slow' });
+    const allowed = await h.team.command(h.root.id, { op: 'send', target: member.id, text: 'allowed work fail', requestId: 'allowed-failure' }) as { id: string };
+    await wait(() => h.team.view(h.root.id)!.messages.find(d => d.id === allowed.id)?.state === 'failed');
+    const later = await h.team.command(h.root.id, { op: 'status' }) as any;
+    assert.match(later.members.find((m: any) => m.id === member.id).thread.failure.message, /provider exploded/);
+    assert.match(later.members.find((m: any) => m.id === member.id).latest.text, /allowed work fail/);
+    assert.doesNotMatch(JSON.stringify(later), /private fail/);
+    assert.equal(h.manager.threadView(member.id).preview, 'private fail', 'a legitimate coordination turn does not overwrite the browser preview');
+    const completed = await h.team.command(h.root.id, { op: 'send', target: member.id, text: 'allowed work completes', requestId: 'allowed-completion' }) as { id: string };
+    await wait(() => h.team.view(h.root.id)!.messages.find(d => d.id === completed.id)?.state === 'returned');
+    assert.doesNotMatch(JSON.stringify(await h.team.command(h.root.id, { op: 'status' })), /private fail/);
+    assert.equal(h.manager.threadView(member.id).preview, 'private fail');
+    // A pre-existing title is not hidden just because this member has a withheld direct reply.
+    const named = await h.manager.createThread({ agent: 'pi', cwd: h.cwd, title: 'Existing manual title' });
+    raw.members.push({ id: named.id, name: 'named-member' });
+    await h.manager.updateThread(named.id, { disabled: true });
+    const namedTalk = await h.manager.startTurn(named.id, { text: 'another private fail', fromUser: true });
+    await wait(() => raw.direct?.some((d: any) => d.turnId === namedTalk.turnId && d.told));
+    await h.manager.updateThread(named.id, { disabled: false });
+    const namedStatus = await h.team.command(h.root.id, { op: 'status' }) as any;
+    assert.equal(namedStatus.members.find((m: any) => m.id === named.id).thread.title, 'Existing manual title');
+    assert.equal(namedStatus.members.find((m: any) => m.id === named.id).thread.preview, undefined);
+  } finally { await h.close(); }
+});
+
+/** A rebuilt hub must recover the actual failure turn even when the withheld remote task is already terminal. */
+test('suppressed remote failures remain hidden after recreation without hiding later allowed failures', async () => {
+  const h = await setup(); const far = await otherMachine();
+  let restored: CoordinationManager | undefined;
+  let eventsReady = false;
+  const call = far.hosts.call.bind(far.hosts);
+  far.hosts.call = async (id, method, path, body) => {
+    if (!eventsReady && path.includes('/events?')) throw new HttpError(409, 'event log temporarily unavailable');
+    return call(id, method, path, body);
+  };
+  try {
+    await h.team.enable(h.root.id);
+    const member = await far.manager.createThread({ agent: 'pi', cwd: far.cwd, title: 'remote-failure' });
+    const failed = await far.manager.startTurn(member.id, { text: 'old private fail' });
+    await wait(() => far.manager.threadView(member.id).status === 'error');
+    h.team.dispose();
+    const row = JSON.parse(h.store.coordinationRecords()[0].data);
+    row.members = [{ id: member.id, name: 'remote-failure', host: 'devbox' }];
+    row.deliveries = [
+      { id: 'old-remote-task', key: 'old-remote-task', fingerprint: '', from: h.root.id, to: member.id,
+        text: 'old private fail', kind: 'message', state: 'failed', turnId: failed.turnId, result: 'provider exploded', suppressed: true, createdAt: new Date().toISOString() },
+      { id: 'old-remote-result', key: `result:${member.id}:${failed.turnId}`, fingerprint: '', from: member.id, to: h.root.id,
+        text: 'provider exploded', kind: 'result', state: 'stopped', turnId: null, result: '', suppressed: true, createdAt: new Date().toISOString() },
+    ];
+    h.store.saveCoordination(h.root.id, JSON.stringify(row));
+    restored = new CoordinationManager(h.store, h.manager, join(h.dir, 'remote-failure-recovery.sock'));
+    restored.hosts = far.hosts;
+    await (restored as any).pollRemote();
+    const status = await restored.command(h.root.id, { op: 'status' }) as any;
+    assert.equal(status.members[0].thread.failure, undefined);
+    assert.doesNotMatch(JSON.stringify(status), /provider exploded|old private fail/);
+    assert.equal(status.members[0].thread.title, 'remote-failure');
+    assert.equal(status.members[0].thread.preview, undefined);
+    assert.match((restored.view(h.root.id)!.members[0].thread as any).failure.message, /provider exploded/);
+    assert.equal((restored as any).remoteFailures.has(`devbox:${member.id}`), false, 'a view alone cannot establish the failing turn');
+    eventsReady = true;
+    await (restored as any).pollRemote();
+    assert.equal((restored as any).remoteFailures.get(`devbox:${member.id}`).turnId, failed.turnId);
+    assert.equal((await restored.command(h.root.id, { op: 'status' }) as any).members[0].thread.failure, undefined);
+    assert.equal(h.store.listEvents(h.root.id, 0, -1).some(e => e.type === 'turn.started'), false);
+    await h.manager.startTurn(h.root.id, { text: 'slow' });
+    const allowed = await restored.command(h.root.id, { op: 'send', target: member.id, text: 'later allowed fail', requestId: 'later-remote-failure' }) as { id: string };
+    await wait(() => restored!.view(h.root.id)!.messages.find(d => d.id === allowed.id)?.state === 'failed');
+    const later = await restored.command(h.root.id, { op: 'status' }) as any;
+    assert.match(later.members[0].thread.failure.message, /provider exploded/);
+    assert.match(later.members[0].latest.text, /later allowed fail/);
+    assert.equal(far.store.listEvents(member.id, 0, -1).filter(e => e.type === 'turn.error').length, 2);
+  } finally { restored?.dispose(); await h.close(); await far.close(); }
+});
+
+/** Final prompt filtering removes switched-off summaries and consumes only injected records. */
+test('DirectTalk filtering leaves other members and older uninjected summaries untouched', async () => {
+  const h = await setup();
+  try {
+    await h.team.enable(h.root.id);
+    const members = await Promise.all(['a', 'b', 'c'].map(name => h.manager.createThread({ agent: 'pi', cwd: h.cwd, title: name })));
+    const raw = (h.team as any).teams.get(h.root.id);
+    raw.members = members.map((m, i) => ({ id: m.id, name: ['a', 'b', 'c'][i] }));
+    raw.direct = Array.from({ length: 8 }, (_, i) => ({ id: `talk-${i}`, to: members[i < 6 ? 0 : i - 5].id,
+      turnId: `direct-${i}`, text: `person-${i}`, result: `answer-${i}`, state: 'returned', createdAt: new Date().toISOString() }));
+    (h.team as any).changed(raw);
+    const instructions = h.team.instructions.bind(h.team);
+    let switched = false;
+    h.team.instructions = (id, text, fromUser, gate) => {
+      const result = instructions(id, text, fromUser, gate);
+      if (id === h.root.id && !switched) { switched = true; void h.manager.updateThread(members[1].id, { disabled: true }); }
+      return result;
+    };
+    await h.manager.startTurn(h.root.id, { text: 'read selected summaries' });
+    await wait(() => h.manager.threadView(h.root.id).status === 'idle');
+    const first = h.store.listEvents(h.root.id, 0, -1).find(e => e.type === 'turn.started')!;
+    assert.doesNotMatch(String(first.data.text), /person-6|answer-6/);
+    assert.match(String(first.data.text), /person-7/);
+    assert.deepEqual(raw.direct.map((d: any) => Boolean(d.told)), [false, false, false, true, true, true, true, true]);
+    await h.manager.startTurn(h.root.id, { text: 'read remaining summaries' });
+    await wait(() => h.manager.threadView(h.root.id).status === 'idle');
+    const second = h.store.listEvents(h.root.id, 0, -1).filter(e => e.type === 'turn.started').at(-1)!;
+    assert.match(String(second.data.text), /person-0/); assert.doesNotMatch(String(second.data.text), /person-6|person-7/);
+    assert.ok(raw.direct.every((d: any) => d.told));
+    // Direct user chat still runs on the disabled member and is never offered to the lead later.
+    await h.manager.startTurn(members[1].id, { text: 'private direct message', fromUser: true });
+    await wait(() => raw.direct.some((d: any) => d.text === 'private direct message'));
+    assert.equal(raw.direct.find((d: any) => d.text === 'private direct message').told, true);
+    await h.manager.updateThread(members[1].id, { disabled: false });
+    const status = await h.team.command(h.root.id, { op: 'status' }) as any;
+    assert.equal(status.messages.some((d: any) => d.text === 'private direct message' || d.text === 'person-6'), false);
+    assert.ok(h.team.view(h.root.id)!.messages.some(d => d.text === 'private direct message'), 'browser history keeps the withheld direct reply');
+    await h.manager.startTurn(h.root.id, { text: 'after private direct message' });
+    await wait(() => h.manager.threadView(h.root.id).status === 'idle');
+    assert.doesNotMatch(String(h.store.listEvents(h.root.id, 0, -1).filter(e => e.type === 'turn.started').at(-1)!.data.text), /用户对 b 说：private direct message/);
+  } finally { await h.close(); }
+});
+
+/** A root moving during either discovery or refresh must never be registered under both ids. */
+test('configuration enabling rechecks root ownership after discovery and runtime refresh', async () => {
+  const h = await setup();
+  let release = () => {};
+  const prepare = (h.team as any).prepare.bind(h.team);
+  const refresh = h.manager.refreshRuntime.bind(h.manager);
+  try {
+    for (const phase of ['prepare', 'refresh']) {
+      const root = await h.manager.createThread({ agent: 'pi', cwd: h.cwd });
+      // Recover inert configuration directly; the retired object-switch API is not its owner.
+      const configured = await prepare(root.id, { permission: 'ask' });
+      configured.enabled = false;
+      (h.team as any).teams.set(root.id, configured);
+      (h.team as any).changed(configured);
+      const gate = new Promise<void>(r => { release = r; });
+      let preparing = false, refreshes = 0;
+      (h.team as any).prepare = async (id: string, input: unknown) => {
+        const result = await prepare(id, input);
+        if (id === root.id && phase === 'prepare') { preparing = true; await gate; }
+        return result;
+      };
+      h.manager.refreshRuntime = async id => {
+        if (id === root.id) {
+          refreshes++;
+          if (phase === 'refresh') { preparing = true; await gate; }
+        }
+        await refresh(id);
+      };
+      const pending = h.team.enable(root.id);
+      const rejected = assert.rejects(pending, /主线程已变化/);
+      await wait(() => preparing);
+      const successor = await h.manager.createHandoverThread(root.id, 'claude');
+      release(); await rejected;
+      assert.equal(h.team.view(successor.id)!.enabled, false);
+      assert.equal(h.team.view(successor.id)!.permission, 'ask');
+      assert.equal((h.team as any).teams.has(root.id), false, 'the source never becomes a second root alias');
+      assert.equal(refreshes, phase === 'prepare' ? 0 : 1);
+      (h.team as any).prepare = prepare;
+      h.manager.refreshRuntime = refresh;
+    }
+  } finally { release(); (h.team as any).prepare = prepare; h.manager.refreshRuntime = refresh; await h.close(); }
+});
+
+/** A remote POST must recheck after handoff IO, with switches not queued behind that IO. */
+test('disabling a remote member during handoff prevents the final POST and stops its old queue', async () => {
+  const h = await setup(); const far = await otherMachine();
+  let release!: () => void;
+  const gate = new Promise<void>(r => { release = r; });
+  const exec = far.hosts.exec.bind(far.hosts);
+  let preparing = false;
+  far.hosts.exec = async (id, command, opts) => { if (command.includes('handoff.md')) { preparing = true; await gate; } return exec(id, command, opts); };
+  try {
+    h.team.hosts = far.hosts;
+    await h.team.enable(h.root.id);
+    const job = await h.team.command(h.root.id, spawn('remote-post', 'pi@devbox', 'REMOTE_BEFORE_SWITCH', { cwd: far.cwd })) as { id: string; to: string };
+    await wait(() => preparing);
+    await Promise.race([far.manager.updateThread(job.to, { disabled: true }), new Promise<never>((_, reject) => setTimeout(() => reject(new Error('switch waited behind remote IO')), 500))]);
+    // Refresh the remote thread flag while handoff IO still holds the delivery chain.
+    await (h.team as any).pollRemote();
+    assert.equal(h.team.view(h.root.id)!.members[0].thread!.disabled, true);
+    release(); await h.team.command(h.root.id, { op: 'status' });
+    assert.equal(far.store.listEvents(job.to, 0, -1).some(e => e.type === 'turn.started'), false);
+    assert.equal(h.team.view(h.root.id)!.messages.find(d => d.id === job.id)!.state, 'stopped');
+    await assert.rejects(h.team.command(h.root.id, { op: 'remote', action: 'ls', target: 'remote-post' }), /退出协作/);
+    await far.manager.updateThread(job.to, { disabled: false });
+    await h.team.command(h.root.id, { op: 'send', target: 'remote-post', text: 'NEW_REMOTE_WORK', requestId: 'new-remote-post' });
+    await wait(() => h.team.view(h.root.id)!.members[0].latest?.state === 'returned');
+    assert.equal(far.store.listEvents(job.to, 0, -1).filter(e => e.type === 'turn.started').length, 1);
+  } finally { release(); await h.close(); await far.close(); }
+});
+
+/** A quarantined remote queue cannot revive through a non-409 preparation error after enabling. */
+test('a late remote start error stays suppressed after disabling and re-enabling its member', async () => {
+  const h = await setup(); const far = await otherMachine();
+  let release!: () => void;
+  const gate = new Promise<void>(r => { release = r; });
+  const call = far.hosts.call.bind(far.hosts);
+  let preparing = false;
+  far.hosts.call = async (id, method, path, body) => {
+    if (method === 'POST' && path.endsWith('/turns')) {
+      preparing = true; await gate; throw new Error('late remote startup failure');
+    }
+    return call(id, method, path, body);
+  };
+  try {
+    h.team.hosts = far.hosts;
+    await h.team.enable(h.root.id);
+    const job = await h.team.command(h.root.id, spawn('remote-error-gate', 'pi@devbox', 'hello', { cwd: far.cwd })) as { id: string; to: string };
+    await wait(() => preparing);
+    // Withdrawal observed during an in-flight POST must survive a later non-409 failure.
+    await far.manager.updateThread(job.to, { disabled: true });
+    await (h.team as any).pollRemote();
+    await wait(() => h.team.view(h.root.id)!.messages.find(d => d.id === job.id)?.state === 'stopped');
+    await far.manager.updateThread(job.to, { disabled: false });
+    await (h.team as any).pollRemote();
+    await wait(() => h.team.view(h.root.id)!.members[0].thread!.disabled === false);
+    release(); await h.team.command(h.root.id, { op: 'status' });
+    const message = h.team.view(h.root.id)!.messages.find(d => d.id === job.id) as any;
+    assert.equal(message.state, 'stopped'); assert.equal(message.suppressed, true);
+    assert.match(message.result, /remote startup failure/);
+    assert.ok(h.team.view(h.root.id)!.messages.some(d => d.key === `start-error:${job.id}` && 'suppressed' in d && d.suppressed && d.state === 'stopped'));
+    assert.equal(far.store.listEvents(job.to, 0, -1).some(e => e.type === 'turn.started'), false);
+    assert.equal(h.store.listEvents(h.root.id, 0, -1).some(e => e.type === 'turn.started'), false);
+  } finally { release(); await h.close(); await far.close(); }
+});
+
+/** Remote receipt, not a remote timestamp, makes suppression sticky across later file IO. */
+test('remote results received while disabled stay suppressed after enabling during result IO', async () => {
+  const h = await setup(); const far = await otherMachine();
+  let release!: () => void;
+  const gate = new Promise<void>(r => { release = r; });
+  const collect = (h.team as any).collectResult.bind(h.team);
+  let received = false;
+  (h.team as any).collectResult = async (...args: unknown[]) => { received = true; await gate; return collect(...args); };
+  try {
+    h.team.hosts = far.hosts;
+    await h.team.enable(h.root.id);
+    const job = await h.team.command(h.root.id, spawn('remote-result', 'pi@devbox', 'slowthink', { cwd: far.cwd })) as { id: string; to: string };
+    await wait(() => far.manager.threadView(job.to).status === 'running');
+    await far.manager.updateThread(job.to, { disabled: true });
+    assert.equal((h.team.view(h.root.id)!.messages.find(d => d.id === job.id) as any).suppressed, undefined);
+    await wait(() => received);
+    assert.equal((h.team.view(h.root.id)!.messages.find(d => d.id === job.id) as any).suppressed, true);
+    await far.manager.updateThread(job.to, { disabled: false });
+    release(); await h.team.command(h.root.id, { op: 'status' });
+    await wait(() => h.team.view(h.root.id)!.members[0].latest?.state === 'returned');
+    assert.ok(h.team.view(h.root.id)!.messages.some(d => d.kind === 'result' && 'suppressed' in d && d.suppressed && d.state === 'stopped'));
+    await assert.rejects(h.team.command(h.root.id, { op: 'result', target: job.id }), /抑制/);
+    assert.equal(h.store.listEvents(h.root.id, 0, -1).some(e => e.type === 'turn.started'), false);
+    assert.notEqual(far.store.listEvents(job.to, 0, -1).find(e => e.type === 'turn.done')!.data.stopReason, 'cancelled');
+  } finally { release(); await h.close(); await far.close(); }
+});
+
+/** A disconnected result not yet received is evaluated against the restored current state. */
+test('remote results not received while disabled can return after reconnecting enabled', async () => {
+  const h = await setup(); const far = await otherMachine();
+  try {
+    h.team.hosts = far.hosts;
+    await h.team.enable(h.root.id);
+    const job = await h.team.command(h.root.id, spawn('remote-offline-result', 'pi@devbox', 'slowthink', { cwd: far.cwd })) as { id: string; to: string };
+    await wait(() => h.team.view(h.root.id)!.messages.find(d => d.id === job.id)?.state === 'running');
+    await far.setOnline(false);
+    await far.manager.updateThread(job.to, { disabled: true });
+    await wait(() => far.manager.threadView(job.to).status === 'idle');
+    assert.equal((h.team.view(h.root.id)!.messages.find(d => d.id === job.id) as any).suppressed, undefined);
+    await far.manager.updateThread(job.to, { disabled: false });
+    await far.setOnline(true);
+    await wait(() => h.team.view(h.root.id)!.members[0].latest?.state === 'returned');
+    assert.equal((h.team.view(h.root.id)!.messages.find(d => d.id === job.id) as any).suppressed, undefined);
+    await wait(() => h.store.listEvents(h.root.id, 0, -1).some(e => e.type === 'turn.started'));
+  } finally { await h.close(); await far.close(); }
 });
 
 test('a message the person queues behind a member\'s task is still theirs when it goes out', async () => {

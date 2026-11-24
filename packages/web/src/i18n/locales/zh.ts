@@ -1236,6 +1236,9 @@ export const zh = {
   'ruler.position': (n: number, total: number) => `第 ${n} 轮，共 ${total} 轮`,
   'ruler.image': '（图片）',
 
+  // Saved collaboration settings
+  'collab.loadFailed': '无法读取已保存的协作配置，请重试后再开启协作。',
+
   // Choosing a collaborator
   'collab.back': '返回选择智能体',
   'collab.settings': '协作设置',
@@ -2355,6 +2358,8 @@ export const zh = {
   'actions.copyMarkdown': '整段对话（Markdown）',
   'actions.resumeCommand': '终端恢复命令',
   'actions.cwd': '工作目录',
+  'actions.disable': '禁用',
+  'actions.enable': '启用',
   'actions.archive': '归档',
   'actions.renameSection': '重命名分区',
   'actions.deleteSection': '删除分区',

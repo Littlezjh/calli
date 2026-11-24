@@ -1236,6 +1236,9 @@ export const en: Messages = {
   'ruler.position': (n: number, total: number) => `Turn ${n} of ${total}`,
   'ruler.image': '(image)',
 
+  // Saved collaboration settings
+  'collab.loadFailed': 'Could not load the saved collaboration settings. Try again before enabling collaboration.',
+
   // Choosing a collaborator
   'collab.back': 'Back to choosing an agent',
   'collab.settings': 'Collaboration settings',
@@ -2357,6 +2360,8 @@ export const en: Messages = {
   'actions.copyMarkdown': 'Whole conversation (Markdown)',
   'actions.resumeCommand': 'Terminal resume command',
   'actions.cwd': 'Working directory',
+  'actions.disable': 'Disable',
+  'actions.enable': 'Enable',
   'actions.archive': 'Archive',
   'actions.renameSection': 'Rename section',
   'actions.deleteSection': 'Delete section',

@@ -1,7 +1,7 @@
 import type { PushService } from './push.js';
 import type { FeishuChat } from './feishu-chat.js';
 import { DEFAULT_RULES } from './autotitle.js';
-import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { createReadStream, existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { connect } from 'node:net';
@@ -1155,6 +1155,7 @@ export function createHttpServer(deps: HttpDeps): Server {
           if (body.action === 'permission') return sendJson(res, 200, await collaboration.setPermission(threadId, body.permission));
           if (body.action === 'defaults') return sendJson(res, 200, await collaboration.setDefaults(threadId, body.defaults));
           if (body.action === 'stop') { await manager.cancelTurn(threadId); return sendJson(res, 200, collaboration.view(threadId)); }
+          if (body.action !== undefined) throw new HttpError(400, '未知协作操作');
           return sendJson(res, 200, await collaboration.enable(threadId, body));
         }
       }
@@ -1177,6 +1178,7 @@ export function createHttpServer(deps: HttpDeps): Server {
           200,
           await manager.updateThread(threadId, {
             rememberModelChoice: body.rememberModelChoice,
+            disabled: body.disabled,
             title: body.title,
             pinned: body.pinned,
             workMode: body.workMode,
@@ -1375,7 +1377,23 @@ export function createHttpServer(deps: HttpDeps): Server {
 
       if (method === 'POST' && sub === 'turns') {
         const body = await readJson(req, MAX_TURN_BODY);
-        if (manager.coordination?.metadata(threadId)?.team) {
+        if (body.coordination !== undefined) {
+          const source = body.coordination;
+          if (!source || typeof source !== 'object' || Array.isArray(source)
+            || typeof source.messageId !== 'string' || !source.messageId.trim()
+            || typeof source.from !== 'string' || !source.from.trim()
+            || !['message', 'result'].includes(source.kind)) throw new HttpError(400, 'invalid coordination source');
+          const claim = () => {
+            if (manager.getThread(threadId).disabled) throw new HttpError(409, '此会话已退出协作', { code: 'coordination_disabled' });
+          };
+          // A marked daemon delivery is not human input; recheck the stored target at final commit.
+          claim();
+          const text = typeof body.text === 'string' ? body.text : '';
+          return sendJson(res, 202, await manager.startTurn(threadId, { text, images: body.images, videos: body.videos, fromUser: false }, {
+            turnId: randomUUID(), source: { messageId: source.messageId, from: source.from, kind: source.kind }, displayText: text, claim,
+          }));
+        }
+        if (!manager.getThread(threadId).disabled && manager.coordination?.metadata(threadId)?.team) {
           const { images } = teamMessage(body);
           const thread = manager.threadView(threadId);
           await manager.checkImages(thread.agent, thread.model, images);
