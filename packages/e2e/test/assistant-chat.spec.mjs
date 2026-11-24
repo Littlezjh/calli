@@ -477,6 +477,22 @@ test('assistant preview keeps its origin while loading, failing, retrying and sw
     await page.unroute(`**/api/threads/${first.id}`);
     await panel.getByRole('button', { name: '重试', exact: true }).click();
     await panel.locator('.row.user', { hasText: '预览一' }).waitFor();
+    // Preview composer aligns with a single thread: model, effort, and reference controls work in place.
+    const modelBtn = panel.locator('.model-control-trigger');
+    await modelBtn.waitFor();
+    await modelBtn.click();
+    const modelPop = page.locator('.pop-panel.model-control-panel');
+    await modelPop.waitFor();
+    if (await modelPop.locator('.effort-model').count()) await modelPop.locator('.effort-model').click();
+    const modelChoice = modelPop.locator('[role="menuitemradio"]').filter({ hasNotText: '默认' }).first();
+    const pickedModel = (await modelChoice.locator('.pop-item-label').textContent())?.trim();
+    await modelChoice.click();
+    await waitFor(async () => Boolean((await json(daemon, `/api/threads/${first.id}`)).model), 'preview model persisted');
+    assert.ok(pickedModel, 'selected a real model option in preview');
+    await page.keyboard.press('Escape');
+    await modelPop.waitFor({ state: 'detached' });
+    await panel.getByRole('button', { name: '引用会话或目录', exact: true }).waitFor();
+
     // Sending from this reader goes to the target, and does not replace the assistant page.
     await panel.locator('textarea').fill('侧栏继续核对');
     await panel.getByRole('button', { name: '发送', exact: true }).click();

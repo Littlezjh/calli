@@ -500,7 +500,7 @@ export function AssistantHome({ api, todos, loading, error, threads, threadsKnow
         onRejectPlan={() => { if (threadId) onOpenThread(threadId); }} onSkipPlan={() => { if (threadId) onOpenThread(threadId); }} />}
     </div>
 
-    {previewId && <ThreadPeek key={previewId} side api={api} initial={previewId}
+    {previewId && <ThreadPeek key={previewId} side api={api} initial={previewId} agents={agents}
       draftKey={previewId} returnFocus={null} onClose={() => setPreviewId(null)}
       onOpen={() => onOpenThread(previewId)} onChange={onReload} />}
     {drawer && <aside className={`chat-drawer${wide ? ' side' : ' over'}`} ref={drawerRef} role="dialog" aria-modal={overlay || undefined} aria-label={t('desk.drawerLabel')}>
