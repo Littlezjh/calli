@@ -356,7 +356,9 @@ createInterface({ input: process.stdin }).on('line', async line => {
       ensureConversationDb(conversation);
       reply(msg.id, info());
       update({ sessionUpdate: 'available_commands_update', availableCommands: [
-        { name: 'compact', description: 'Compact the conversation' }, { name: 'goal', description: 'Set a native goal' },
+        { name: 'compact', description: 'Compact the conversation' },
+        { name: 'goal', description: 'Set a native goal' },
+        ...(process.env.FAKE_AGY_SCHEDULE ? [{ name: 'schedule', description: 'Native schedule command' }] : []),
         { name: 'make-video', description: 'Turn a brief into a video' }] });
       update({ sessionUpdate: 'usage_update', used: 0, size: 1048576 });
       break;

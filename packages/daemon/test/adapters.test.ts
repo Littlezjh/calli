@@ -853,8 +853,8 @@ test('AgyAdapter: lists what agy answers itself plus its skills, and answers tho
   const commands = await adapter.commands(here);
   assert.deepEqual(
     commands.map((c) => [c.name, c.kind]),
-    [['skills', 'command'], ['usage', 'command'], ['make-video', 'skill'], ['review', 'skill']],
-    'model and effort are left out: they are set by the hub, per session',
+    [['skills', 'command'], ['usage', 'command'], ['make-video', 'skill'], ['review', 'skill'], ['goal', 'command'], ['schedule', 'command']],
+    'model and effort are left out: they are set by the hub, per session; session commands /goal and /schedule are included',
   );
 
   const session = await adapter.start({ cwd: here });

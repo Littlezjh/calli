@@ -33,6 +33,11 @@ import type {
 
 /** How long the command list is reused. Reading it takes two short agy runs. */
 const COMMANDS_TTL_MS = 10 * 60_000;
+/** Session commands agy handles inside ACP conversations even when not announced yet. */
+const AGY_SESSION_COMMANDS: SlashCommand[] = [
+  { name: 'goal', description: '设置原生目标并持续执行直到完成', hint: '<目标>', kind: 'command' },
+  { name: 'schedule', description: '定时或周期循环执行指令', hint: '[时间/cron]', kind: 'command' },
+];
 /** A command agy answers itself, as `agy -p /help` lists it: "/usage (quota)<TAB>View model quota usage". */
 export interface AgyCliCommand {
   name: string;
@@ -306,6 +311,7 @@ export class AgyAdapter extends AcpAdapter {
   readonly icon = AGY_METADATA.icon;
   readonly capabilities = {
     workModes: ['execute', 'plan'] as const,
+    goal: { controls: [] as const, actions: ['set'] as const },
     coordination: true,
     resume: true,
     modelSwitch: true,
@@ -442,12 +448,14 @@ export class AgyAdapter extends AcpAdapter {
 
   async commands(cwd?: string): Promise<SlashCommand[]> {
     const native = await super.commands(cwd);
+    let queries: SlashCommand[] = [];
     try {
-      const queries = (await this.loadCommands(cwd ?? process.cwd())).list;
-      return [...native, ...queries.filter(c => !native.some(n => n.name === c.name))];
+      queries = (await this.loadCommands(cwd ?? process.cwd())).list;
     } catch {
-      return native;
+      if (!native.length) return [];
     }
+    const merged = [...native, ...queries.filter(c => !native.some(n => n.name === c.name))];
+    return [...merged, ...AGY_SESSION_COMMANDS.filter(c => !merged.some(m => m.name === c.name))];
   }
 
   /** Runs a command agy answers itself and returns its output as Markdown; null if `text` is not one. */

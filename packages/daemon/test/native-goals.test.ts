@@ -89,18 +89,51 @@ test('Claude exposes native goal, forwards the session command and clears during
   } finally { await s.close(); }
 });
 
-test('agy native goals, when advertised, stay in the resumed conversation', { timeout: 5000 }, async () => {
+test('agy exposes native goal set capability, fallback /schedule command, and keeps both in the resumed conversation', { timeout: 5000 }, async () => {
   const a = new AgyAdapter([process.execPath, join(here, 'fixtures/fake-agy.mjs')], { FAKE_AGY_GOAL: '1' });
+  assert.deepEqual(a.capabilities.goal, { controls: [], actions: ['set'] });
+  const before = await a.commands(here);
+  assert.ok(before.some(c => c.name === 'goal' && c.kind === 'command'));
+  assert.ok(before.some(c => c.name === 'schedule' && c.kind === 'command'));
+
   const s = await a.start({ cwd: here, resumeId: 'existing-conversation' });
   const events: EmittedEvent[] = [];
   try {
     await s.prompt(input('/goal test'), hooks(events));
-    assert.ok((await a.commands(here)).some(c => c.name === 'goal'));
+    await s.prompt(input('/schedule every 10m check CI'), hooks(events));
+    const listed = await a.commands(here);
+    assert.equal(listed.filter(c => c.name === 'goal').length, 1);
+    assert.equal(listed.find(c => c.name === 'goal')?.description, 'Set a native goal', 'native ACP announcement takes precedence');
+    assert.equal(listed.filter(c => c.name === 'schedule').length, 1);
     const text = events.filter(e => e.type === 'message.delta').map(e => e.data.text).join('');
     assert.match(text, /echo:\/goal test/);
+    assert.match(text, /echo:\/schedule every 10m check CI/);
     assert.match(text, /conv:existing-conversation/);
     assert.doesNotMatch(text, /print:/);
   } finally { await s.close(); }
+
+  // When ACP announces /schedule natively, keep its description without duplicating.
+  const b = new AgyAdapter([process.execPath, join(here, 'fixtures/fake-agy.mjs')], { FAKE_AGY_SCHEDULE: '1' });
+  const sb = await b.start({ cwd: here });
+  try {
+    const listed = await b.commands(here);
+    assert.equal(listed.filter(c => c.name === 'schedule').length, 1);
+    assert.equal(listed.find(c => c.name === 'schedule')?.description, 'Native schedule command');
+  } finally { await sb.close(); }
+
+  // Plan mode blocks starting /goal on agy threads.
+  const dir = mkdtempSync(join(tmpdir(), 'calli-agy-goal-plan-'));
+  const store = new Store(dir);
+  const manager = new ThreadManager(store, new Map([['agy', a]]), [dir], new AttachmentStore(dir));
+  try {
+    const thread = await manager.createThread({ agent: 'agy', cwd: dir });
+    await manager.updateThread(thread.id, { workMode: 'plan' });
+    await assert.rejects(manager.startTurn(thread.id, { text: '/goal finish refactor' }), /请切到执行模式后启动目标/);
+  } finally {
+    await manager.shutdown();
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('Codex can stop the current turn after clearing its goal', { timeout: 5000 }, async () => {
