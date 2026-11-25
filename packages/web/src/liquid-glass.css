@@ -56,6 +56,8 @@
     rgba(255, 255, 255, 0.24) 44%,
     transparent 72%
   );
+  /* Option E flush right-hand side sheets: left-edge depth without outer card framing. */
+  --shadow-side: -8px 0 24px rgba(31, 30, 28, 0.045);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -104,6 +106,7 @@
       rgba(255, 255, 255, 0.12) 44%,
       transparent 72%
     );
+    --shadow-side: -8px 0 28px rgba(0, 0, 0, 0.28);
   }
 }
 
@@ -153,6 +156,7 @@
     rgba(255, 255, 255, 0.12) 44%,
     transparent 72%
   );
+  --shadow-side: -8px 0 28px rgba(0, 0, 0, 0.28);
 }
 
 /* ---------- Topbar structure for floating title pill + independent status chips ---------- */
@@ -230,35 +234,130 @@
     background: linear-gradient(to bottom, color-mix(in srgb, var(--bg) 78%, transparent) 0%, transparent 100%);
   }
 
-  /* Align right-hand docked panel cards and their headers to the 58px topbar's 40px glass pills
-     (top: 9px, centerY: 29px, bottom: 49px) so the left pills and right panel header share one line. */
-  .app:not(.in-titlebar) .files-panel:not(.phone),
-  .app:not(.in-titlebar) .git-panel:not(.phone),
-  .app:not(.in-titlebar) .trace-side:not(.phone),
-  .app:not(.in-titlebar) .agent-panel {
-    margin-top: 9px;
-  }
-
+  /* Option E flush right-hand panels start at top: 0 with left-only rounded corners; match their
+     headers to the 58px desktop topbar so controls across left and right columns share one line. */
   .app:not(.in-titlebar) .files-panel:not(.phone) .files-head,
   .app:not(.in-titlebar) .git-panel:not(.phone) .git-head,
   .app:not(.in-titlebar) .dock-panel .term-panel .panel-head,
   .app:not(.in-titlebar) .dock-panel .preview-bar,
   .app:not(.in-titlebar) .dock-panel .change-diff-head,
-  .app:not(.in-titlebar) .trace-side:not(.phone) .panel-head {
-    height: 39px;
-    min-height: 39px;
+  .app:not(.in-titlebar) .trace-side:not(.phone) .panel-head,
+  .app:not(.in-titlebar) .chat-drawer.side .chat-drawer-head,
+  .app:not(.in-titlebar) .agent-panel > .agent-panel-head {
+    height: 58px;
+    min-height: 58px;
     padding-top: 0;
     padding-bottom: 0;
   }
 
-  .app:not(.in-titlebar) .agent-panel > .agent-panel-head {
-    min-height: 39px;
-    padding-top: 4px;
-    padding-bottom: 4px;
-  }
-
   .app:not(.in-titlebar) .desktop-side:not(.desktop-side-page) .panel-head {
     min-height: 58px;
+  }
+
+  /* Side-by-side referenced thread in AssistantHome: flush Option E sheet with unified floating
+     Liquid Glass header pills and floating glass composer matching the left conversation. */
+  .app:not(.in-titlebar) .chat-home > .agent-panel > .agent-panel-head {
+    position: relative;
+    z-index: 4;
+    padding: 0 12px 0 14px;
+    border-bottom: 0;
+    background: transparent;
+    pointer-events: none;
+  }
+
+  .app:not(.in-titlebar) .chat-home > .agent-panel > .agent-panel-head::before,
+  .app:not(.in-titlebar) .chat-home > .agent-panel > .agent-panel-head::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: -1;
+  }
+
+  .app:not(.in-titlebar) .chat-home > .agent-panel > .agent-panel-head::before {
+    -webkit-backdrop-filter: blur(8px);
+    backdrop-filter: blur(8px);
+    -webkit-mask-image: linear-gradient(to bottom, #000 0%, transparent 100%);
+    mask-image: linear-gradient(to bottom, #000 0%, transparent 100%);
+  }
+
+  .app:not(.in-titlebar) .chat-home > .agent-panel > .agent-panel-head::after {
+    background: linear-gradient(to bottom, color-mix(in srgb, var(--surface) 82%, transparent) 0%, transparent 100%);
+  }
+
+  .app:not(.in-titlebar) .chat-home > .agent-panel > .agent-panel-head > * {
+    pointer-events: auto;
+  }
+
+  .app:not(.in-titlebar) .chat-home > .agent-panel > .agent-panel-head > .agent-panel-heading {
+    flex: 0 1 auto;
+    margin-right: auto;
+    max-width: calc(100% - 92px);
+    height: 40px;
+    padding: 0 14px;
+    justify-content: center;
+    border-radius: var(--radius-pill);
+    background: var(--lg-sheen), var(--lg-fill);
+    box-shadow: var(--lg-rim);
+    -webkit-backdrop-filter: var(--lg-filter);
+    backdrop-filter: var(--lg-filter);
+  }
+
+  .app:not(.in-titlebar) .chat-home > .agent-panel > .agent-panel-head > .agent-panel-head-actions {
+    height: 40px;
+    padding: 0 4px;
+    border-radius: var(--radius-pill);
+    background: var(--lg-sheen), var(--lg-fill);
+    box-shadow: var(--lg-rim);
+    -webkit-backdrop-filter: var(--lg-filter);
+    backdrop-filter: var(--lg-filter);
+  }
+
+  .app:not(.in-titlebar) .chat-home > .agent-panel > .agent-panel-head > .agent-panel-head-actions .icon-btn {
+    border-radius: 50%;
+    background: transparent;
+  }
+
+  .app:not(.in-titlebar) .chat-home > .agent-panel > .agent-panel-head > .agent-panel-head-actions .icon-btn:hover:not(:disabled) {
+    background: var(--hover);
+  }
+
+  .app:not(.in-titlebar) .chat-home > .agent-panel > .agent-panel-body {
+    margin-top: calc(-1 * var(--chat-top-overlap, 0px));
+    margin-bottom: calc(-1 * var(--chat-bottom-overlap, 0px));
+    padding: calc(var(--chat-top-overlap, 0px) + 12px) 20px calc(var(--chat-bottom-overlap, 0px) + 28px);
+    scroll-padding-top: calc(var(--chat-top-overlap, 0px) + 12px);
+    scroll-padding-bottom: calc(var(--chat-bottom-overlap, 0px) + 28px);
+  }
+
+  .app:not(.in-titlebar) .chat-home > .agent-panel > .composer {
+    position: relative;
+    z-index: 4;
+    margin: 0;
+    padding: 6px 14px 12px;
+    pointer-events: none;
+  }
+
+  .app:not(.in-titlebar) .chat-home > .agent-panel > .composer > * {
+    pointer-events: auto;
+  }
+
+  .app:not(.in-titlebar) .chat-home > .agent-panel > .composer .composer-box {
+    position: relative;
+    border: 1px solid transparent;
+    background: var(--lg-sheen), var(--lg-composer-fill);
+    box-shadow: var(--lg-composer-rim);
+    -webkit-backdrop-filter: var(--lg-composer-filter);
+    backdrop-filter: var(--lg-composer-filter);
+  }
+
+  .app:not(.in-titlebar) .chat-home > .agent-panel > .composer .composer-box > :not(.composer-sheen):not(.coord-mention-menu) {
+    position: relative;
+    z-index: 1;
+  }
+
+  .app:not(.in-titlebar) .chat-home > .agent-panel > .composer .composer-sheen {
+    display: block;
   }
 
   /* Drop the 0.3s overview-room padding-right transition the instant a right side panel opens so
@@ -623,6 +722,14 @@ button.pet-summon:hover,
   }
 }
 
+/* Shared inline wrapper for side-panel header action buttons (glass capsule on desktop split). */
+.agent-panel-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+}
+
 /* ---------- Accessibility & unsupported-browser fallbacks ---------- */
 
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
@@ -631,6 +738,9 @@ button.pet-summon:hover,
   .app:not(.in-titlebar) .glass-chat > :is(.topbar, .chat-top) .topbar-lead,
   .app:not(.in-titlebar) .glass-chat > :is(.topbar, .chat-top):has(.topbar-actions, .topbar-desk, .chat-entries) .topbar-title-pill,
   .app:not(.in-titlebar) .glass-chat > :is(.topbar, .chat-top) .topbar-chip,
+  .app:not(.in-titlebar) .chat-home > .agent-panel > .agent-panel-head > .agent-panel-heading,
+  .app:not(.in-titlebar) .chat-home > .agent-panel > .agent-panel-head > .agent-panel-head-actions,
+  .app:not(.in-titlebar) .chat-home > .agent-panel > .composer .composer-box,
   .glass-chat > :is(.composer-slot, .chat-composer) .composer-box,
   .round-btn, .jump-btn, .pet-summon, .chat-entry, .chat-ask-orb, .quick-switch-handle,
   .menu-panel, .pop-panel.anchored-pop, .selection-menu, .command-menu, .coord-mention-menu,
@@ -639,7 +749,8 @@ button.pet-summon:hover,
   .files-panel.phone .files-head .icon-btn, .git-panel.phone .git-head .icon-btn, .trace-side.phone .trace-phone-head .icon-btn {
     background: var(--surface);
   }
-  .app:not(.in-titlebar) .glass-chat > :is(.topbar, .chat-top)::before {
+  .app:not(.in-titlebar) .glass-chat > :is(.topbar, .chat-top)::before,
+  .app:not(.in-titlebar) .chat-home > .agent-panel > .agent-panel-head::before {
     display: none;
   }
   .composer-sheen {
@@ -653,6 +764,9 @@ button.pet-summon:hover,
   .app:not(.in-titlebar) .glass-chat > :is(.topbar, .chat-top) .topbar-lead,
   .app:not(.in-titlebar) .glass-chat > :is(.topbar, .chat-top):has(.topbar-actions, .topbar-desk, .chat-entries) .topbar-title-pill,
   .app:not(.in-titlebar) .glass-chat > :is(.topbar, .chat-top) .topbar-chip,
+  .app:not(.in-titlebar) .chat-home > .agent-panel > .agent-panel-head > .agent-panel-heading,
+  .app:not(.in-titlebar) .chat-home > .agent-panel > .agent-panel-head > .agent-panel-head-actions,
+  .app:not(.in-titlebar) .chat-home > .agent-panel > .composer .composer-box,
   .glass-chat > :is(.composer-slot, .chat-composer) .composer-box,
   .round-btn, .jump-btn, .pet-summon, .chat-entry, .chat-ask-orb, .quick-switch-handle,
   .menu-panel, .pop-panel.anchored-pop, .selection-menu, .command-menu, .coord-mention-menu,
@@ -663,7 +777,8 @@ button.pet-summon:hover,
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
   }
-  .app:not(.in-titlebar) .glass-chat > :is(.topbar, .chat-top)::before {
+  .app:not(.in-titlebar) .glass-chat > :is(.topbar, .chat-top)::before,
+  .app:not(.in-titlebar) .chat-home > .agent-panel > .agent-panel-head::before {
     display: none;
   }
   .composer-sheen {

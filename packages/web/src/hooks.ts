@@ -238,9 +238,9 @@ export function useChatChromeOverlap(ref: RefObject<HTMLElement | null>, trackWi
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
-    const header = el.querySelector<HTMLElement>(':scope > .topbar, :scope > .chat-top');
-    const composer = el.querySelector<HTMLElement>(':scope > .composer-slot, :scope > .chat-composer');
-    const box = composer?.querySelector<HTMLElement>(':scope > .composer');
+    const header = el.querySelector<HTMLElement>(':scope > .topbar, :scope > .chat-top, :scope > .agent-panel-head');
+    const composer = el.querySelector<HTMLElement>(':scope > .composer-slot, :scope > .chat-composer, :scope > .composer');
+    const box = composer?.classList.contains('composer') ? composer : composer?.querySelector<HTMLElement>(':scope > .composer');
     const outerMain = el.classList.contains('chat-main') ? el.closest<HTMLElement>('.main') : null;
     const read = () => {
       if (trackWidth) el.style.setProperty('--main-w', `${el.clientWidth}px`);
@@ -262,7 +262,8 @@ export function useChatChromeOverlap(ref: RefObject<HTMLElement | null>, trackWi
         const canOverlap = isChat && !inTitlebar && Boolean(
           next?.classList.contains('scroller')
           || next?.classList.contains('chat-flow')
-          || next?.classList.contains('chat-fresh'),
+          || next?.classList.contains('chat-fresh')
+          || next?.classList.contains('agent-panel-body'),
         );
         const top = canOverlap ? header.offsetHeight : 0;
         if (top > 0) lastTopRef.current = top;

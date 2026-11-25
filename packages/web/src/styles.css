@@ -4484,18 +4484,6 @@ input.picker-search {
   pointer-events: none;
 }
 
-/* Finished work sits in one line at the sidebar's foot, out of the scrolling list, like T3's
-   Settled shelf. It clears the floating buttons; the scroller gives back its own clearance. */
-.done-fold-nav {
-  flex-shrink: 0;
-  margin: 0 10px calc(84px + var(--safe-bottom));
-  border-top: 1px solid var(--border);
-  background: var(--sidebar);
-}
-
-.sidebar-scroll.with-done-fold { padding-bottom: 8px; }
-.done-fold-rows { max-height: min(38vh, 340px); overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
-
 .sidebar-float > * {
   pointer-events: auto;
 }
@@ -8844,11 +8832,12 @@ div.file-card:hover { background: var(--surface); }
   display: flex;
   flex-direction: column;
   min-width: 0;
-  margin: 8px 10px 10px 0;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
+  margin: 0;
+  border: 0;
+  border-left: 1px solid var(--border);
+  border-radius: var(--radius-lg) 0 0 var(--radius-lg);
   background: var(--surface);
-  box-shadow: var(--shadow-card);
+  box-shadow: var(--shadow-side);
   overflow: hidden;
   animation: side-in 0.18s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
@@ -10940,7 +10929,7 @@ div.file-card:hover { background: var(--surface); }
 /* A file edited more often than the daemon keeps references for says so at the foot, left of the
    actions: a header that counts every turn above a shorter list would otherwise read as a bug. */
 .change-diff-note { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); font-size: 12px; }
-.agent-panel { position: relative; width: var(--agent-panel-width, min(390px, 40%)); flex: 0 0 auto; display: flex; flex-direction: column; margin: 8px 10px 10px 0; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-card); min-height: 0; overflow: hidden; outline: none; }
+.agent-panel { position: relative; width: var(--agent-panel-width, min(390px, 40%)); flex: 0 0 auto; display: flex; flex-direction: column; margin: 0; border: 0; border-left: 1px solid var(--border); border-radius: var(--radius-lg) 0 0 var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-side); min-height: 0; overflow: hidden; outline: none; }
 .agent-panel.detail { width: var(--agent-panel-width, min(450px, 43%)); }
 .agent-panel-resize { position: absolute; top: 0; bottom: 0; left: 0; z-index: 3; width: 7px; cursor: col-resize; }
 .agent-panel-resize:hover, .agent-panel-resize:active { background: linear-gradient(to right, var(--border-strong) 2px, transparent 2px); }
@@ -13745,7 +13734,7 @@ button.trace-step-head:hover { background: var(--hover); }
 /* The drawer. Beside the talk when there is room — real width, nothing covered; over the
    page when there is not; the whole screen on a phone. Its content mounts only when asked. */
 .chat-drawer { display: flex; flex-direction: column; min-width: 0; background: var(--surface); }
-.chat-drawer.side { flex: none; width: min(450px, 43%); margin: 8px 10px 10px 0; border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-card); overflow: hidden; }
+.chat-drawer.side { flex: none; width: min(450px, 43%); margin: 0; border: 0; border-left: 1px solid var(--border); border-radius: var(--radius-lg) 0 0 var(--radius-lg); box-shadow: var(--shadow-side); overflow: hidden; }
 .chat-drawer.over { position: fixed; top: var(--titlebar-row, calc(52px + env(safe-area-inset-top))); right: 0; bottom: 0; z-index: 48; width: min(460px, calc(100vw - 24px)); border: 1px solid var(--border); border-right: 0; border-radius: var(--radius-lg) 0 0 var(--radius-lg); box-shadow: var(--shadow-pop); animation: chat-drawer-in .28s cubic-bezier(.2,.8,.2,1); }
 @keyframes chat-drawer-in { from { transform: translateX(40px); opacity: 0; } }
 .chat-drawer-scrim { position: fixed; inset: 0; z-index: 47; background: var(--scrim); animation: chat-drawer-fade .2s; }
@@ -14690,7 +14679,7 @@ button.pet-summon:hover { background: var(--surface-2); color: var(--text); }
 
 /* ---------- The thread's own trace panel ---------- */
 
-.trace-side { position: relative; flex: none; display: flex; flex-direction: column; min-width: 0; width: min(480px, 44%); margin: 8px 10px 10px 0; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-card); overflow: hidden; animation: side-in 0.18s cubic-bezier(0.2, 0.8, 0.2, 1); }
+.trace-side { position: relative; flex: none; display: flex; flex-direction: column; min-width: 0; width: min(480px, 44%); margin: 0; border: 0; border-left: 1px solid var(--border); border-radius: var(--radius-lg) 0 0 var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-side); overflow: hidden; animation: side-in 0.18s cubic-bezier(0.2, 0.8, 0.2, 1); }
 .trace-side.phone { position: fixed; inset: 0; z-index: 60; width: auto; margin: 0; border: 0; border-radius: initial; background: var(--bg); box-shadow: none; }
 
 .trace-phone-head {
@@ -15487,7 +15476,7 @@ body:has(.menu-float) .pop-panel.overview-dock { opacity: 0; pointer-events: non
 }
 
 /* Git opens beside the conversation; file patches and history are loaded on demand. */
-.git-panel { width: 410px; max-width: 44%; flex: none; min-width: 320px; display: flex; flex-direction: column; margin: 8px 10px 10px 0; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-card); overflow: hidden; }
+.git-panel { width: 410px; max-width: 44%; flex: none; min-width: 320px; display: flex; flex-direction: column; margin: 0; border: 0; border-left: 1px solid var(--border); border-radius: var(--radius-lg) 0 0 var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-side); overflow: hidden; }
 .git-panel.phone { position: fixed; inset: 0; width: 100%; max-width: none; min-width: 0; margin: 0; border: 0; border-radius: initial; background: var(--bg); box-shadow: none; z-index: 60; padding-top: var(--safe-top); padding-bottom: var(--safe-bottom); }
 .git-head { display: flex; flex: none; align-items: center; gap: 4px; height: 46px; padding: 0 8px 0 14px; border-bottom: 1px solid var(--border); }
 .git-head .icon-btn { width: 30px; height: 30px; border-radius: var(--radius-sm); color: var(--muted); }

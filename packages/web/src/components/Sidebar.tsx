@@ -1,5 +1,5 @@
 import brandIcon from '../assets/calli.svg';
-import { Fragment, useEffect, useState, type MouseEvent, type ReactNode } from 'react';
+import { Fragment, useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react';
 import type { ExternalSession, HostInfo, SearchHit, Section, Thread } from '../api';
 import type { AgentMarkInfo } from '../thread-cache';
 import { clockLabel } from '../timeline';
@@ -17,6 +17,7 @@ import { HostIcon } from '../extensions/ui';
 import { AgentMark, IconAgents, IconBell, IconCheck, IconChevron, IconClock, IconClose, IconDesktop, IconEdit, IconFork, IconHandover, IconFolder, IconList, IconMore, IconPin, IconPlus, IconSearch, IconSettings, IconSidebar, IconSparkle, IconServer } from './icons';
 import { t } from '../i18n';
 import './fork-subchat.css';
+import './done-fold.css';
 
 export { folderName } from '../paths';
 
@@ -233,10 +234,33 @@ export function Sidebar({
   const [collapsed, toggle] = useStoredSet(`${storagePrefix}.collapsed`);
   // The other way to read the list: by what is going on, not by where a thread is filed. Like Codex's activity view.
   const [byActivity, setByActivity] = useStoredFlag(`${storagePrefix}.activity`);
-  // Finished work folds away closed on arrival — it is storage, not news — the count still saying
-  // how much is in there, and the choice sticking per device. Like T3's Settled shelf.
-  const [doneOpen, setDoneOpen] = useStoredFlag(`${storagePrefix}.doneOpen`);
-  const doneFoldOpen = () => Boolean(search.trim()) || doneOpen;
+  // Finished work opens as a floating glass drawer anchored above the bottom pill — starts closed
+  // on arrival so it never obscures the list, and closes on Escape or outside click.
+  const [doneOpen, setDoneOpen] = useState(false);
+  const donePopoverRef = useRef<HTMLDivElement>(null);
+  const donePillRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!doneOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !e.isComposing && !document.querySelector('.menu-float, .pop-panel, [role=dialog][aria-modal=true]')) {
+        e.preventDefault();
+        setDoneOpen(false);
+        donePillRef.current?.focus();
+      }
+    };
+    const onPointerDown = (e: PointerEvent) => {
+      const target = e.target instanceof Element ? e.target : null;
+      if (!target) return;
+      if (donePopoverRef.current?.contains(target) || donePillRef.current?.contains(target) || target.closest('.menu-float')) return;
+      setDoneOpen(false);
+    };
+    document.addEventListener('keydown', onKey);
+    document.addEventListener('pointerdown', onPointerDown, true);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('pointerdown', onPointerDown, true);
+    };
+  }, [doneOpen]);
   // This machine's sessions that are not threads yet mix into the list by their time; every
   // machine's own list (the merged view) shows threads only.
   const withExternal = merged ? threads : withExternalSessions(threads, external);
@@ -585,24 +609,6 @@ export function Sidebar({
     </section>
   );
 
-  // The one bottom fold for finished threads, the same in every sidebar view. While folded, the
-  // thread on screen stays listed — the fold must not hide where you are.
-  const doneShown = (list: Thread[]) => (doneFoldOpen() ? list : list.filter((t) => t.id === selectedId));
-  const doneFold = (count: number, rows: React.ReactNode) =>
-    count > 0 && (
-      <section className="thread-group done-fold">
-        <div className="group-head-row">
-          <button className="group-head" aria-expanded={doneFoldOpen()} onClick={() => setDoneOpen(!doneOpen)}>
-            <span className="group-chevron"><IconChevron size={13} open={doneFoldOpen()} /></span>
-            <IconCheck size={13} />
-            <span className="group-name">{t('sidebar.done')}</span>
-            <span className="group-count">{count}</span>
-          </button>
-        </div>
-        <div className="done-fold-rows">{rows}</div>
-      </section>
-    );
-
   const empty = (
     <p className="group-empty top" role={loading ? 'status' : undefined}>
       {loading ? t('sidebar.loading') : search.trim() ? t('sidebar.noMatch') : compact ? t('sidebar.emptyPhone') : t('sidebar.empty')}
@@ -722,33 +728,38 @@ export function Sidebar({
     </nav>
   );
 
-  // The fold lives outside the scrolling list, pinned at the sidebar's foot like T3's Settled
-  // shelf: one line that says how much is stored away, always in view, never a scroll away.
-  // It keeps its view's own nav classes, so the rows read the same as the list above it.
-  const doneFoldNav = mergedModel ? (
-    <nav className="thread-groups activity merged done-fold-nav">
-      {doneFold(
-        mergedModel.done.length,
-        mergedModel.done
-          .filter(({ thread }) => doneFoldOpen() || thread.id === selectedId)
-          .map(({ thread, hostId: on }) => (
-            <Fragment key={`${on ?? ''}:${thread.id}`}>
-              {entry(thread, {
-                label: on === null ? undefined : labelOf.get(on),
-                offline: unavailableOf.get(on),
-                open: on === hostId ? undefined : () => onOpenElsewhere?.(on, thread.id),
-                agents: on === hostId ? undefined : agentsOf.get(on) ?? null,
-              })}
-            </Fragment>
-          )),
-      )}
+  // Finished threads: shown inline during search so matches are never hidden, and otherwise opened
+  // from the floating glass pill anchored on the same baseline as the settings button.
+  const doneCount = mergedModel ? mergedModel.done.length : activity ? activity.done.length : model.done.length;
+  const doneSelected = Boolean(selectedId) && (mergedModel
+    ? mergedModel.done.some(({ thread }) => thread.id === selectedId)
+    : (activity ? activity.done : model.done).some((thread) => thread.id === selectedId));
+  const doneListNav = mergedModel ? (
+    <nav className="thread-groups activity merged" aria-label={t('sidebar.done')}>
+      {mergedModel.done.map(({ thread, hostId: on }) => (
+        <Fragment key={`${on ?? ''}:${thread.id}`}>
+          {entry(thread, {
+            hostId: on,
+            label: on === null ? undefined : labelOf.get(on),
+            offline: unavailableOf.get(on),
+            open: on === hostId ? undefined : () => onOpenElsewhere?.(on, thread.id),
+            agents: on === hostId ? undefined : agentsOf.get(on) ?? null,
+          })}
+        </Fragment>
+      ))}
     </nav>
   ) : activity ? (
-    <nav className="thread-groups activity done-fold-nav">{doneFold(activity.done.length, groupedRows(doneShown(activity.done), true))}</nav>
+    <nav className="thread-groups activity" aria-label={t('sidebar.done')}>{groupedRows(activity.done, true)}</nav>
   ) : (
-    <nav className="thread-groups done-fold-nav">{doneFold(model.done.length, groupedRows(doneShown(model.done)))}</nav>
+    <nav className="thread-groups" aria-label={t('sidebar.done')}>{groupedRows(model.done)}</nav>
   );
-  const hasDoneFold = !down && (mergedModel ? mergedModel.done.length : activity ? activity.done.length : model.done.length) > 0;
+  const doneSearchFold = search.trim() && doneCount > 0 ? (
+    <section className="thread-group done-fold">
+      <div className="group-label">{t('sidebar.done')} · {doneCount}</div>
+      {doneListNav}
+    </section>
+  ) : null;
+  const hasDoneFold = !down && doneCount > 0;
 
   // The pages after "Plans" and the pinned views: behind a "more" button, except the one on screen or one with a state to keep an eye on.
   const pages: NavPage[] = [
@@ -816,7 +827,7 @@ export function Sidebar({
       </div>
 
       {notice}
-      <div className={`sidebar-scroll${hasDoneFold ? ' with-done-fold' : ''}`}>
+      <div className="sidebar-scroll">
         {onHost && !search.trim() && <HostSwitcher hosts={hosts} current={hostId} onPick={onHost} all={Boolean(mergedModel)} onAll={onAll} />}
         {down && <p className="group-empty top">{t('sidebar.hostDown')}</p>}
         {!down && !search.trim() && (
@@ -877,6 +888,7 @@ export function Sidebar({
           </div>
         )}
         {!down && groups}
+        {!down && doneSearchFold}
         {/* Reading the machine's sessions, or importing one, went wrong: said here, where the rows
             are, with a way to try again. Cleared by the next attempt. */}
         {!down && !mergedModel && externalError && (
@@ -924,11 +936,39 @@ export function Sidebar({
         )}
       </div>
 
-      {!down && doneFoldNav}
+      {hasDoneFold && !search.trim() && doneOpen && (
+        <div ref={donePopoverRef} className="done-fold-popover" role="region" aria-label={t('sidebar.done')}>
+          <div className="done-fold-popover-head">
+            <IconCheck size={13} />
+            <span>{t('sidebar.done')}</span>
+            <span className="done-fold-count">{doneCount}</span>
+            <button type="button" className="icon-btn done-fold-close" aria-label={t('common.close')} onClick={() => setDoneOpen(false)}>
+              <IconClose size={14} />
+            </button>
+          </div>
+          <div className="done-fold-rows" onClick={(e) => { if ((e.target as Element).closest('.thread-item')) setDoneOpen(false); }}>
+            {doneListNav}
+          </div>
+        </div>
+      )}
       <div className="sidebar-float">
         {compact && !down && (
           <button className="new-thread" onClick={onNew}>
             <IconEdit size={19} /> {t('sidebar.newThread')}
+          </button>
+        )}
+        {hasDoneFold && !search.trim() && (
+          <button
+            ref={donePillRef}
+            type="button"
+            className={`done-fold-pill${doneSelected ? ' has-active' : ''}`}
+            aria-expanded={doneOpen}
+            onClick={() => setDoneOpen((open) => !open)}
+          >
+            <IconCheck size={14} />
+            <span>{t('sidebar.done')}</span>
+            <span className="done-fold-count">{doneCount}</span>
+            <span className="done-fold-chevron"><IconChevron size={13} /></span>
           </button>
         )}
         {/* The look, the archive, importing and signing out are not everyday things: they live behind this. */}

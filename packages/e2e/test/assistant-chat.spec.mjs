@@ -715,7 +715,7 @@ test('assistant replies support selection notes, file links, and single-bar floa
     await page.locator('.note-mark').waitFor();
     assert.equal(await page.locator('.note-mark').count(), 1, 'note mark appears over assistant chat');
 
-    // 2. Opening thread preview uses single topbar, compact floating card, no close-button focus ring, and accepts its own notes.
+    // 2. Opening thread preview uses single topbar, flush left-rounded side sheet aligned with chat-top, no close-button focus ring, and accepts its own notes.
     await answer.locator('a.thread-link').click();
     const panel = page.locator('.chat-home > .agent-panel');
     await panel.locator('.row.assistant', { hasText: '侧栏可批注正文片段' }).waitFor();
@@ -725,18 +725,27 @@ test('assistant replies support selection notes, file links, and single-bar floa
       const p = document.querySelector('.chat-home > .agent-panel');
       const h = p.querySelector('.agent-panel-head');
       const home = document.querySelector('.chat-home');
+      const pr = p.getBoundingClientRect();
+      const hr = home.getBoundingClientRect();
+      const cs = getComputedStyle(p);
       const closeBtn = h.querySelector('button[aria-label="返回助手"]');
       return {
-        panelW: p.getBoundingClientRect().width,
-        homeW: home.getBoundingClientRect().width,
+        panelW: pr.width,
+        homeW: hr.width,
+        topGap: Math.abs(pr.top - hr.top),
+        rightGap: Math.abs(pr.right - hr.right),
+        bottomGap: Math.abs(pr.bottom - hr.bottom),
         headH: h.getBoundingClientRect().height,
-        radius: parseFloat(getComputedStyle(p).borderTopLeftRadius),
+        radiusLeft: parseFloat(cs.borderTopLeftRadius),
+        radiusRight: parseFloat(cs.borderTopRightRadius),
         closeFocused: document.activeElement === closeBtn,
       };
     });
-    assert.ok(geom.headH <= 50, `compact card header <= 50px, got ${geom.headH}`);
+    assert.ok(geom.headH <= 60, `aligned glass header <= 60px, got ${geom.headH}`);
     assert.ok(geom.panelW <= geom.homeW * 0.46, `restrained side width <= 46%, got ${geom.panelW}/${geom.homeW}`);
-    assert.ok(geom.radius >= 12, `rounded floating card, got radius ${geom.radius}`);
+    assert.ok(geom.topGap <= 1 && geom.rightGap <= 1 && geom.bottomGap <= 1, `flush top/right/bottom edges, got gaps ${geom.topGap}/${geom.rightGap}/${geom.bottomGap}`);
+    assert.ok(geom.radiusLeft >= 12, `left edge keeps rounded corners, got ${geom.radiusLeft}`);
+    assert.equal(geom.radiusRight, 0, `right edge sits flush without outer card corners, got ${geom.radiusRight}`);
     assert.equal(geom.closeFocused, false, 'mouse-opening preview does not leave focus ring on close button');
 
     // Note inside ThreadPeek goes to ThreadPeek's own composer.

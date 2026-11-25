@@ -1,0 +1,175 @@
+/*
+ * Sidebar Option A: "Done" fold as a floating Liquid Glass pill sitting on the exact same
+ * baseline as the settings orb in .sidebar-float, opening an upward glass drawer on click.
+ */
+
+.sidebar-float {
+  gap: 8px;
+}
+
+.done-fold-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 40px;
+  padding: 0 12px 0 11px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--lg-sheen), var(--lg-fill);
+  box-shadow: var(--lg-rim);
+  -webkit-backdrop-filter: var(--lg-filter);
+  backdrop-filter: var(--lg-filter);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 550;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: transform 0.16s cubic-bezier(0.22, 1.12, 0.36, 1), background 0.16s ease;
+}
+
+.done-fold-pill:hover {
+  background: var(--lg-sheen), color-mix(in srgb, var(--surface) 84%, transparent);
+}
+
+.done-fold-pill:active {
+  transform: scale(0.97);
+}
+
+.done-fold-pill.has-active {
+  color: var(--text);
+}
+
+.done-fold-pill.has-active::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex: none;
+}
+
+.done-fold-count {
+  color: var(--muted);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.done-fold-chevron {
+  display: inline-flex;
+  align-items: center;
+  color: var(--muted);
+  transform: rotate(-90deg);
+  transition: transform 0.18s ease;
+}
+
+.done-fold-pill[aria-expanded='true'] .done-fold-chevron {
+  transform: rotate(90deg);
+}
+
+.done-fold-popover {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: calc(64px + var(--safe-bottom));
+  z-index: 25;
+  display: flex;
+  flex-direction: column;
+  max-height: min(48vh, 380px);
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: var(--lg-sheen), var(--lg-pop-fill);
+  box-shadow: var(--lg-pop-rim);
+  -webkit-backdrop-filter: var(--lg-pop-filter);
+  backdrop-filter: var(--lg-pop-filter);
+  overflow: hidden;
+  animation: done-fold-pop 0.16s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@keyframes done-fold-pop {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+}
+
+.done-fold-popover-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  padding: 10px 8px 8px 14px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 65%, transparent);
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.done-fold-popover-head .done-fold-close {
+  margin-left: auto;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  color: var(--muted);
+}
+
+.done-fold-popover-head .done-fold-close:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.done-fold-rows {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 6px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+.done-fold-rows .thread-groups {
+  padding: 0;
+}
+
+/* Phone (compact): keep "New thread" + "Done N" + "Settings" balanced on one row. */
+.compact .sidebar-float:has(.done-fold-pill) {
+  padding-left: 12px;
+  padding-right: 12px;
+}
+
+.compact .sidebar-float:has(.done-fold-pill) .new-thread {
+  min-height: 46px;
+  padding: 0 18px 0 14px;
+  gap: 7px;
+  font-size: 15px;
+}
+
+.compact .done-fold-pill {
+  height: 46px;
+  padding: 0 12px;
+  font-size: 14px;
+}
+
+.compact .done-fold-popover {
+  left: 12px;
+  right: 12px;
+  bottom: calc(74px + var(--safe-bottom));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .done-fold-popover {
+    animation: none;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .done-fold-pill,
+  .done-fold-popover {
+    background: var(--surface);
+    box-shadow: var(--shadow-pop);
+    border: 1px solid var(--border);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
