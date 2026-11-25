@@ -439,10 +439,11 @@
   color: var(--text);
 }
 
-/* Mobile: keep title pill compact right below the status bar (no extra gap) and paint the
-   status-bar safe area via the real fixed .status-bar-cap element for iOS 26/27 WebKit sampling. */
+/* Mobile: keep title pill compact right below the status bar (no extra gap) and keep the real
+   position:fixed .status-bar-cap mounted & opaque across EVERY mobile view (never display:none),
+   so iOS 26/27 WebKit's fixed-edge sampler never drops it and falls back to its 99pt blur scrim. */
 @media (max-width: 899.98px) {
-  .app:not(.in-titlebar):not(.drawer-open):has(> .shell > .main.glass-chat) > .status-bar-cap {
+  .app:not(.in-titlebar) > .status-bar-cap {
     display: block;
     position: fixed;
     top: 0;
@@ -452,6 +453,10 @@
     background: var(--bg);
     pointer-events: none;
     z-index: 5;
+  }
+
+  .app.drawer-open:not(.in-titlebar) > .status-bar-cap {
+    background: var(--sidebar);
   }
 
   .app:not(.in-titlebar) .glass-chat > :is(.topbar, .chat-top):has(.topbar-actions, .topbar-desk, .chat-entries) .topbar-title-pill {

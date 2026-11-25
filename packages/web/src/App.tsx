@@ -41,7 +41,7 @@ import type { HubAction } from './commands';
 import { buildProjectOptions, projectRoot } from './projects';
 import { rootRows, withWorkdirs } from './workdirs';
 import { isBounce, useAppHistory } from './appHistory';
-import { useAppearance, useChatChromeOverlap, useInTitlebar, useIsCompact, useListSwipe, useMinWidth, useStoredFlag } from './hooks';
+import { useAppearance, useChatChromeOverlap, useInTitlebar, useIosStatusBarReset, useIsCompact, useListSwipe, useMinWidth, useStoredFlag } from './hooks';
 import { useModelPreferences } from './model-preferences';
 import { useHosts } from './hosts';
 import type { PreparedImage } from './images';
@@ -1185,6 +1185,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   const scrollerRef = useRef<HTMLDivElement>(null);
   const mainRef = useRef<HTMLElement>(null);
   useChatChromeOverlap(mainRef, true);
+  useIosStatusBarReset(`${selectedId ?? ''}:${view}:${listOpen}:${theme}`);
   const [agentsStart, setAgentsStart] = useState<string | null>(null);
   const stickToBottom = useRef(true);
   const [jump, setJump] = useState<{ threadId: string; turnId: string } | null>(null);

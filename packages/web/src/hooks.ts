@@ -289,3 +289,59 @@ export function useChatChromeOverlap(ref: RefObject<HTMLElement | null>, trackWi
     return () => watch.disconnect();
   });
 }
+
+/**
+ * Workaround for iOS 26/27 standalone PWA WebKit Bug #317153: WebKit intermittently leaves its
+ * system status-bar progressive blur stuck on after cold launch, background resume, keyboard
+ * dismiss, or drawer/thread switches even when `.status-bar-cap` sits fixed at `top: 0`.
+ * A 1-frame no-op fixed-layer reflow kicks WebKit's compositor to re-sample `.status-bar-cap`.
+ */
+export function useIosStatusBarReset(trigger: string) {
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof document === 'undefined') return;
+    const isIos = /iPhone|iPad|iPod/.test(navigator.userAgent);
+    const isStandalone = window.matchMedia('(display-mode: standalone)').matches
+      || (navigator as Navigator & { standalone?: boolean }).standalone === true;
+    if (!isIos || !isStandalone) return;
+
+    let raf = 0;
+    let activeProbe: HTMLDivElement | null = null;
+    const clearProbe = () => {
+      cancelAnimationFrame(raf);
+      if (activeProbe) {
+        activeProbe.remove();
+        activeProbe = null;
+      }
+    };
+    const kick = () => {
+      if (document.visibilityState === 'hidden') return;
+      clearProbe();
+      const probe = document.createElement('div');
+      probe.setAttribute('aria-hidden', 'true');
+      probe.style.cssText = 'position:fixed;inset:0;z-index:2147483646;background:rgba(255,255,255,0.01);pointer-events:none;';
+      document.body.appendChild(probe);
+      activeProbe = probe;
+      void probe.offsetWidth;
+      raf = requestAnimationFrame(clearProbe);
+    };
+
+    kick();
+    const onShow = () => kick();
+    const onVis = () => { if (document.visibilityState === 'visible') kick(); };
+    let lastVvh = window.visualViewport?.height ?? window.innerHeight;
+    const onViewport = () => {
+      const next = window.visualViewport?.height ?? window.innerHeight;
+      if (next > lastVvh + 80) kick();
+      lastVvh = next;
+    };
+    window.addEventListener('pageshow', onShow);
+    document.addEventListener('visibilitychange', onVis);
+    window.visualViewport?.addEventListener('resize', onViewport);
+    return () => {
+      clearProbe();
+      window.removeEventListener('pageshow', onShow);
+      document.removeEventListener('visibilitychange', onVis);
+      window.visualViewport?.removeEventListener('resize', onViewport);
+    };
+  }, [trigger]);
+}
