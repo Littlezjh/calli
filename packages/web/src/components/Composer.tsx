@@ -7,6 +7,7 @@ import { ApiError, MAX_QUEUED, type AgentMention, type ModelQueue, type Outgoing
 import { commandDraft, searchCommands, slashQuery, type HubAction, type MenuRow } from '../commands';
 import { useIsNarrow, useIsTouch } from '../hooks';
 import { DRAFTS_KEY, hasDraftContent, readDrafts, storedDraftKeys, writeDraft, type Sending } from '../drafts';
+import { isOptimisticThreadId } from '../optimistic';
 import { sizeLabel } from '../files';
 import { mentionAt } from '../mentions';
 import { takeoverMention } from '../handover';
@@ -82,6 +83,9 @@ const SLOW_SEND_MS = 400;
 const SEND_TAP_SLOP = 12;
 /** Mobile browsers may deliver the compatibility click after pointerup; keep it from sending twice. */
 const SEND_CLICK_SUPPRESS_MS = 500;
+/** Safety timeout if a mobile IME commits silently on blur without firing compositionend. */
+const IME_FALLBACK_MS = 120;
+const SUPPORTS_FIELD_SIZING = typeof CSS !== 'undefined' && typeof CSS.supports === 'function' && CSS.supports('field-sizing', 'content');
 
 /** Safari may report composition as ended on the Enter keydown that still belongs to the IME. */
 export const isImeComposing = (event: Pick<KeyboardEvent<HTMLElement>, 'nativeEvent'>): boolean =>
@@ -221,6 +225,8 @@ interface Props {
   draftGeneration?: number;
   running: boolean;
   disabled?: boolean;
+  /** Disables submission without blocking typing (e.g. while draft model preferences are loading). */
+  sendDisabled?: boolean;
   placeholder: string;
   mentionOptions?: AgentMention[];
   collaboration?: (select: (mention: AgentMention) => void, selected: AgentMention[], anchorRef: RefObject<HTMLButtonElement>, openSignal: number) => ReactNode;
@@ -325,6 +331,7 @@ export function Composer({
   draftGeneration = 0,
   running,
   disabled,
+  sendDisabled,
   placeholder,
   onSend,
   onStop,
@@ -655,9 +662,10 @@ export function Composer({
   useLayoutEffect(() => {
     const previous = previousDraftKey.current;
     previousDraftKey.current = draftKey;
-    // Creating a thread changes its draft key before uploads finish. Keep that first message
-    // in the new thread so an interrupted upload still has an editable, retryable draft.
-    const firstMessage = previous !== draftKey && sendingRef.current && /(?:^|:)new(?::team:.*)?$/.test(previous ?? '');
+    // Creating a thread changes its draft key before uploads finish. Keep any follow-up typed
+    // during creation across `'new' -> 'optimistic:...' -> realId`.
+    const firstMessage = previous !== draftKey && sendingRef.current
+      && (/(?:^|:)new(?::team:.*)?$/.test(previous ?? '') || isOptimisticThreadId(previous));
     const saved = draftKey === undefined ? undefined : loadDraft(draftKey) ?? (firstMessage ? draftRef.current : undefined);
     const next: Draft = saved ?? { text: '', notes: [], references: [], mentions: [], images: [], videos: [] };
     loadedScope.current = scope;
@@ -680,7 +688,9 @@ export function Composer({
       // A same-key navigation already replaced the automatic source in memory and storage.
       // Saving the departing generation here would resurrect its removed source.
       if (keyRef.current === draftKey && scopeRef.current !== scope) return;
-      keepDraft(draftKey, sendingRef.current ? null : draftRef.current);
+      // Keep the durable `sending` marker intact until the in-flight request settles.
+      if (sendingRef.current && sendOwner.current?.scope === scope) return;
+      keepDraft(draftKey, draftRef.current);
     };
   }, [draftKey, draftGeneration]);
 
@@ -967,21 +977,32 @@ export function Composer({
     };
   }, []);
   const collapsed = !voiceControls && narrow && !header && !hasContent && queued.length === 0 && !modelQueue && preparing === 0 && !focused;
+  // Fallback auto-resize for browsers without CSS `field-sizing: content` (older iOS Safari, Firefox).
+  useLayoutEffect(() => {
+    if (SUPPORTS_FIELD_SIZING) return;
+    const el = ref.current;
+    if (!el) return;
+    if (collapsed || !text) { el.style.height = ''; return; }
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
+  }, [text, collapsed]);
   const goalControl = text.trim() === '/goal' ? 'show' : text.trim() === '/goal pause' ? 'pause' : text.trim() === '/goal clear' ? 'clear' : null;
   const immediate = !!goalControl && !!goal?.controls.includes(goalControl) && !images.length && !videos.length && !notes.length && !references.length && !mentions.length;
   const queueFull = running && !immediate && queued.length >= MAX_QUEUED;
   const resolvingReference = referencePaste.pending > 0 || pickingReference || attachedReferences(references, notes).some(value => value.pending);
-  const canSend = hasContent && !busy && !menuBusy && !disabled && preparing === 0 && !queueFull && !resolvingReference;
+  const canSend = hasContent && !busy && !menuBusy && !disabled && !sendDisabled && preparing === 0 && !queueFull && !resolvingReference;
   const sendPress = useRef<{ pointerId: number; x: number; y: number; moved: boolean } | null>(null);
   const suppressSendClick = useRef(false);
   const sendClickReset = useRef<number | null>(null);
   const composing = useRef(false);
   const pendingImeSend = useRef(false);
   const imeSendTask = useRef<number | null>(null);
+  const imeFallbackTask = useRef<number | null>(null);
   useEffect(() => () => {
     if (sendClickReset.current !== null) window.clearTimeout(sendClickReset.current);
     if (imeSendTask.current !== null) window.clearTimeout(imeSendTask.current);
-    sendClickReset.current = imeSendTask.current = null;
+    if (imeFallbackTask.current !== null) window.clearTimeout(imeFallbackTask.current);
+    sendClickReset.current = imeSendTask.current = imeFallbackTask.current = null;
     sendPress.current = null;
     suppressSendClick.current = composing.current = pendingImeSend.current = false;
   }, [draftKey]);
@@ -992,12 +1013,27 @@ export function Composer({
       }
     : null;
 
+  const flushPendingImeSend = () => {
+    if (!pendingImeSend.current || !ref.current) return;
+    pendingImeSend.current = false;
+    composing.current = false;
+    const committedText = ref.current.value;
+    flushSync(() => updateDraft({ text: committedText }));
+    void submitRef.current();
+  };
+
   const submit = async () => {
     if (referencePending()) { onError(t('references.pending')); return; }
     if (!canSend || sendingRef.current || pendingImeSend.current) return;
     if (composing.current) {
-      // Keep this tap: blur asks the native IME to commit, and compositionend resumes the send.
+      // Keep this tap: blur asks the native IME to commit, and compositionend (or a short fallback
+      // if the keyboard commits silently on blur) resumes the send without deadlocking the button.
       pendingImeSend.current = true;
+      if (imeFallbackTask.current !== null) window.clearTimeout(imeFallbackTask.current);
+      imeFallbackTask.current = window.setTimeout(() => {
+        imeFallbackTask.current = null;
+        flushPendingImeSend();
+      }, IME_FALLBACK_MS);
       ref.current?.blur();
       return;
     }
@@ -1005,7 +1041,14 @@ export function Composer({
     if (uploadsBlocked && videos.length) return onError(uploadsBlocked);
     if (images.length && attachBlocked) return onError(attachBlocked);
     if (taker && (images.length || videos.length)) return onError(t('composer.takeoverAttachments'));
-    const sent = draftRef.current;
+    const sent: Draft = {
+      text: draftRef.current.text,
+      notes: [...draftRef.current.notes],
+      references: [...(draftRef.current.references ?? [])],
+      mentions: [...(draftRef.current.mentions ?? [])],
+      images: [...draftRef.current.images],
+      videos: [...(draftRef.current.videos ?? [])],
+    };
     const attached = attachedReferences(sent.references ?? [], sent.notes).map(value => value.id);
     if (attached.length > 12) return onError(t('references.limit', 12));
     referencePaste.invalidate();
@@ -1017,58 +1060,84 @@ export function Composer({
     const message = asMessage(sent.text, sent.notes, sent.references);
     const mark: Sending = { text: message, after: lastSent?.turnId ?? null };
     const sentFrom = draftKey;
-    // On the device the draft now says it is on its way. Should the page be reloaded before the
-    // send comes back, it is neither lost nor taken for something still to send.
-    draftRef.current = { ...sent, sending: mark };
-    if (sentFrom !== undefined) keepDraft(sentFrom, draftRef.current);
+    // Persist the in-flight marker so a mid-send reload still recovers an undelivered draft,
+    // while immediately clearing the visible box so follow-up typing never sticks to sent text.
+    const store = storage();
+    if (sentFrom !== undefined && store) writeDraft(store, sentFrom, { ...sent, sending: mark });
+    inFlight.current = null;
+    const emptyDraft: Draft = { text: '', notes: [], references: [], mentions: [], images: [], videos: [] };
+    draftRef.current = emptyDraft;
+    if (sentFrom !== undefined) drafts.delete(sentFrom);
+    setText('');
+    setNotes([]);
+    setReferences([]);
+    setMentions([]);
+    setImages([]);
+    setVideos([]);
+    setVideoPreview(null);
+    notifyDraftKeys();
     const slowTimer = setTimeout(() => setSlow(true), SLOW_SEND_MS);
     try {
       if (taker) await takeover!.go(taker.id, [message, taker.task?.trim()].filter(Boolean).join('\n\n'), attached);
       else await onSend(message, sent.images, sent.mentions, sent.videos, attached);
       if (owner.scope === scopeRef.current) {
-        const current = draftRef.current;
-        // Only the sent items leave: words and attachments added during the request remain drafts.
-        inFlight.current = null;
-        updateDraft({ text: current.text === sent.text ? '' : current.text,
-          notes: current.notes.filter(note => !sent.notes.some(value => value.id === note.id)),
-          references: (current.references ?? []).filter(reference => !(sent.references ?? []).some(value => value.id === reference.id)),
-          mentions: (current.mentions ?? []).filter(mention => !(sent.mentions ?? []).some(value => value.kind === mention.kind && value.id === mention.id && value.task === mention.task)),
-          images: current.images.filter(image => !sent.images.some(value => value.id === image.id)),
-          videos: (current.videos ?? []).filter(video => !(sent.videos ?? []).some(value => value.id === video.id)), sending: undefined });
         if (sentFrom !== undefined && sentFrom !== keyRef.current) keepDraft(sentFrom, null);
-      } else if (sentFrom !== undefined) keepDraft(sentFrom, null);
+        if (keyRef.current !== undefined) keepDraft(keyRef.current, draftRef.current);
+      } else if (sentFrom !== undefined) {
+        keepDraft(sentFrom, null);
+      }
       sent.images.forEach(image => URL.revokeObjectURL(image.previewUrl));
       sent.videos?.forEach(video => URL.revokeObjectURL(video.previewUrl));
     } catch {
-      // The caller shows the error. A late failure cannot mark an unrelated draft as sent.
+      // Restore the unsent draft cleanly, preserving anything the user started typing meanwhile.
+      const current = owner.scope === scopeRef.current ? draftRef.current : emptyDraft;
+      const restored: Draft = {
+        text: [sent.text, current.text].filter(s => s.trim()).join('\n\n'),
+        notes: [...sent.notes, ...current.notes],
+        references: mergeReferences(sent.references ?? [], current.references ?? []),
+        mentions: [...(sent.mentions ?? []), ...(current.mentions ?? [])],
+        images: [...sent.images, ...current.images],
+        videos: [...(sent.videos ?? []), ...(current.videos ?? [])],
+        sending: mark,
+      };
+      if (keyRef.current !== undefined && keyRef.current !== sentFrom && isOptimisticThreadId(keyRef.current)) {
+        drafts.delete(keyRef.current);
+      }
       if (owner.scope === scopeRef.current) {
         inFlight.current = mark;
-        updateDraft({});
+        updateDraft(restored, false);
       }
+      if (sentFrom !== undefined) keepDraft(sentFrom, restored);
     } finally {
       clearTimeout(slowTimer);
       if (sendOwner.current === owner) sendOwner.current = null;
       setSlow(false);
       sendingRef.current = false;
       setBusy(false);
-      ref.current?.focus();
+      if (!isTouch) {
+        ref.current?.focus();
+      } else if (!hasDraftContent(draftRef.current)) {
+        ref.current?.blur();
+        setFocused(false);
+      }
     }
   };
   const submitRef = useRef(submit);
   submitRef.current = submit;
   const compositionEnd = () => {
     composing.current = false;
+    if (imeFallbackTask.current !== null) {
+      window.clearTimeout(imeFallbackTask.current);
+      imeFallbackTask.current = null;
+    }
     if (!pendingImeSend.current) return;
     if (imeSendTask.current !== null) window.clearTimeout(imeSendTask.current);
     // Some IMEs emit their final input after compositionend. Read the committed DOM value and
     // latest submit in the next task; compositionend, rather than elapsed time, permits sending.
     imeSendTask.current = window.setTimeout(() => {
       imeSendTask.current = null;
-      if (composing.current || !pendingImeSend.current || !ref.current) return;
-      pendingImeSend.current = false;
-      const committedText = ref.current.value;
-      flushSync(() => updateDraft({ text: committedText }));
-      void submitRef.current();
+      if (composing.current || !pendingImeSend.current) return;
+      flushPendingImeSend();
     }, 0);
   };
   const endSendPress = (button: HTMLButtonElement, pointerId: number) => {
@@ -1100,8 +1169,11 @@ export function Composer({
     if (!press || press.pointerId !== e.pointerId) return;
     e.preventDefault();
     const target = document.elementFromPoint(e.clientX, e.clientY);
+    const rect = e.currentTarget.getBoundingClientRect();
+    const nearButton = e.clientX >= rect.left - SEND_TAP_SLOP && e.clientX <= rect.right + SEND_TAP_SLOP
+      && e.clientY >= rect.top - SEND_TAP_SLOP && e.clientY <= rect.bottom + SEND_TAP_SLOP;
     endSendPress(e.currentTarget, e.pointerId);
-    if (!press.moved && target && e.currentTarget.contains(target)) void submit();
+    if (!press.moved && ((target && e.currentTarget.contains(target)) || nearButton)) void submit();
   };
   const sendPointerCancel = (e: ReactPointerEvent<HTMLButtonElement>) => {
     if (sendPress.current?.pointerId === e.pointerId) {
@@ -1511,13 +1583,13 @@ export function Composer({
             <div className="spacer" />
             {!collapsed && right}
             {composerActions}
-            {running && (
+            {running && !slow && (
               <button className="send-btn stop" onClick={onStop} aria-label={t('composer.stop')} title={t('composer.stopTurn')}>
                 <IconStop size={16} />
               </button>
             )}
-            {/* While a turn runs the send button appears only once there is something to queue. */}
-            {(voiceControls ? hasContent : !running || hasContent) && (
+            {/* While a turn runs the send button appears once there is something to queue, or while a slow send is in flight. */}
+            {(voiceControls ? hasContent || slow : !running || hasContent || slow) && (
               <button
                 className={`send-btn${slow ? ' sending' : ''}`}
                 onPointerDown={sendPointerDown}

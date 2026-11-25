@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { MAX_QUEUED, type AgentInfo, type Api, type ModelOption, type SlashCommand, type Thread, type WorkMode } from '../api';
 import { historyPage, refreshHistoryPage, mergeHistory, mergeHistoryPage, peekCachedPage, prependHistory, watchHistory } from '../history';
+import { createOptimisticTurn, maxEventSeq, mergeOptimisticEvents, useOptimisticTurns } from '../optimistic';
 import { buildTimeline, type StoredEvent } from '../timeline';
 import { useReadingPosition } from '../use-reading-position';
 import { restoreVideos, type PreparedVideo } from '../videos';
@@ -36,6 +37,8 @@ export function ThreadPeek({ api, initial, agents, draftKey, returnFocus, onClos
   const modelsReq = useRef(0);
   const initialPage = useMemo(() => peekCachedPage(api, id)?.page ?? null, []); // eslint-disable-line react-hooks/exhaustive-deps
   const [events, setEvents] = useState<StoredEvent[]>(() => initialPage?.events ?? []);
+  const optimistic = useOptimisticTurns();
+  const displayEvents = useMemo(() => mergeOptimisticEvents(events, optimistic.turns, id), [events, optimistic.turns, id]);
   const [loaded, setLoaded] = useState(() => Boolean(initialPage));
   const [threadError, setThreadError] = useState('');
   const [historyError, setHistoryError] = useState('');
@@ -53,7 +56,7 @@ export function ThreadPeek({ api, initial, agents, draftKey, returnFocus, onClos
   const readingPosition = useReadingPosition(scroll, stick, id, events, String(retry), false);
   const callbacks = useRef({ onClose, onChange, onNotesChange });
   callbacks.current = { onClose, onChange, onNotesChange };
-  const timeline = useMemo(() => buildTimeline(events), [events]);
+  const timeline = useMemo(() => buildTimeline(displayEvents), [displayEvents]);
   const waiting = useMemo(() => timeline.items.flatMap((item): SheetTarget[] =>
     item.kind === 'approval' && item.decision === null ? [{ kind: 'approval', item }]
       : item.kind === 'input' && item.answer === null ? [{ kind: item.inputKind === 'plan' ? 'plan-approval' : 'question', item }] : []), [timeline]);
@@ -157,9 +160,13 @@ export function ThreadPeek({ api, initial, agents, draftKey, returnFocus, onClos
       setThread(value); callbacks.current.onChange(value);
     }).catch(e => { if (!ctrl.signal.aborted) setThreadError(e instanceof Error ? e.message : String(e)); });
     void watchHistory(api, id, ctrl.signal, {
-      page: page => { setEvents(page.events); setCursor(page.hasOlder ? page.nextCursor : null); setLoaded(true); setHistoryError(''); },
+      page: page => { setEvents(page.events); optimistic.reconcile(id, page.events); setCursor(page.hasOlder ? page.nextCursor : null); setLoaded(true); setHistoryError(''); },
       events: batch => {
-        setEvents(previous => mergeHistory(previous, batch));
+        setEvents(previous => {
+          const next = mergeHistory(previous, batch);
+          optimistic.reconcile(id, next);
+          return next;
+        });
         if (batch.some(e => e.type.startsWith('turn.') || e.type === 'history.reset' || e.type === 'thread.updated')) {
           clearTimeout(timer);
           timer = setTimeout(() => { if (!ctrl.signal.aborted) void refresh().catch(reportError); }, 200);
@@ -169,8 +176,8 @@ export function ThreadPeek({ api, initial, agents, draftKey, returnFocus, onClos
     });
     return () => { ctrl.abort(); clearTimeout(timer); };
   }, [api, id, refresh, retry]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { if (stick.current && scroll.current) scroll.current.scrollTop = scroll.current.scrollHeight; }, [events]);
-  const loadImage = useCallback((attachmentId: string) => api.attachment(id, attachmentId), [api, id]);
+  useEffect(() => { if (stick.current && scroll.current) scroll.current.scrollTop = scroll.current.scrollHeight; }, [displayEvents]);
+  const loadImage = useCallback((attachmentId: string) => optimistic.imageBlob(attachmentId) ? Promise.resolve(optimistic.imageBlob(attachmentId)!) : api.attachment(id, attachmentId), [api, id, optimistic.imageBlob]);
   const loadFile = useCallback((path: string) => api.threadFile(id, path), [api, id]);
   const loadOlder = async () => {
     const targetId = id;
@@ -234,13 +241,30 @@ export function ThreadPeek({ api, initial, agents, draftKey, returnFocus, onClos
   };
   const sendTurn = async (text: string, images: { data: string; mimeType: string }[] = [], videos: PreparedVideo[] = [], references?: string[]) => {
     if (!thread) return;
-    const uploadedVideos = videos.length ? await Promise.all(videos.map(async video => (await api.uploadVideo(thread.id, video.file)).id)) : [];
-    await api.startTurn(thread.id, text, images, {
-      queue: true,
-      ...(uploadedVideos.length ? { videos: uploadedVideos } : {}),
-      ...(references !== undefined ? { references } : {}),
-    });
-    await refresh();
+    const optTurn = !running
+      ? createOptimisticTurn({ threadId: thread.id, text, workMode: thread.workMode, images: images.map((img, i) => ({ id: `p-${i}`, ...img })), videos, afterSeq: maxEventSeq(events) })
+      : null;
+    if (optTurn) { optimistic.add(optTurn); stick.current = true; }
+    try {
+      const uploadedVideos = videos.length ? await Promise.all(videos.map(async video => (await api.uploadVideo(thread.id, video.file)).id)) : [];
+      const result = await api.startTurn(thread.id, text, images, {
+        queue: true,
+        ...(uploadedVideos.length ? { videos: uploadedVideos } : {}),
+        ...(references !== undefined ? { references } : {}),
+      });
+      if ('turnId' in result) {
+        if (optTurn) optimistic.bindTurnId(optTurn.localId, result.turnId);
+        else {
+          const late = createOptimisticTurn({ threadId: thread.id, text, workMode: thread.workMode, images: images.map((img, i) => ({ id: `p-${i}`, ...img })), videos, afterSeq: maxEventSeq(events) });
+          late.turnId = result.turnId;
+          optimistic.add(late);
+        }
+      } else if (optTurn) optimistic.remove(optTurn.localId);
+      await refresh();
+    } catch (error) {
+      if (optTurn) optimistic.remove(optTurn.localId);
+      throw error;
+    }
   };
   const composerLeft = thread && caps ? <PermissionPicker
     modes={caps.permissionModes}

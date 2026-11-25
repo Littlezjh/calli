@@ -93,6 +93,7 @@ export class DoubaoAdapter implements AgentAdapter {
 
   private modelCache: { at: number; value: ModelOption[] } | null = null;
   private modelLoad: Promise<ModelOption[]> | null = null;
+  private modelRetryAt = 0;
   private nativeOutput: { at: number; value: Promise<DoubaoNativeCapabilities> } | null = null;
   onModelsChanged?: (models: ModelOption[]) => void;
 
@@ -109,10 +110,18 @@ export class DoubaoAdapter implements AgentAdapter {
     return true;
   }
   models(refresh = false): Promise<ModelOption[]> {
+    if (!refresh && this.modelCache) {
+      if (Date.now() - this.modelCache.at >= 60_000 && !this.modelLoad && Date.now() >= this.modelRetryAt) {
+        void this.loadModels(false).catch(() => undefined);
+      }
+      return Promise.resolve(this.modelCache.value);
+    }
+    return this.loadModels(refresh);
+  }
+  private loadModels(refresh: boolean): Promise<ModelOption[]> {
     if (this.modelLoad) return this.modelLoad;
-    if (!refresh && this.modelCache && Date.now() - this.modelCache.at < 60_000) return Promise.resolve(this.modelCache.value);
     // Strip every business flag: a catalog process cannot inherit a prompt or resume a conversation.
-    this.modelLoad = this.nativeCapabilities(refresh).then(capabilities => capabilities.models
+    const pending = this.nativeCapabilities(refresh).then(capabilities => capabilities.models
       ? readDoubaoModels([this.command[0], ...this.cliPrefix()], sessionEnvironment(this.env), process.cwd()) : [])
       .then(models => {
         const configured = this.command.slice(1).flatMap((arg, index, args) =>
@@ -120,10 +129,15 @@ export class DoubaoAdapter implements AgentAdapter {
         if (configured) models = models.map(model => ({ ...model, isDefault: model.id === configured || model.label === configured }));
         const previous = this.modelCache;
         this.modelCache = { at: Date.now(), value: models };
+        this.modelRetryAt = 0;
         if (previous && JSON.stringify(previous.value) !== JSON.stringify(models)) this.onModelsChanged?.(models);
         return models;
-      }).finally(() => { this.modelLoad = null; });
-    return this.modelLoad;
+      }).catch((err) => {
+        this.modelRetryAt = Date.now() + 60_000;
+        throw err;
+      }).finally(() => { if (this.modelLoad === pending) this.modelLoad = null; });
+    this.modelLoad = pending;
+    return pending;
   }
   commands() { return Promise.resolve([]); }
   get streamBridgeEnabled(): boolean { return (this.env.CALLI_DOUBAO_STREAM ?? process.env.CALLI_DOUBAO_STREAM) === '1'; }
