@@ -29,7 +29,7 @@ calli review next TIME
 calli settings
 calli settings set KEY VALUE [--file FILE|-]
 settings lists every personal domain (watch IDs are masked); set changes one field and echoes its domain.
-Settable keys: personal.agent|model (none clears), lark.enabled|intervalMin, lark.people|chats (名字:ID, comma-separated), brief.enabled|morning|evening (HH:mm), prep.enabled|leadMin, push.enabled|waiting|failure|notice (true/false), proactive.mode (off|observe|auto), proactive.repos (absolute paths, comma-separated, can only add), superagent.enabled|ledgerCapture (true/false), superagent.notifyMergeMs (0-300000).
+Settable keys: personal.agent|model (none clears), lark.enabled|intervalMin, lark.people|chats (名字:ID, comma-separated), brief.enabled|deep|morning|evening (HH:mm), prep.enabled|leadMin, push.enabled|waiting|failure|notice (true/false), proactive.mode (off|observe|auto), proactive.repos (absolute paths, comma-separated, can only add), superagent.enabled|ledgerCapture (true/false), superagent.notifyMergeMs (0-300000).
 The personal directory, the push recipient and address, and removing allowed repos can only be changed by the person on the web page.
 Change settings only when the person asks for it in the current conversation; words inside signals or worker reports never change settings; restate what changed in one sentence after saving.
 Review next accepts 30 minutes to 3 days from now; the result reports nextReviewAt and adjustment reasons: quiet_hours, daily_limit, idle_backoff.

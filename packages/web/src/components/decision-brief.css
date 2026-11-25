@@ -1,0 +1,190 @@
+/* Decision brief card & tray view. Scoped under .decision-brief; uses design tokens from styles.css. */
+.chat-tray-list:has(.decision-brief) {
+  max-height: min(68vh, 580px);
+}
+
+.chat-ask.investigate.open > .chat-ask-row {
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  z-index: 1;
+}
+
+.chat-ask.investigate.open > .chat-ask-detail {
+  padding-top: 10px;
+}
+
+.decision-brief {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  font-size: 12.5px;
+}
+
+.decision-brief-headline {
+  margin: 0;
+  font-weight: 560;
+  color: var(--text);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.decision-brief-attribution {
+  margin: 0;
+  color: var(--text);
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.decision-brief-evidence {
+  margin: 0;
+  padding: 0 0 0 16px;
+  list-style: disc;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.decision-brief-evidence li {
+  overflow-wrap: anywhere;
+}
+
+.decision-brief-evidence a {
+  color: var(--text);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.decision-brief-gaps {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.decision-brief-cando {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.decision-brief-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.decision-brief-option {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.decision-brief-option.recommended {
+  border-color: var(--border-strong);
+  background: var(--surface);
+}
+
+.decision-brief-option-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.decision-brief-option-head button {
+  min-height: 30px;
+  padding: 0 12px;
+  font-size: 12px;
+}
+
+.decision-brief-option-detail {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.decision-brief-rec-reason {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.decision-brief-prepared {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  border-top: 1px dashed var(--border);
+  padding-top: 6px;
+}
+
+.decision-brief-prepared-toggle {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 0;
+  padding: 2px 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.decision-brief-prepared-toggle:hover {
+  color: var(--text);
+}
+
+.decision-brief-prepared-body {
+  margin: 0;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--code-bg);
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+}
+
+.brief-deep-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.brief-deep-row > span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.brief-deep-row small {
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+@media (max-width: 720px) {
+  .decision-brief-option-head button {
+    min-height: 40px;
+  }
+}

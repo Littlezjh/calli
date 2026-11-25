@@ -123,6 +123,25 @@ export class PushService {
     return this.records.some(r => r.threadId === threadId && r.result === 'sent' && Date.parse(r.at) >= sinceMs);
   }
 
+  /** Sends a rich structured DecisionBrief (up to 2,000 chars) through the normal push pipeline. */
+  sendDecisionBrief(key: string, title: string, body: string, assistantThreadId: string | null): PushRecord | null {
+    if (this.stopped || !this.settings().enabled) return null;
+    const settings = this.settings(), now = this.now();
+    const record: PushRecord = { key, at: new Date(now).toISOString(), kind: 'notice', threadId: assistantThreadId, title, result: 'queued', reason: null };
+    this.records.unshift(record); this.records.splice(20);
+    this.hourly = this.hourly.filter(t => now - t < 3600000);
+    if (this.hourly.length >= 30) {
+      record.result = 'dropped'; record.reason = 'hourly_rate_limit'; this.dropped++;
+      console.warn('[push] hourly_rate_limit');
+      return record;
+    }
+    this.hourly.push(now);
+    const bounded = [...body.trim()].slice(0, 2000).join('');
+    this.queue.push({ record, body: bounded, settings });
+    void this.drain();
+    return record;
+  }
+
   /** Sends one consolidated SuperAgent decision/review batch through the normal push pipeline. */
   sendSuperagentBatch(key: string, title: string, body: string, assistantThreadId: string | null): PushRecord | null {
     if (this.stopped || !this.settings().enabled) return null;

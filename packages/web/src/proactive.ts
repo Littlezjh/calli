@@ -11,7 +11,11 @@ export const removeRepo = (settings: ProactiveSettings, path: string): Proactive
 /** What the person can still do about a run: say an observation was right, decide on sandbox work, clear away a failed attempt. */
 export type RunControl = 'diff' | ProactiveAction;
 export function runControls(run: ProactiveRun): RunControl[] {
-  if (run.status === 'asking') return run.kind === 'dispatch' ? ['start', 'dismiss'] : run.reason === 'done' ? ['close-matter', 'dismiss'] : ['answer'];
+  if (run.status === 'asking') {
+    if (run.kind === 'dispatch') return ['start', 'dismiss'];
+    if (run.kind === 'investigate') return ['answer', 'dismiss'];
+    return run.reason === 'done' ? ['close-matter', 'dismiss'] : ['answer'];
+  }
   if (run.status === 'waiting') return ['dismiss'];
   if (run.status === 'observed' && run.needsRepo) return ['allow-repo', 'dismiss'];
   if (run.status === 'observed') return ['approve'];
@@ -37,7 +41,9 @@ export function startConflict(details: Record<string, unknown>): StartConflict |
 /** The runs a conversation panel pins at its top: only what asks the person, newest first. */
 /** The one line a waiting decision is known by while folded: what is asked, else what is proposed. */
 export const askLine = (run: ProactiveRun): string =>
-  (run.kind === 'dispatch' ? run.title || run.task || run.summary : run.question?.text || run.line || run.summary || run.threadTitle || '')
+  (run.kind === 'investigate'
+    ? run.brief?.headline || run.summary || run.line || ''
+    : run.kind === 'dispatch' ? run.title || run.task || run.summary : run.question?.text || run.line || run.summary || run.threadTitle || '')
     ?.split('\n').map(line => line.trim()).find(Boolean) ?? '';
 
 export const askingPins = (runs: ProactiveRun[] | null): ProactiveRun[] =>
@@ -68,7 +74,7 @@ const newestFirst = (a: ProactiveRun, b: ProactiveRun) => Date.parse(b.startedAt
 export function matterRuns(runs: readonly ProactiveRun[], matterId: string): ProactiveRun[] {
   // Discarded work is an audit record, not a card.
   const own = runs.filter((run) => run.matterId === matterId && run.status !== 'discarded').sort(newestFirst);
-  const latest = new Set(['prepare', 'sandbox', 'advance'].map((kind) => own.find((run) => run.kind === kind)?.id));
+  const latest = new Set(['prepare', 'sandbox', 'advance', 'investigate'].map((kind) => own.find((run) => run.kind === kind)?.id));
   return own.filter((run) => latest.has(run.id) || run.status === 'asking' || run.status === 'waiting' || (run.needsRepo && run.status === 'observed') || run.status === 'running' || run.status === 'ready' || run.status === 'merged');
 }
 

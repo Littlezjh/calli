@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import type { Api, ProactiveAction, ProactiveFile, ProactiveRun, Todo } from '../api';
+import type { Api, DecisionBrief, ProactiveAction, ProactiveFile, ProactiveRun, Todo } from '../api';
 import { formatDateTime, t, type MessageKey } from '../i18n';
 import { diffTotals, fileName, proactiveMatters, replaceRun, runControls } from '../proactive';
+import { signalSourceUrl } from '../signals';
 import { Dialog, DialogSurface } from './Dialog';
-import { IconFile, IconSparkle } from './icons';
+import { IconChevron, IconFile, IconSparkle } from './icons';
+import './decision-brief.css';
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -85,6 +87,77 @@ function answerLabel(run: ProactiveRun, option: string): string {
   return key ? t(key) : option;
 }
 
+/** Structured five-part decision brief: attribution, clickable evidence, boundaries, options + recommendation, collapsible prepared draft. */
+export function DecisionBriefView({
+  brief,
+  run,
+  pending,
+  hideHeadline = false,
+  onAnswer,
+  onDismiss,
+}: {
+  brief: DecisionBrief;
+  run: ProactiveRun;
+  pending?: ProactiveAction;
+  hideHeadline?: boolean;
+  onAnswer?: (answer: string) => void;
+  onDismiss?: () => void;
+}) {
+  const [showPrepared, setShowPrepared] = useState(false);
+  const [writing, setWriting] = useState(false);
+  const [answer, setAnswer] = useState('');
+  const interactive = run.status === 'asking' && Boolean(onAnswer);
+  return <div className="decision-brief">
+    {!hideHeadline && <p className="decision-brief-headline">{brief.headline}</p>}
+    <p className="decision-brief-attribution">{brief.attribution}</p>
+    {brief.evidence.length > 0 && <ul className="decision-brief-evidence">
+      {brief.evidence.map((item, index) => {
+        const href = signalSourceUrl(item.url);
+        return <li key={`${item.label}-${index}`}>
+          {href ? <a href={href} target="_blank" rel="noopener noreferrer">{item.label}</a> : <strong>{item.label}</strong>}
+          {'：'}{item.fact}
+        </li>;
+      })}
+    </ul>}
+    {brief.gaps && brief.gaps.length > 0 && <p className="decision-brief-gaps">{t('proactive.briefGaps', brief.gaps.join('；'))}</p>}
+    {(brief.canDo.user.length > 0 || brief.canDo.agent.length > 0) && <div className="decision-brief-cando">
+      {brief.canDo.user.length > 0 && <span>{t('proactive.briefCanDoUser', brief.canDo.user.join('；'))}</span>}
+      {brief.canDo.agent.length > 0 && <span>{t('proactive.briefCanDoAgent', brief.canDo.agent.join('；'))}</span>}
+    </div>}
+    {brief.options.length > 0 && <div className="decision-brief-options">
+      {brief.options.map(option => {
+        const recommended = option.id === brief.recommendedId;
+        const chosen = run.selectedOptionId === option.id;
+        return <div key={option.id} className={`decision-brief-option${recommended ? ' recommended' : ''}`}>
+          <div className="decision-brief-option-head">
+            {interactive ? <button className={recommended ? 'primary' : 'ghost'} disabled={Boolean(pending)} aria-busy={pending === 'answer'} onClick={() => onAnswer!(option.id)}>
+              {option.label}{recommended ? ` · ${t('proactive.briefRecommended')}` : ''}
+            </button> : <strong>{option.label}{recommended ? ` · ${t('proactive.briefRecommended')}` : ''}{chosen ? ` · ${t('proactive.status.answered')}` : ''}</strong>}
+          </div>
+          <p className="decision-brief-option-detail">{option.action}{option.tradeoff ? `（${option.tradeoff}）` : ''}</p>
+        </div>;
+      })}
+      {brief.recommendReason && <p className="decision-brief-rec-reason">{t('proactive.briefRecommendReason', brief.recommendReason)}</p>}
+    </div>}
+    {brief.prepared && <div className="decision-brief-prepared">
+      <button type="button" className="decision-brief-prepared-toggle" aria-expanded={showPrepared} onClick={() => setShowPrepared(open => !open)}>
+        <IconFile size={13} />
+        <span>{t('proactive.briefPrepared', brief.prepared.label)}</span>
+        <IconChevron size={12} open={showPrepared} />
+      </button>
+      {showPrepared && <p className="decision-brief-prepared-body">{brief.prepared.preview}</p>}
+    </div>}
+    {interactive && <div className="desk-card-actions">
+      {!writing && <button className="ghost quiet" disabled={Boolean(pending)} aria-expanded={false} onClick={() => setWriting(true)}>{t('proactive.otherAnswer')}</button>}
+      {onDismiss && <button className="ghost quiet" disabled={Boolean(pending)} onClick={onDismiss}>{t('proactive.dismiss')}</button>}
+    </div>}
+    {interactive && writing && <form className="desk-card-actions proactive-answer-form" aria-label={t('proactive.otherAnswer')} onSubmit={e => { e.preventDefault(); if (answer.trim()) onAnswer!(answer.trim()); }}>
+      <input aria-label={t('proactive.otherAnswer')} placeholder={t('proactive.otherAnswer')} value={answer} disabled={Boolean(pending)} autoFocus onChange={e => setAnswer(e.target.value)} />
+      <button className="ghost" disabled={Boolean(pending) || !answer.trim()}>{t('proactive.answer')}</button>
+    </form>}
+  </div>;
+}
+
 /** What can be done about a run, wherever it shows. Discarding is the one thing that cannot be undone, so it asks. */
 /** `hideQuestion`: the caller already shows the question in full, so it is not said twice. */
 export function RunControls({ api, run, state, hideQuestion = false }: { api: Api; run: ProactiveRun; state: ProactiveState; hideQuestion?: boolean }) {
@@ -96,6 +169,16 @@ export function RunControls({ api, run, state, hideQuestion = false }: { api: Ap
   const [writing, setWriting] = useState(!options.length);
   const pending = state.pending[run.id];
   const controls = runControls(run);
+  if (run.kind === 'investigate' && run.brief) {
+    return <DecisionBriefView
+      brief={run.brief}
+      run={run}
+      pending={pending}
+      hideHeadline={hideQuestion}
+      onAnswer={controls.includes('answer') ? text => state.act(run, 'answer', text) : undefined}
+      onDismiss={controls.includes('dismiss') ? () => state.act(run, 'dismiss') : undefined}
+    />;
+  }
   if (!controls.length) return null;
   if (controls.includes('answer')) return <div className="proactive-answer">
     {run.question?.text && !hideQuestion && <p>{run.question.text}</p>}
@@ -124,6 +207,8 @@ export function RunControls({ api, run, state, hideQuestion = false }: { api: Ap
 
 const statusLabel = (run: ProactiveRun): string => {
   if (run.needsRepo && run.status === 'observed') return t('proactive.allowSandbox');
+  if (run.kind === 'investigate' && run.status === 'asking') return t('proactive.briefTitle');
+  if (run.kind === 'investigate' && run.status === 'running') return t('proactive.status.investigating');
   if (run.status === 'asking' && run.reason === 'done') return t('proactive.looksDone');
   if (run.status === 'ready') return t(run.kind === 'sandbox' ? 'proactive.status.sandboxReady' : 'proactive.status.prepared');
   if (run.status === 'running') return t(run.kind === 'sandbox' ? 'proactive.status.sandboxRunning' : 'proactive.status.preparing');
@@ -147,6 +232,7 @@ export function ProactiveCard({ api, run, state, style }: { api: Api; run: Proac
 }
 
 export function RunSummary({ run }: { run: ProactiveRun }) {
+  if (run.kind === 'investigate' && run.brief) return null;
   if (run.status === 'waiting') return <p>{t('proactive.waitingFor', run.wait?.what || run.line || run.summary || t('proactive.service'))}{run.wakeAt && Number.isFinite(Date.parse(run.wakeAt)) && <> · {t('proactive.checkAt', formatDateTime(run.wakeAt, { hour: '2-digit', minute: '2-digit', hour12: false }))}</>}</p>;
   if (run.status === 'asking' && run.reason !== 'done' && run.question?.text) return null;
   const summary = run.status === 'asking' ? run.line || run.summary : run.summary;

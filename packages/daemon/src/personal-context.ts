@@ -20,7 +20,7 @@ const clockLabel = (iso: string, now: Date) => {
 
 export function contextEntries(store: Store, manager: ThreadManager, threadId: string, now = new Date()) {
   const runs = manager.personal.proactive.runs();
-  const excluded = new Set(runs.filter(run => run.kind === 'prepare' || run.kind === 'sandbox').map(run => run.threadId));
+  const excluded = new Set(runs.filter(run => run.kind === 'prepare' || run.kind === 'sandbox' || run.kind === 'investigate').map(run => run.threadId));
   const entries: Entry[] = [];
   for (const thread of store.listThreads().sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))) {
     if (thread.id === threadId || thread.archivedAt || thread.doneAt || excluded.has(thread.id)
@@ -48,9 +48,18 @@ export function contextEntries(store: Store, manager: ThreadManager, threadId: s
         : category === 'error' ? String(last.data.message ?? '') : category === 'running' ? '' : report?.note ?? ''),
       at: category === 'running' ? start.ts : advance?.nextAt ?? report?.at ?? last.ts });
   }
-  for (const run of runs.filter(run => run.status === 'asking')) entries.push({ id: `run:${run.id}`, category: 'needs',
-    title: clip(store.getTodo(run.matterId)?.text ?? run.title ?? run.threadTitle ?? '主动行动'),
-    note: clip(run.question?.text ?? run.summary ?? run.line ?? ''), at: run.startedAt });
+  for (const run of runs.filter(run => run.status === 'asking')) {
+    const brief = run.kind === 'investigate' ? run.brief : undefined;
+    const briefNote = brief
+      ? `${brief.headline}｜归因：${brief.attribution.slice(0, 120)}｜选项：${brief.options.map((o, i) => `${i + 1}.${o.label}${o.id === brief.recommendedId ? '(推荐)' : ''}:${o.action}`).join('；')}`
+      : run.question?.text ?? run.summary ?? run.line ?? '';
+    entries.push({
+      id: `run:${run.id}`, category: 'needs',
+      title: clip(store.getTodo(run.matterId)?.text ?? brief?.headline ?? run.title ?? run.threadTitle ?? '主动行动'),
+      note: [...briefNote].slice(0, brief ? 600 : 300).join(''),
+      at: run.startedAt,
+    });
+  }
   return entries;
 }
 

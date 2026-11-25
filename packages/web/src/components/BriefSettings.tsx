@@ -26,11 +26,17 @@ export function BriefSettings({ api, draft, onDraft, onLoaded }: { api: Api; dra
   if (!value) return <div className="personal-setting-line"><span>{t('brief.name')}{error ? <small className="personal-warning" role="alert">{error}</small> : <small role="status">{t('common.loading')}</small>}</span>{error && <button className="ghost" onClick={() => setRetry(n => n + 1)}>{t('common.retry')}</button>}</div>;
   return <div className="personal-setting-line brief-settings">
     <div className="brief-head"><span>{t('brief.name')}<small>{t('brief.hint')}</small></span><button className="personal-switch" role="switch" aria-checked={value.enabled} aria-label={t('brief.name')} onClick={() => save({ ...value, enabled: !value.enabled })}><span /></button></div>
-    {value.enabled && <div className="brief-times">
-      {(['morning', 'evening'] as const).map(kind => <Popover key={kind} label={t(`brief.${kind}`)} placement="below" panelClassName="personal-models" triggerClassName="context-btn" trigger={<>{t(`brief.${kind}`)} {value[kind]}<IconChevron size={13} open /></>}>
-        {close => <div className="pop-scroll">{briefTimes(kind).map(time => <button key={time} className="pop-item compact" role="menuitemradio" aria-checked={value[kind] === time} onClick={() => { close(); save({ ...value, [kind]: time }); }}>{time}</button>)}</div>}
-      </Popover>)}
-      {!pushOn && <small className="personal-warning">{t('brief.pushOff')}</small>}
-    </div>}
+    {value.enabled && <>
+      <div className="brief-times">
+        {(['morning', 'evening'] as const).map(kind => <Popover key={kind} label={t(`brief.${kind}`)} placement="below" panelClassName="personal-models" triggerClassName="context-btn" trigger={<>{t(`brief.${kind}`)} {value[kind]}<IconChevron size={13} open /></>}>
+          {close => <div className="pop-scroll">{briefTimes(kind).map(time => <button key={time} className="pop-item compact" role="menuitemradio" aria-checked={value[kind] === time} onClick={() => { close(); save({ ...value, [kind]: time }); }}>{time}</button>)}</div>}
+        </Popover>)}
+        {!pushOn && <small className="personal-warning">{t('brief.pushOff')}</small>}
+      </div>
+      <div className="brief-deep-row">
+        <span>{t('brief.deep')}<small>{t('brief.deepHint')}</small></span>
+        <button className="personal-switch" role="switch" aria-checked={Boolean(value.deep)} aria-label={t('brief.deep')} onClick={() => save({ ...value, deep: !value.deep })}><span /></button>
+      </div>
+    </>}
   </div>;
 }

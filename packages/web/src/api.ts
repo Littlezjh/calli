@@ -565,7 +565,7 @@ export interface PersonalPlan {
   running: PlanThread[];
 }
 export interface LastPersonalBrief { text: string; sentAt: string }
-export interface BriefSettings { enabled: boolean; morning: string; evening: string }
+export interface BriefSettings { enabled: boolean; morning: string; evening: string; deep?: boolean }
 export interface LarkChannelSettings {
   enabled: boolean; people: Array<{ id: string; name: string; role?: string }>; chats: Array<{ id: string; name: string }>;
   intervalMin: number; workHours?: { start: number; end: number; timeZone: string };
@@ -664,14 +664,50 @@ export interface ProactiveFile {
 
 export type ProactiveStatus = 'running' | 'observed' | 'approved' | 'ready' | 'merged' | 'discarded' | 'reverted' | 'failed' | 'waiting' | 'asking' | 'answered' | 'continued' | 'closed';
 
-/** One thing she did unasked: materials prepared for a matter, or code changed in a sandbox. */
+export interface DecisionOption {
+  id: string;
+  label: string;
+  action: string;
+  tradeoff: string;
+  dispatch?: { agent?: string; cwd?: string; task: string };
+}
+
+export interface DecisionEvidence {
+  label: string;
+  fact: string;
+  url?: string;
+  threadId?: string;
+}
+
+export interface DecisionBrief {
+  worthy: boolean;
+  matterId: string;
+  headline: string;
+  attribution: string;
+  evidence: DecisionEvidence[];
+  gaps?: string[];
+  canDo: { user: string[]; agent: string[] };
+  options: DecisionOption[];
+  recommendedId: string;
+  recommendReason: string;
+  prepared?: {
+    label: string;
+    artifactPath?: string;
+    preview: string;
+  };
+}
+
+/** One thing she did unasked: materials prepared for a matter, code changed in a sandbox, or a deep decision brief. */
 export interface ProactiveRun {
   id: string;
   /** Empty for an advance on a session that belongs to no matter. */
   matterId: string;
   /** The session's title, for a card that has no matter to name it. */
   threadTitle?: string;
-  kind: 'prepare' | 'sandbox' | 'advance' | 'dispatch';
+  kind: 'prepare' | 'sandbox' | 'advance' | 'dispatch' | 'investigate';
+  trigger?: 'signal' | 'morning-brief' | 'evening-brief' | 'dependency';
+  brief?: DecisionBrief;
+  selectedOptionId?: string;
   /** Dispatch only: the agent, directory and task proposed, as the card shows them. */
   agent?: string;
   cwd?: string;

@@ -223,8 +223,9 @@ export class PersonalService {
     if (previousDirectory !== undefined && previousDirectory !== next.directory) this.manager.lark?.invalidateMaterials?.();
     return next;
   }
-  workThreadTitle(cwd: string, kind: 'work' | 'prepare' = 'work'): string {
+  workThreadTitle(cwd: string, kind: 'work' | 'prepare' | 'investigate' = 'work'): string {
     if (kind === 'prepare') return '管家准备';
+    if (kind === 'investigate') return '管家调查';
     try {
       const realCwd = realpathSync(cwd);
       const personalDir = realpathSync(this.directory());
@@ -245,11 +246,11 @@ export class PersonalService {
     cwd: string;
     permissionMode?: string;
     model?: string | null;
-    kind?: 'work' | 'prepare';
+    kind?: 'work' | 'prepare' | 'investigate';
   }): Promise<{ thread: ReturnType<ThreadManager['threadView']>; created: boolean; releaseEmpty: () => Promise<void> }> {
     const realCwd = realpathSync(input.cwd);
     const kind = input.kind ?? 'work';
-    const settingKey = kind === 'prepare' ? 'personalPrepareThreads' : 'personalWorkThreads';
+    const settingKey = kind === 'prepare' ? 'personalPrepareThreads' : kind === 'investigate' ? 'personalInvestigateThreads' : 'personalWorkThreads';
     const key = `${input.agent}\0${realCwd}`;
     const lockKey = `${settingKey}\0${key}`;
     const previous = this.workThreadLocks.get(lockKey) ?? Promise.resolve();
@@ -911,8 +912,8 @@ export class PersonalService {
         this.manager.lark.save({ [field]: this.watchList(value, key) }); return echo();
       case 'prep.enabled': this.prep.save({ enabled: this.boolean(value, key) }); return echo();
       case 'prep.leadMin': this.prep.save({ leadMin: Number(value) }); return echo();
-      case 'brief.enabled':
-        this.manager.briefs.save({ enabled: this.boolean(value, key) }); return echo();
+      case 'brief.enabled': case 'brief.deep':
+        this.manager.briefs.save({ [field]: this.boolean(value, key) }); return echo();
       case 'brief.morning': case 'brief.evening': {
         const at = String(value ?? '').trim();
         if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(at)) throw new HttpError(400, `${key} 必须是 HH:mm（24 小时制），例如 08:30`);

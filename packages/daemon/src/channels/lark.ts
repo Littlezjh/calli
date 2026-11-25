@@ -25,6 +25,11 @@ export interface LarkChannelStatus {
 }
 export interface LarkSignal {
   summary: string;
+  /** Fuller bounded message text (up to 1500 chars) preserved when longer than summary, for deep investigation. */
+  body?: string;
+  /** Deduplicated https:// links extracted deterministically from message text. */
+  links?: string[];
+  chatName?: string;
   senderRole?: 'boss' | 'pm' | 'other';
   thread?: TodoThread;
   meeting?: MeetingReference;
@@ -51,6 +56,30 @@ const STATUS = 'personalLarkStatus';
 const MINUTE = 60_000;
 const MAX_BATCH = 30;
 export const summary = (v: unknown, max = 300) => [...String(v ?? '').replace(/\s+/g, ' ').trim()].slice(0, max).join('');
+/** Extracts deduplicated https:// URLs from message content for read-only deep investigation. */
+export function extractLinks(text: string, max = 8): string[] {
+  const seen = new Set<string>();
+  for (const match of text.matchAll(/https:\/\/[^\s"'<>`（）()\[\]{}，。；、]+/g)) {
+    const cleaned = match[0].replace(/[.,;:!?)\]}'"，。；！？、]+$/, '');
+    if (!cleaned || cleaned.length > 500) continue;
+    try {
+      const parsed = new URL(cleaned);
+      if (parsed.protocol === 'https:') seen.add(parsed.href);
+    } catch { /* skip malformed url */ }
+    if (seen.size >= max) break;
+  }
+  return [...seen];
+}
+/** Deterministic filter for signals worth a deep read-only investigation turn. */
+export function isHighPrioritySignal(signal: LarkSignal, self = '', subscribed = false): boolean {
+  if (signal.filteredReason) return false;
+  if (signal.senderRole === 'boss' || signal.senderRole === 'pm') return true;
+  if (subscribed) return true;
+  if (signal.message?.atMe || (self && signal.message?.mentions.includes(self))) return true;
+  if ((signal.links?.length ?? 0) > 0) return true;
+  if (signal.source.type === 'lark-task' && Boolean(signal.dueAt)) return true;
+  return false;
+}
 const object = (v: unknown): ObjectValue => v && typeof v === 'object' && !Array.isArray(v) ? v as ObjectValue : {};
 export const signalKey = (s: LarkSignal) => `${s.source.type === 'lark-flag' ? 'lark-message' : s.source.type}:${s.source.ref}`;
 export const timestamp = (v: unknown): string | undefined => {
@@ -100,10 +129,24 @@ export function messageCandidates(messages: ObjectValue[], settings: LarkChannel
     const thread = messageThread(row);
     let content = row.content?.text ?? row.content ?? row.body?.content ?? '';
     if (typeof content === 'string') { try { content = JSON.parse(content).text ?? content; } catch { /* Already rendered by the CLI. */ } }
-    return [withSender({ summary: summary(content) || summary(row.msg_type ?? row.message_type), source: s,
-      ...(thread ? { thread } : {}), message: { senderId: senderId(row), chatId: row.chat_id,
+    const text = typeof content === 'string' ? content : '';
+    const short = summary(text) || summary(row.msg_type ?? row.message_type);
+    const full = summary(text, 1500);
+    const links = text ? extractLinks(text) : [];
+    const chatName = typeof row.chat_name === 'string' && row.chat_name.trim()
+      ? summary(row.chat_name, 140)
+      : settings.chats.find(c => c.id === row.chat_id)?.name;
+    return [withSender({
+      summary: short,
+      ...(full && full.length > short.length ? { body: full } : {}),
+      ...(links.length ? { links } : {}),
+      ...(chatName ? { chatName } : {}),
+      source: s,
+      ...(thread ? { thread } : {}),
+      message: { senderId: senderId(row), chatId: row.chat_id,
         mentions: (Array.isArray(row.mentions) ? row.mentions : []).map((m: ObjectValue) => m.key === '@_all' ? '@_all' : object(m.id).open_id ?? m.id),
-        atMe: row.is_at_me === true, deleted: row.deleted === true } }, row, settings)];
+        atMe: row.is_at_me === true, deleted: row.deleted === true },
+    }, row, settings)];
   });
 }
 function filterReason(signal: LarkSignal, settings: LarkChannelSettings, self: string, subscribed: boolean): string | undefined {
@@ -488,8 +531,23 @@ export class LarkChannel {
         pending.push({ key, disposition: result.disposition });
       }
       const routed = lines.length ? await this.personal.router.receiveSignals(lines.map(s => JSON.stringify(s)).join('\n')) : null;
-      for (const { key, disposition } of pending) this.store.updateSignalDisposition(key, { ...disposition,
-        ...(disposition.outcome === 'router' && routed ? { threadId: routed.threadId } : {}), pending: false }, this.now().toISOString());
+      const highPriority: LarkSignal[] = [];
+      for (const { key, disposition } of pending) {
+        this.store.updateSignalDisposition(key, { ...disposition,
+          ...(disposition.outcome === 'router' && routed ? { threadId: routed.threadId } : {}), pending: false }, this.now().toISOString());
+        if (disposition.outcome === 'router') {
+          const rec = this.store.getSignal(key);
+          const sig = rec?.payload as LarkSignal | undefined;
+          const subscribed = Boolean(sig?.thread && this.store.subscribedTodos(sig.thread, this.now()).length);
+          if (sig && isHighPrioritySignal(sig, this.identity, subscribed)) highPriority.push(sig);
+        }
+      }
+      if (highPriority.length) {
+        const proactive = (this.personal as Partial<PersonalService>).proactive;
+        if (proactive && typeof proactive.onSignals === 'function') {
+          void proactive.onSignals(highPriority, this.now()).catch(error => console.error('proactive signal investigation failed:', error));
+        }
+      }
       return pending.length;
     });
     this.receiving = next;

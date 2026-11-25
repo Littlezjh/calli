@@ -4,15 +4,19 @@ import { realpathSync, statSync } from 'node:fs';
 import { basename, dirname, isAbsolute } from 'node:path';
 import { promisify } from 'node:util';
 import type { AgentAdapter } from './adapters/types.js';
+import type { LarkSignal } from './channels/lark.js';
 import { turnAnswer } from './coordination.js';
 import { HttpError } from './errors.js';
 import type { StoredEvent } from './events.js';
 import { turnOutcome } from './lifecycle.js';
-import type { DispatchTask, PersonalService } from './personal.js';
+import { assistantPermissionMode, type DispatchTask, type PersonalService } from './personal.js';
+import type { BriefKind } from './personal-brief.js';
 import { advancePrompt, parseAdvance, parsePrecheck, precheckPrompt, transientError, type AdvanceDecision, type PrecheckContext } from './proactive-advance.js';
+import { formatBriefMarkdown, investigationPrompt, matchDecisionOption, parseDecisionBrief, selectBriefTargets, type DecisionBrief, type InvestigationTargetTodo, type InvestigationTrigger } from './proactive-investigate.js';
 import { ProactiveSandbox, type SandboxChanges } from './proactive-sandbox.js';
 import { urgencyOf, type Store, type ThreadRecord, type TodoRecord } from './store.js';
 import type { ThreadManager } from './threads.js';
+import { todoStages } from './todo-stage.js';
 import { isWithinWorkdirs } from './workdirs.js';
 
 export type ProactiveMode = 'off' | 'observe' | 'auto';
@@ -33,7 +37,11 @@ export interface ProactiveRun {
   precheck?: 'done' | 'doing' | 'todo';
   /** What the check cited: `session:<id>` or `commit:<id>`. */
   source?: string;
-  kind: 'prepare' | 'sandbox' | 'advance' | 'dispatch';
+  kind: 'prepare' | 'sandbox' | 'advance' | 'dispatch' | 'investigate';
+  trigger?: InvestigationTrigger;
+  signalKey?: string;
+  brief?: DecisionBrief;
+  selectedOptionId?: string;
   agent?: string;
   cwd?: string;
   task?: string;
@@ -122,17 +130,26 @@ function observationSummary(todo: TodoRecord, kind: ProactiveRun['kind'], repo: 
   return `会为「${todo.text}」提前准备材料：${prepareReasons(todo, now).join('，')}`;
 }
 
+export type BriefDeliveryResult = { delivered: boolean; channel: 'feishu' | 'push' | 'none' };
+export type BriefDeliveryFn = (run: ProactiveRun, brief: DecisionBrief, markdown: string) => Promise<BriefDeliveryResult>;
+
 /** One shared scheduler drives this service; only a worker's ending reads its answer and files. */
 export class ProactiveService {
   private ticking = false;
   private readonly finishing = new Map<string, Promise<void>>();
   private readonly turns = new Map<string, string>();
   private readonly acting = new Set<string>();
+  private readonly waiters = new Map<string, (run: ProactiveRun) => void>();
+  private delivery: BriefDeliveryFn | null = null;
 
   constructor(private readonly store: Store, private readonly manager: ThreadManager,
     private readonly personal: PersonalService, private readonly adapters: Map<string, AgentAdapter>,
     private readonly sandbox = new ProactiveSandbox()) {
     manager.subscribe(event => this.onEvent(event));
+  }
+
+  attachDelivery(fn: BriefDeliveryFn): void {
+    this.delivery = fn;
   }
 
   /** Legacy stored switches ({ enabled }) migrate on read: on meant acting, so it becomes auto. */
@@ -409,7 +426,7 @@ export class ProactiveService {
 
   private invalidate(threadId?: string): void {
     for (const run of this.runs()) {
-      if (run.kind === 'dispatch' || !['waiting', 'asking'].includes(run.status) || run.precheck || threadId && run.threadId !== threadId) continue;
+      if (run.kind === 'dispatch' || run.kind === 'investigate' || !['waiting', 'asking'].includes(run.status) || run.precheck || threadId && run.threadId !== threadId) continue;
       const thread = this.store.getThread(run.threadId);
       const todo = run.matterId ? this.store.getTodo(run.matterId) : null;
       if (
@@ -428,8 +445,153 @@ export class ProactiveService {
 
   /** Persist counters separately from the bounded, user-facing run history. */
   private budget(now: Date) {
-    const value = this.store.hubSetting<{ day: string; models: number; sends: number; sent: Record<string, number> }>('personalProactiveBudget', { day: '', models: 0, sends: 0, sent: {} });
-    return value.day === localDay(now) ? value : { day: localDay(now), models: 0, sends: 0, sent: value.sent };
+    const value = this.store.hubSetting<{ day: string; models: number; sends: number; investigations?: number; sent: Record<string, number> }>('personalProactiveBudget', { day: '', models: 0, sends: 0, investigations: 0, sent: {} });
+    return value.day === localDay(now)
+      ? { ...value, investigations: value.investigations ?? 0 }
+      : { day: localDay(now), models: 0, sends: 0, investigations: 0, sent: value.sent };
+  }
+
+  private investigationCooledDown(key: string, matterId: string, now: Date): boolean {
+    const cooldown = 6 * HOUR;
+    return this.runs().some(run => {
+      if (run.kind !== 'investigate' || run.status === 'failed') return false;
+      if (now.getTime() - Date.parse(run.startedAt) >= cooldown) return false;
+      if (key && run.signalKey === key) return true;
+      if (matterId && run.matterId === matterId) return true;
+      return false;
+    });
+  }
+
+  /** High-priority external signals trigger a read-only deep investigation (observe records only). */
+  async onSignals(signals: LarkSignal[], now = new Date()): Promise<ProactiveRun | null> {
+    if (!signals.length) return null;
+    const mode = this.settings().mode;
+    if (mode === 'off' || this.quiet(now)) return null;
+    const primary = signals[0];
+    const sigKey = `${primary.source.type === 'lark-flag' ? 'lark-message' : primary.source.type}:${primary.source.ref}`;
+    const matchedTodo = this.store.listTodos().find(todo => !todo.done && todo.state !== 'done'
+      && (todo.source?.ref === primary.source.ref || Boolean(primary.thread && todo.subscriptions?.some(s => s.kind === primary.thread!.kind && s.ref === primary.thread!.ref))));
+    const matterId = matchedTodo?.id ?? '';
+    if (this.investigationCooledDown(sigKey, matterId, now)) return null;
+    if (mode === 'observe') {
+      const run: ProactiveRun = {
+        id: randomUUID(), matterId, kind: 'investigate', trigger: 'signal', signalKey: sigKey, threadId: '',
+        startedAt: now.toISOString(), status: 'observed',
+        summary: `会深度核查并归因：${clip(primary.summary, 80)}`,
+      };
+      this.saveRun(run);
+      return run;
+    }
+    if (this.budget(now).investigations >= 8 || this.atCapacity()) return null;
+    return this.startInvestigation({ trigger: 'signal', signals: signals.slice(0, 5), matterId, signalKey: sigKey, now });
+  }
+
+  /** Runs a dynamic deep verification for morning/evening brief, returning fallback when unavailable. */
+  async investigateBrief(kind: BriefKind, now = new Date(), timeoutMs = 90_000): Promise<{ status: 'brief' | 'quiet' | 'fallback'; run?: ProactiveRun; brief?: DecisionBrief; markdown?: string }> {
+    if (this.quiet(now) || this.budget(now).investigations >= 8 || this.atCapacity()) return { status: 'fallback' };
+    const stages = todoStages(this.manager, this.manager.listTodos());
+    const todos = this.store.listTodos().map(todo => ({ ...todo, stage: stages.get(todo.id) ?? null }));
+    const picked = selectBriefTargets(todos, now, 5);
+    if (!picked.length) return { status: 'fallback' };
+    const targets: InvestigationTargetTodo[] = picked.map(todo => ({
+      id: todo.id, text: todo.text, owner: todo.owner, state: todo.state, lane: todo.lane,
+      importance: todo.importance, dueAt: todo.dueAt, urgentUntil: todo.urgentUntil,
+      waitingOn: todo.waitingOn, source: todo.source, notePreview: this.store.todoNote(todo.id).text.slice(0, 600),
+      stage: todo.stage,
+      threads: this.store.todoThreadIds(todo.id).map(id => this.store.getThread(id))
+        .filter((t): t is ThreadRecord => Boolean(t && !t.archivedAt))
+        .slice(0, 3)
+        .map(t => ({ id: t.id, title: t.title, status: t.status, updatedAt: t.updatedAt })),
+    }));
+    const trigger: InvestigationTrigger = kind === 'morning' ? 'morning-brief' : 'evening-brief';
+    const signalKey = `${trigger}:${localDay(now)}`;
+    const run = await this.startInvestigation({ trigger, targets, matterId: picked[0]?.id ?? '', signalKey, now });
+    if (!run) return { status: 'fallback' };
+    const settled = await new Promise<ProactiveRun | null>(resolve => {
+      const current = this.runs().find(item => item.id === run.id);
+      if (current && current.status !== 'running') { resolve(current); return; }
+      const timer = setTimeout(() => { this.waiters.delete(run.id); resolve(null); }, timeoutMs);
+      timer.unref?.();
+      this.waiters.set(run.id, finished => { clearTimeout(timer); resolve(finished); });
+    });
+    if (!settled) return { status: 'fallback' };
+    if (settled.status === 'asking' && settled.brief?.worthy) {
+      const baseUrl = this.store.hubSetting<{ baseUrl?: string }>('push', {}).baseUrl ?? '';
+      const heading = kind === 'morning' ? '早间深度复核' : '晚间深度复核';
+      const markdown = formatBriefMarkdown(settled.brief, { heading, baseUrl: baseUrl || undefined, replyable: true });
+      return { status: 'brief', run: settled, brief: settled.brief, markdown };
+    }
+    if (settled.status === 'discarded' && settled.brief && !settled.brief.worthy) {
+      return { status: 'quiet', run: settled };
+    }
+    return { status: 'fallback', run: settled };
+  }
+
+  private async startInvestigation(input: {
+    trigger: InvestigationTrigger;
+    signals?: LarkSignal[];
+    targets?: InvestigationTargetTodo[];
+    matterId: string;
+    signalKey: string;
+    now: Date;
+  }): Promise<ProactiveRun | null> {
+    const settings = await this.personal.resolvedSettings();
+    const adapter = settings.agent ? this.adapters.get(settings.agent) : undefined;
+    if (!adapter || !settings.agent) return null;
+    const budget = this.budget(input.now);
+    if (budget.investigations >= 8) return null;
+    budget.investigations++;
+    this.store.saveHubSetting('personalProactiveBudget', budget);
+
+    const run: ProactiveRun = {
+      id: randomUUID(), matterId: input.matterId, kind: 'investigate', trigger: input.trigger,
+      signalKey: input.signalKey, threadId: '', startedAt: input.now.toISOString(), status: 'running',
+    };
+    this.saveRun(run);
+    let releaseEmpty: (() => Promise<void>) | undefined;
+    try {
+      const artifactsDir = input.matterId && this.store.getTodo(input.matterId)
+        ? await this.personal.artifacts(input.matterId)
+        : undefined;
+      const acquired = await this.personal.acquireWorkThread({
+        agent: settings.agent, cwd: settings.directory,
+        permissionMode: assistantPermissionMode(adapter),
+        model: settings.model, kind: 'investigate',
+      });
+      releaseEmpty = acquired.releaseEmpty;
+      this.update(run.id, { threadId: acquired.thread.id });
+      const router = this.personal.router.status().threadId;
+      const recentSessions = this.store.listThreads()
+        .filter(t => t.id !== router && !t.archivedAt && !t.doneAt && input.now.getTime() - Date.parse(t.updatedAt) < 7 * DAY)
+        .slice(0, 12)
+        .map(t => ({ id: t.id, title: t.title, progress: t.report ? `${t.report.stage}: ${clip(t.report.note, 80)}` : '', updatedAt: t.updatedAt }));
+      const prompt = investigationPrompt({
+        trigger: input.trigger, now: input.now,
+        ...(input.matterId ? { matterId: input.matterId } : {}),
+        ...(artifactsDir ? { artifactsDir } : {}),
+        ...(input.signals?.length ? { signals: input.signals } : {}),
+        ...(input.targets?.length ? { targets: input.targets } : {}),
+        recentSessions,
+      });
+      await this.manager.startTurn(acquired.thread.id, { text: prompt, scheduled: true, proactive: true }, undefined, false, undefined, turnId => {
+        this.turns.set(run.id, turnId);
+      });
+      return this.get(run.id);
+    } catch (error) {
+      this.turns.delete(run.id);
+      await releaseEmpty?.().catch(() => undefined);
+      const failed = this.update(run.id, { status: 'failed', endedAt: new Date().toISOString(), summary: message(error) });
+      this.resolveWaiter(failed);
+      return failed;
+    }
+  }
+
+  private resolveWaiter(run: ProactiveRun): void {
+    const fn = this.waiters.get(run.id);
+    if (fn) {
+      this.waiters.delete(run.id);
+      fn(run);
+    }
   }
 
   /**
@@ -580,13 +742,30 @@ export class ProactiveService {
 
   async answer(id: string, answer: unknown): Promise<ProactiveRun> {
     const run = this.get(id);
-    if (run.status !== 'asking' || !['user', 'transient', 'external'].includes(run.reason ?? '')) throw new HttpError(409, '只有等待回答的卡片可以回答');
     if (typeof answer !== 'string' || !answer.trim() || answer.length > 4000) throw new HttpError(400, '请提供 1–4000 字的回答');
+    const trimmed = answer.trim();
+    if (run.kind === 'investigate') {
+      if (run.status !== 'asking' || !run.brief) throw new HttpError(409, '只有等待决定的调查简报可以回复');
+      const matched = matchDecisionOption(run.brief, trimmed);
+      const lines = [
+        `针对你刚才的深度调查「${run.brief.headline}」，我的决定是：${matched ? `${matched.label}（${matched.action}）` : trimmed}`,
+        ...(run.matterId ? [`关联事项 ID：${run.matterId}`] : []),
+        ...(matched?.dispatch ? [`建议执行任务：${matched.dispatch.task}${matched.dispatch.agent ? `（agent: ${matched.dispatch.agent}）` : ''}${matched.dispatch.cwd ? `（目录: ${matched.dispatch.cwd}）` : ''}`] : []),
+        ...(run.brief.prepared?.artifactPath ? [`已备草稿：${run.brief.prepared.artifactPath}`] : []),
+        '请按我的决定推进，能直接派活或更新事项的现在就办；涉及对外发送或不可逆操作前再确认。',
+      ];
+      await this.personal.router.say({ text: lines.join('\n') });
+      return this.update(id, {
+        status: 'answered',
+        endedAt: new Date().toISOString(),
+        ...(matched ? { selectedOptionId: matched.id } : {}),
+      });
+    }
+    if (run.status !== 'asking' || !['user', 'transient', 'external'].includes(run.reason ?? '')) throw new HttpError(409, '只有等待回答的卡片可以回答');
     this.checkAdvance(run, new Date(), false);
-    answer = answer.trim();
-    if ((run.reason === 'transient' && answer === '先放着') || (run.reason === 'external' && answer === '不等了')) return this.dismiss(id);
-    if (run.reason === 'external' && answer === '继续等') return this.update(id, { status: 'waiting', attempts: 0, wakeAt: new Date(Date.now() + 10 * 60_000).toISOString() });
-    return this.sendAdvance(run, new Date(), answer as string);
+    if ((run.reason === 'transient' && trimmed === '先放着') || (run.reason === 'external' && trimmed === '不等了')) return this.dismiss(id);
+    if (run.reason === 'external' && trimmed === '继续等') return this.update(id, { status: 'waiting', attempts: 0, wakeAt: new Date(Date.now() + 10 * 60_000).toISOString() });
+    return this.sendAdvance(run, new Date(), trimmed);
   }
 
   closeMatter(id: string): ProactiveRun {
@@ -673,7 +852,8 @@ export class ProactiveService {
     if (!run || this.finishing.has(run.id)) return;
     // Reserve synchronously so a tick cannot mistake an asynchronously collected result for a crash.
     const finish = Promise.resolve().then(() => this.finish(run, event)).catch(error => {
-      this.update(run.id, { status: 'failed', endedAt: event.ts, summary: message(error) });
+      const failed = this.update(run.id, { status: 'failed', endedAt: event.ts, summary: message(error) });
+      this.resolveWaiter(failed);
     }).finally(() => { this.finishing.delete(run.id); this.turns.delete(run.id); });
     this.finishing.set(run.id, finish);
   }
@@ -681,10 +861,55 @@ export class ProactiveService {
   private async finish(run: ProactiveRun, event: StoredEvent): Promise<void> {
     const outcome = turnOutcome(event)!;
     if (outcome.outcome !== 'ok') {
-      this.update(run.id, { status: 'failed', endedAt: event.ts, summary: outcome.message ?? '主动行动已停止，尚未备好可审阅的结果' });
+      const failed = this.update(run.id, { status: 'failed', endedAt: event.ts, summary: outcome.message ?? '主动行动已停止，尚未备好可审阅的结果' });
+      this.resolveWaiter(failed);
       return;
     }
     const answer = turnAnswer(this.store.voiceAnswerEvents(run.threadId, event.turnId!), event.turnId!).trim();
+    if (run.kind === 'investigate') {
+      const brief = parseDecisionBrief(answer, run.matterId);
+      if (!brief) {
+        const dropped = this.update(run.id, { status: 'discarded', endedAt: event.ts, discardReason: '调查结果未按决策简报格式输出', summary: clip(answer, 300) });
+        this.resolveWaiter(dropped);
+        return;
+      }
+      if (!brief.worthy) {
+        const quiet = this.update(run.id, { status: 'discarded', endedAt: event.ts, brief, discardReason: brief.headline || '核查后无实质变化', summary: brief.attribution || brief.headline });
+        this.resolveWaiter(quiet);
+        return;
+      }
+      const validMatterId = brief.matterId && this.store.getTodo(brief.matterId) ? brief.matterId : run.matterId;
+      const normalizedBrief: DecisionBrief = { ...brief, matterId: validMatterId };
+      let files: SandboxChanges['files'] | undefined;
+      if (validMatterId && this.store.getTodo(validMatterId) && this.store.getThread(run.threadId)?.cwd === this.personal.directory()) {
+        try {
+          const committed = await this.personal.commitArtifacts(validMatterId);
+          if (committed.length) files = committed;
+        } catch { /* artifact commit is best-effort for L1 drafts */ }
+      }
+      const asking = this.update(run.id, {
+        matterId: validMatterId,
+        status: 'asking',
+        endedAt: event.ts,
+        brief: normalizedBrief,
+        summary: normalizedBrief.headline,
+        line: normalizedBrief.headline,
+        reason: 'user',
+        question: { text: normalizedBrief.headline, options: normalizedBrief.options.map(option => option.label) },
+        ...(files ? { files } : {}),
+      });
+      const baseUrl = this.store.hubSetting<{ baseUrl?: string }>('push', {}).baseUrl ?? '';
+      const heading = run.trigger === 'morning-brief' ? '早间深度复核' : run.trigger === 'evening-brief' ? '晚间深度复核' : '主动发现与建议';
+      const markdown = formatBriefMarkdown(normalizedBrief, { heading, baseUrl: baseUrl || undefined, replyable: true });
+      if (this.delivery) {
+        await this.delivery(asking, normalizedBrief, markdown).catch(error => console.error('brief delivery failed:', error));
+      } else {
+        const router = this.personal.router.status().threadId;
+        if (router && this.store.getThread(router)) this.manager.notice(router, `${heading}：${normalizedBrief.headline}`, false, true);
+      }
+      this.resolveWaiter(asking);
+      return;
+    }
     if (run.kind === 'prepare' && this.store.getThread(run.threadId)?.cwd !== this.personal.directory()) {
       throw new HttpError(409, '私人目录已改变，材料仍在原工作线程目录中，尚未自动提交');
     }

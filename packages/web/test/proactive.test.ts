@@ -175,3 +175,26 @@ test('a needs-you row leads somewhere real, never a thread id nothing answers', 
   assert.deepEqual(needTarget('run:nope', runs), { kind: 'gone' }, 'an id no run answers opens nothing');
   assert.deepEqual(needTarget('run:a1', null), { kind: 'gone' }, 'before the runs load, nothing is opened on a guess');
 });
+
+test('investigate decision brief exposes answer/dismiss controls, headline askLine, and stays in matterRuns', () => {
+  const brief = {
+    worthy: true,
+    matterId: 'm1',
+    headline: 'ModelHub 迁移表三列仍空，需拍板路线',
+    attribution: '表里三列仍空且群里有新方案',
+    evidence: [{ label: '迁移全量表', fact: '三列空着', url: 'https://example.invalid/sheet' }],
+    canDo: { user: ['定路线'], agent: ['查调用代码'] },
+    options: [
+      { id: 'opt-1', label: '按原计划迁方舟', action: '补表并查代码', tradeoff: '时间紧' },
+      { id: 'opt-2', label: '申请延期', action: '提延期单', tradeoff: '需审批' },
+    ],
+    recommendedId: 'opt-1',
+    recommendReason: '风险更低',
+  };
+  const asking = run({ kind: 'investigate', status: 'asking', brief });
+  assert.deepEqual(runControls(asking), ['answer', 'dismiss']);
+  assert.equal(askLine(asking), brief.headline);
+  assert.equal(isDecision(asking), true);
+  assert.deepEqual(runControls(run({ kind: 'investigate', status: 'answered', brief })), []);
+  assert.ok(matterRuns([asking], 'm1').some(item => item.id === asking.id));
+});

@@ -19,7 +19,8 @@ import { ThreadView } from './ThreadView';
 import { ThreadPeek } from './ThreadPeek';
 import { DeskPage } from './DeskPage';
 import { PlanView } from './PlanView';
-import { IconAgents, IconChevron, IconClose, IconDrawer, IconSettings } from './icons';
+import { DecisionBriefView } from './ProactiveRuns';
+import { IconAgents, IconChevron, IconClose, IconDrawer, IconSettings, IconSparkle } from './icons';
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -227,7 +228,7 @@ export function AssistantHome({ api, todos, loading, error, threads, threadsKnow
   const [shelving, setShelving] = useState<Record<string, boolean>>({});
   const actionsAlive = useRef(true);
   useEffect(() => { actionsAlive.current = true; return () => { actionsAlive.current = false; }; }, []);
-  const dispatchAsks = useMemo(() => askingPins(runs).filter(run => run.kind === 'dispatch'), [runs]);
+  const dispatchAsks = useMemo(() => askingPins(runs).filter(run => run.kind === 'dispatch' || run.kind === 'investigate'), [runs]);
   const totalAsks = dispatchAsks.length + triage.total;
   const visibleAsks = dispatchAsks.length + triage.items.length;
   const loadRuns = useCallback(() => {
@@ -462,7 +463,7 @@ export function AssistantHome({ api, todos, loading, error, threads, threadsKnow
     const target = needTarget(id, runs);
     if (target.kind === 'thread') { void api.recordThreadOpen(target.id, 'assistant-link').catch(() => undefined); onOpenThread(target.id); return; }
     if (target.kind === 'ask') {
-      if (target.run.kind === 'dispatch') { openDrawer(null); setTrayOpen(true); setOpenAsk(target.run.id); return; }
+      if (target.run.kind === 'dispatch' || target.run.kind === 'investigate') { openDrawer(null); setTrayOpen(true); setOpenAsk(target.run.id); return; }
       if (target.run.threadId) { void api.recordThreadOpen(target.run.threadId, 'assistant-link').catch(() => undefined); onOpenThread(target.run.threadId); return; }
     }
     loadRuns(); loadTriage(); onReload();
@@ -475,19 +476,29 @@ export function AssistantHome({ api, todos, loading, error, threads, threadsKnow
         <ul className="chat-tray-list">
           {dispatchAsks.map(run => {
             const open = shownAsk === run.id;
-            const line = (run.title || run.task || run.summary || '').split('\n').map(s => s.trim()).find(Boolean) ?? '';
-            return <li key={run.id} className={`chat-ask dispatch${open ? ' open' : ''}`} data-run={run.id}>
+            const brief = run.kind === 'investigate' ? run.brief : undefined;
+            const line = (brief?.headline || run.title || run.task || run.summary || '').split('\n').map(s => s.trim()).find(Boolean) ?? '';
+            return <li key={run.id} className={`chat-ask ${run.kind}${open ? ' open' : ''}`} data-run={run.id}>
               <button className="chat-ask-row" aria-expanded={open} aria-controls={`ask-${run.id}`} disabled={singleDispatch} onClick={() => setOpenAsk(open ? null : run.id)}>
-                <span className="chat-ask-kind"><IconAgents size={13} />{t('desk.chatDispatch', run.agent ?? '')}</span>
+                <span className="chat-ask-kind">{brief ? <><IconSparkle size={13} />{t('proactive.briefTitle')}</> : <><IconAgents size={13} />{t('desk.chatDispatch', run.agent ?? '')}</>}</span>
                 <span className="chat-ask-line">{line}</span>
               </button>
               {open && <div className="chat-ask-detail" id={`ask-${run.id}`}>
-                <p className="chat-ask-body">{run.task ?? run.summary ?? run.title ?? ''}</p>
-                {run.cwd && <p className="chat-ask-cwd"><code>{run.cwd}</code></p>}
-                <div className="chat-ask-acts">
-                  <button className="primary" disabled={Boolean(pending[run.id])} aria-busy={pending[run.id] === 'start'} onClick={() => act(run, 'start')}>{t('proactive.start')}</button>
-                  <button className="ghost" disabled={Boolean(pending[run.id])} onClick={() => act(run, 'dismiss')}>{t('proactive.noThanks')}</button>
-                </div>
+                {brief ? <DecisionBriefView
+                  brief={brief}
+                  run={run}
+                  pending={pending[run.id]}
+                  hideHeadline
+                  onAnswer={text => act(run, 'answer', text)}
+                  onDismiss={() => act(run, 'dismiss')}
+                /> : <>
+                  <p className="chat-ask-body">{run.task ?? run.summary ?? run.title ?? ''}</p>
+                  {run.cwd && <p className="chat-ask-cwd"><code>{run.cwd}</code></p>}
+                  <div className="chat-ask-acts">
+                    <button className="primary" disabled={Boolean(pending[run.id])} aria-busy={pending[run.id] === 'start'} onClick={() => act(run, 'start')}>{t('proactive.start')}</button>
+                    <button className="ghost" disabled={Boolean(pending[run.id])} onClick={() => act(run, 'dismiss')}>{t('proactive.noThanks')}</button>
+                  </div>
+                </>}
               </div>}
               {failures[run.id] && <p className="chat-ask-error" role="alert">{failures[run.id]}</p>}
             </li>;

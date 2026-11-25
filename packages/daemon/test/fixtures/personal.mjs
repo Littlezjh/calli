@@ -31,6 +31,59 @@ export function personalFixture(text) {
     for (const state of ['done', 'doing']) if (data.matter.includes(`precheck-${state}`) && evidence) return JSON.stringify({ state, evidence: `会话 ${evidence.title} 已处理`, source: `session:${evidence.id}` });
     return JSON.stringify({ state: 'todo', evidence: '' });
   }
+  if (command === '由 Calli 发起的深度主动调查。') {
+    const mode = process.env.FAKE_INVESTIGATE_MODE;
+    if (mode === 'invalid') return '无法按 JSON 输出';
+    if (mode === 'quiet') return JSON.stringify({ worthy: false, matterId: '', headline: '已核实完成', attribution: '外部表格与群消息均已更新，无需打扰。' });
+    const payloadStart = text.lastIndexOf('\n{');
+    const payload = payloadStart >= 0 ? JSON.parse(text.slice(payloadStart + 1).split('\n')[0]) : {};
+    const matterId = payload.matterId || payload.targets?.[0]?.id || '';
+    const artifactsDir = payload.artifactsDir;
+    let artifactPath;
+    if (artifactsDir && !artifactsDir.startsWith('/') && !artifactsDir.includes('..')) {
+      mkdirSync(artifactsDir, { recursive: true });
+      writeFileSync(join(artifactsDir, 'draft-reply.md'), '# 建议回复草稿\n\n已确认负责范围，计划本周五前完成迁移。\n');
+      artifactPath = `${artifactsDir}/draft-reply.md`;
+    }
+    const firstUrl = payload.signals?.[0]?.links?.[0] || payload.targets?.[0]?.source?.url || 'https://example.invalid/sheet/migration';
+    return '```json\n' + JSON.stringify({
+      worthy: true,
+      matterId,
+      headline: 'ModelHub 迁移表三列仍空，需拍板路线',
+      attribution: '核查了全量表与迁移群最新消息：你名下三列仍为空，且群里刚提出两个替代方案，截止 11/30。',
+      evidence: [
+        { label: '迁移全量表', fact: '你作为 PoC 的行中迁移意向、原因和工单链接均为空', url: firstUrl },
+        { label: '迁移沟通群', fact: '群内出现迁方舟与切 ds4.1 两个未读选项' },
+      ],
+      gaps: ['未接入邮件正文，财务 BP 附件详情未核对'],
+      canDo: {
+        user: ['拍板迁方舟还是申请延期切 ds4.1'],
+        agent: ['按你的决定起草群回复并派 coding agent 查调用代码'],
+      },
+      options: [
+        {
+          id: 'opt-1',
+          label: '按原计划迁方舟',
+          action: '填报迁移意向并让 coding agent 定位直连 ModelHub 的调用点',
+          tradeoff: '需在 11/30 前完成上线验证',
+          dispatch: { task: '定位仓库中直连 ModelHub 的调用代码并给出切方舟 EP 的改动方案' },
+        },
+        {
+          id: 'opt-2',
+          label: '申请延期切 ds4.1',
+          action: '先起草延期申请与一周灰度实验说明',
+          tradeoff: '需要一周观察期且期间不能拉闸',
+        },
+      ],
+      recommendedId: 'opt-1',
+      recommendReason: '距离 11/30 仅剩几天，原计划迁方舟风险最低且无需审批延期。',
+      prepared: {
+        label: '已起草群回复文案',
+        ...(artifactPath ? { artifactPath } : {}),
+        preview: '收到，这条线先按原计划迁方舟，今天先核对调用点并补全表格。',
+      },
+    }) + '\n```';
+  }
   const proactive = ['由 Calli 发起的提前准备。', '由 Calli 发起的沙盒动手。'].includes(command);
   const explore = command === '由 Calli 发起的一键配置探索。';
   const clarification = process.env.FAKE_PERSONAL_DELEGATE_CLARIFY === '1' && command.startsWith('这是一件新交给你的事，不是交接');

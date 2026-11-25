@@ -353,7 +353,8 @@ export class FeishuChat {
       const list = this.awaiting.get(threadId) ?? [];
       list.push({ id: message.messageId, text: text.trim() });
       this.awaiting.set(threadId, list);
-      await this.manager.startTurn(threadId, { text, queue: true });
+      const isRouter = this.manager.personal.router.status().threadId === threadId;
+      await this.manager.startTurn(threadId, { text, ...(isRouter ? { fromUser: true } : {}), queue: true });
     } catch (e) {
       const reason = e instanceof HttpError ? e.message : 'failed';
       this.record(message.messageId, 'in', threadId, title, 'failed', reason);
@@ -433,6 +434,28 @@ export class FeishuChat {
         if (attempt < 2) await new Promise(r => { const t = setTimeout(r, (this.options.retryMs ?? 1000) * (attempt + 1)); t.unref(); });
       }
     }
+  }
+
+  /** Sends a proactive brief to the owner and links its message_id to `threadId` so replies continue there. */
+  async sendProactive(body: string, key: string, threadId: string, title: string): Promise<boolean> {
+    if (this.stopped) return false;
+    const settings = this.getSettings();
+    if (!settings.enabled || !settings.owner) return false;
+    const record = this.record(key, 'out', threadId, title, 'failed');
+    const idempotency = createHash('sha1').update(key).digest('hex').slice(0, 40);
+    for (let attempt = 0; attempt < 3 && !this.stopped; attempt++) {
+      try {
+        const out = await this.run(['im', '+messages-send', '--as', 'bot', '--user-id', settings.owner, '--markdown', '-', '--idempotency-key', idempotency], body);
+        const sent = sentMessageId(out);
+        if (sent) this.store.feishuLink(sent, null, threadId);
+        record.result = 'sent'; record.reason = null;
+        return true;
+      } catch (e) {
+        record.reason = (e as Error).message;
+        if (attempt < 2) await new Promise(r => { const t = setTimeout(r, (this.options.retryMs ?? 1000) * (attempt + 1)); t.unref(); });
+      }
+    }
+    return false;
   }
 
   /** Send the owner a line, so a person can see the path works before relying on it. */

@@ -130,6 +130,18 @@ async function main(): Promise<void> {
   manager.personal.supervision.attachPush(push);
   const feishu = new FeishuChat(store, manager);
   void feishu.configure();
+  manager.personal.proactive.attachDelivery(async (run, brief, markdown) => {
+    const routerId = await manager.personal.router.ensureThread();
+    if (routerId && store.getThread(routerId)) {
+      manager.notice(routerId, `${brief.headline}（详见决策卡片或直接回复方案编号）`, false, true);
+    }
+    const key = `proactive-brief:${run.id}`;
+    if (routerId && await feishu.sendProactive(markdown, key, routerId, brief.headline)) {
+      return { delivered: true, channel: 'feishu' };
+    }
+    const pushed = push.sendDecisionBrief(key, brief.headline, markdown, routerId);
+    return { delivered: Boolean(pushed && pushed.result !== 'dropped'), channel: pushed ? 'push' : 'none' };
+  });
   const personalPath = join(config.dataDir, 'personal', 'calli.sock');
   manager.personal.socket = personalPath;
   const personal = personalServer(manager.personal);

@@ -239,6 +239,22 @@ export class PersonalRouter {
     return { threadId: thread.id, status: thread.status, lastReply: state.lastReply, lastReplyAt: state.lastReplyAt };
   }
 
+  /** Ensures the durable assistant thread exists without starting a model turn, e.g. for linking proactive Feishu briefs. */
+  async ensureThread(): Promise<string | null> {
+    const existing = this.status().threadId;
+    if (existing) return existing;
+    const settings = await this.personal.resolvedSettings();
+    const adapter = settings.agent ? this.adapters.get(settings.agent) : undefined;
+    if (!adapter || !settings.agent) return null;
+    const thread = await this.manager.createThread({
+      agent: settings.agent, cwd: settings.directory, title: '助手',
+      permissionMode: assistantPermissionMode(adapter), ...(settings.model ? { model: settings.model } : {}),
+    });
+    const state = this.state();
+    this.store.saveHubSetting(KEY, { ...state, threadId: thread.id, introduced: false, displayVersion: 1 });
+    return thread.id;
+  }
+
   /** The active turn's trusted origin, never inferred from model-supplied text or a queued arrival. */
   humanTurn(threadId: string): string | null {
     if (this.status().threadId !== threadId || this.store.getThread(threadId)?.status !== 'running') return null;
