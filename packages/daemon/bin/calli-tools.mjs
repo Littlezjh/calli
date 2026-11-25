@@ -24,7 +24,7 @@ function responseError(text, status) {
   return text.trim().slice(0, 1000) || `HTTP ${status}`;
 }
 
-export async function transport(path, body, binary = false, personal = false, socketOnly = false) {
+export async function transport(path, body, binary = false, personal = false, socketOnly = false, timeoutMs = 30000) {
   const socketPath = personal ? process.env.CALLI_TODO_SOCKET : process.env.CALLI_TOOLS_SOCKET;
   const key = personal ? process.env.CALLI_TODO_KEY : process.env.CALLI_TOOLS_KEY;
   if (socketPath || key) {
@@ -48,7 +48,7 @@ export async function transport(path, body, binary = false, personal = false, so
           } catch (err) { reject(err); }
         });
       });
-      req.setTimeout(30000, () => req.destroy(new Error('Request timed out. Retry with the same request-id.')));
+      req.setTimeout(timeoutMs, () => req.destroy(new Error('Request timed out. Retry with the same request-id.')));
       req.on('error', reject);
       req.end(payload);
     });
@@ -61,7 +61,7 @@ export async function transport(path, body, binary = false, personal = false, so
   const apiPath = path === '/command' ? '/api/tools/command' : path.replace('/artifacts/', '/api/tool-artifacts/');
   const res = await fetch(new URL(apiPath, base), {
     method: body ? 'POST' : 'GET', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    signal: AbortSignal.timeout(30000), ...(body ? { body: JSON.stringify(body) } : {}),
+    signal: AbortSignal.timeout(timeoutMs), ...(body ? { body: JSON.stringify(body) } : {}),
   });
   if (!res.ok) throw new Error(responseError(await res.text(), res.status));
   return binary ? Buffer.from(await res.arrayBuffer()) : res.json();
@@ -173,4 +173,74 @@ export async function referencesMain(args) {
 export async function previewNoteMain(args) {
   if (args.length !== 1) throw new Error('usage: calli preview-note ID');
   console.log(JSON.stringify(await transport('/command', { op: 'preview.note', id: args[0] })));
+}
+
+const shellQuote = arg => `'${String(arg).replace(/'/g, `'\\''`)}'`;
+
+/** Run a shell command directly on a connected remote machine over the hub relay, without spawning an agent. */
+export async function remoteExecMain(args) {
+  const [action, ...rest] = args;
+  if (action === 'hosts') {
+    if (rest.length) throw new Error('Use calli remote hosts without arguments.');
+    console.log(JSON.stringify(await transport('/command', { op: 'remote.hosts' })));
+    return 0;
+  }
+  const usage = 'Use calli remote exec MACHINE [--timeout SECONDS] [--input-file FILE|-] [--json] (-- COMMAND [ARGS...] | -c SHELL_COMMAND).';
+  if (action !== 'exec') throw new Error(usage);
+  const machine = rest.shift();
+  if (!machine || machine.startsWith('-')) throw new Error(usage);
+  let timeoutSec = 60, inputFile, shellCommand, json = false;
+  let argv = null;
+  while (rest.length) {
+    const token = rest.shift();
+    if (token === '--') {
+      argv = rest.splice(0);
+      break;
+    }
+    if (token === '--json') {
+      if (json) throw new Error('Duplicate option: --json');
+      json = true;
+      continue;
+    }
+    if (token === '--timeout') {
+      const value = rest.shift();
+      if (value === undefined) throw new Error('Missing value: --timeout');
+      timeoutSec = Number(value);
+      if (!Number.isFinite(timeoutSec) || timeoutSec < 1 || timeoutSec > 300) throw new Error('--timeout must be between 1 and 300 seconds');
+      continue;
+    }
+    if (token === '--input-file') {
+      const value = rest.shift();
+      if (value === undefined) throw new Error('Missing value: --input-file');
+      if (inputFile !== undefined) throw new Error('Duplicate option: --input-file');
+      inputFile = value;
+      continue;
+    }
+    if (token === '-c') {
+      const value = rest.shift();
+      if (value === undefined) throw new Error('Missing value: -c');
+      if (shellCommand !== undefined) throw new Error('Duplicate option: -c');
+      shellCommand = value;
+      continue;
+    }
+    throw new Error(`Invalid argument: ${token}`);
+  }
+  if (shellCommand !== undefined && argv !== null) throw new Error('Use either -c SHELL_COMMAND or -- COMMAND [ARGS...], not both.');
+  const command = shellCommand !== undefined ? shellCommand : argv?.length ? argv.map(shellQuote).join(' ') : '';
+  if (!command.trim()) throw new Error(usage);
+  const payload = { op: 'remote.exec', machine, command, timeoutMs: Math.round(timeoutSec * 1000) };
+  if (inputFile !== undefined) {
+    const text = readFileSync(inputFile === '-' ? 0 : inputFile, 'utf8');
+    if (Buffer.byteLength(text) > 48 * 1024) throw new Error('Input exceeds the 48 KB limit.');
+    payload.input = text;
+  }
+  const res = await transport('/command', payload, false, false, false, Math.max(30000, Math.round(timeoutSec * 1000) + 20000));
+  const stdoutBuf = Buffer.from(res.stdout ?? '', 'base64');
+  if (json) {
+    console.log(JSON.stringify({ machine: res.machine, code: res.code, stdout: stdoutBuf.toString('utf8'), stderr: res.stderr ?? '' }));
+  } else {
+    if (stdoutBuf.length) process.stdout.write(stdoutBuf);
+    if (res.stderr) process.stderr.write(res.stderr);
+  }
+  return typeof res.code === 'number' ? res.code : 1;
 }

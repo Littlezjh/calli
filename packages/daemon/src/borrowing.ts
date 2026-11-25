@@ -8,6 +8,7 @@ import { sniffImageType } from './attachments.js';
 import { turnAnswer } from './coordination.js';
 import { HttpError } from './errors.js';
 import type { StoredEvent } from './events.js';
+import type { HostRegistry } from './hosts.js';
 import type { InjectionGate } from './injections.js';
 import { turnOutcome } from './lifecycle.js';
 import type { PersonalBrowser } from './personal-browser.js';
@@ -45,6 +46,8 @@ export class BorrowingService {
   private stopped = false;
   /** The person's own browser, which agents drive directly with agent-browser. */
   browser?: PersonalBrowser;
+  /** Registered remote machines reachable over the hub's relay. */
+  hosts?: HostRegistry;
 
   constructor(
     private readonly store: Store,
@@ -183,6 +186,27 @@ export class BorrowingService {
         return { cdp: `http://127.0.0.1:${port}`, port, agentBrowser: status.agentBrowser };
       }
       case 'browser.open': return this.requireBrowser().open(input.url);
+      case 'remote.hosts':
+        return (this.hosts?.list() ?? []).map(h => ({ id: h.id, label: h.label, status: h.status }));
+      case 'remote.exec': {
+        if (!this.hosts) throw new HttpError(503, 'remote machines are not configured on this hub');
+        const machine = typeof input.machine === 'string' ? input.machine.trim() : '';
+        if (!machine || !this.hosts.list().some(h => h.id === machine)) {
+          throw new HttpError(404, `unknown machine; available: ${JSON.stringify(this.hosts.list().map(h => h.id))}`);
+        }
+        if (typeof input.command !== 'string' || !input.command.trim()) throw new HttpError(400, 'command is required');
+        if (input.input !== undefined && typeof input.input !== 'string') throw new HttpError(400, 'input must be a string');
+        let timeoutMs = 60_000;
+        if (input.timeoutMs !== undefined) {
+          const rawTimeout = Number(input.timeoutMs);
+          if (!Number.isFinite(rawTimeout) || rawTimeout < 1_000 || rawTimeout > 300_000) {
+            throw new HttpError(400, 'timeoutMs must be between 1000 and 300000');
+          }
+          timeoutMs = Math.round(rawTimeout);
+        }
+        const result = await this.hosts.exec(machine, input.command, { input: input.input, timeoutMs });
+        return { machine, code: result.code, stdout: result.stdout.toString('base64'), stderr: result.stderr };
+      }
       case 'jobs.get': return this.view(this.owned(owner, input.id));
       case 'jobs.cancel': {
         const job = this.owned(owner, input.id);

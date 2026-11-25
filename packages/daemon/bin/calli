@@ -3,14 +3,18 @@ import './legacy-env.mjs';
 import { personalMain, personalHelp } from './calli-personal.mjs';
 import { readFileSync } from 'node:fs';
 import { request } from 'node:http';
-import { browserMain, notifyMain, previewNoteMain, referencesMain, help as toolsHelp, toolsMain } from './calli-tools.mjs';
+import { browserMain, notifyMain, previewNoteMain, referencesMain, remoteExecMain, help as toolsHelp, toolsMain } from './calli-tools.mjs';
 const args = process.argv.slice(2);
-if (!args.length || (args[0] !== 'browser' && args.includes('--help'))) {
+const dash = args.indexOf('--');
+const ownArgs = dash === -1 ? args : args.slice(0, dash);
+if (!args.length || (args[0] !== 'browser' && ownArgs.includes('--help'))) {
   console.log(`calli agents | status | result ID | stop NAME
 calli spawn --agent ID --name NAME [--cwd DIR] [--model ID] [--effort LEVEL] --message-file FILE [--handoff-file FILE] --request-id KEY
 calli spawn --fork --name NAME [--worktree] --message-file FILE --request-id KEY
 calli send NAME --message-file FILE [--handoff-file FILE] --request-id KEY
 calli dirs MACHINE [PATH]
+calli remote hosts
+calli remote exec MACHINE [--timeout SECONDS] [--input-file FILE|-] [--json] (-- COMMAND [ARGS...] | -c SHELL_COMMAND)
 calli remote ls MEMBER [PATH]
 calli remote read MEMBER PATH [--offset N] [--limit N]
 calli remote write MEMBER PATH --file FILE|- [--expect-hash HASH]
@@ -71,6 +75,9 @@ try {
   if (args[0] === 'notify') { await notifyMain(args.slice(1)); process.exit(0); }
   if (args[0] === 'browser') {
     process.exit(await browserMain(args.slice(1)));
+  }
+  if (args[0] === 'remote' && (args[1] === 'exec' || args[1] === 'hosts')) {
+    process.exit(await remoteExecMain(args.slice(1)));
   }
   if (args[0] === 'tools' || args[0] === 'jobs') {
     await toolsMain(args);

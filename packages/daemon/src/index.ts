@@ -194,6 +194,8 @@ async function main(): Promise<void> {
   const hosts = new HostRegistry({ file: join(config.dataDir, 'hosts.json') });
   // Collaboration can then run members on the machines the hub reaches.
   coordination.hosts = hosts;
+  // Tool commands can run direct commands on connected machines through the same relay.
+  borrowing.hosts = hosts;
   // Catch-up runs need all thread-scoped sockets and runtime services to be ready.
   scheduler.start();
   manager.lark.start();
