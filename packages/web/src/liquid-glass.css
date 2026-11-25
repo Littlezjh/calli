@@ -182,8 +182,13 @@
 
 /* ---------- Chat topbar: Option A floating liquid glass capsules ---------- */
 
-/* Remove the hanging -30px / -16px muddy wash curtain; on phones cover ONLY the system status-bar
-   safe area (0px overhang below it) so zero fog ever lands on top of the floating pills. */
+/* Remove the hanging -30px / -16px muddy wash curtain. On phones, a real position:fixed DOM strip
+   (.status-bar-cap) paints the status-bar safe area so iOS 26/27 WebKit's fixed-edge sampler sees
+   a real solid top element instead of ignoring pseudo-elements. */
+.status-bar-cap {
+  display: none;
+}
+
 .app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar::before {
   display: none;
 }
@@ -191,7 +196,7 @@
 .app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar::after {
   inset: 0 0 auto;
   height: env(safe-area-inset-top);
-  background: var(--bg);
+  background: transparent;
 }
 
 /* Remove the legacy 40px bottom fog curtain and 92% opaque backing on phones too:
@@ -326,14 +331,19 @@
   color: var(--text);
 }
 
-/* Mobile: keep title pill compact, offset pills clear of iOS 26/27's system status-bar progressive
-   blur pocket (which feathers down to ~99pt on notched/Dynamic-Island devices when safe-area-inset-top
-   is non-zero), and float any active status chip cleanly below the bar. */
+/* Mobile: keep title pill compact right below the status bar (no extra gap) and paint the
+   status-bar safe area via the real fixed .status-bar-cap element for iOS 26/27 WebKit sampling. */
 @media (max-width: 899.98px) {
-  .app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar {
-    --lg-top-clearance: min(22px, env(safe-area-inset-top, 0px));
-    height: calc(56px + env(safe-area-inset-top) + var(--lg-top-clearance));
-    padding-top: calc(env(safe-area-inset-top) + var(--lg-top-clearance));
+  .app:not(.in-titlebar):not(.drawer-open):has(> .shell > .main > .composer-slot) > .status-bar-cap {
+    display: block;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: env(safe-area-inset-top);
+    background: var(--bg);
+    pointer-events: none;
+    z-index: 5;
   }
 
   .app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar:has(.topbar-actions) .topbar-title-pill {

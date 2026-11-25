@@ -102,7 +102,13 @@ test('glass chrome has scrolling content behind it without hiding either end of 
         await page.evaluate(() => document.querySelector('#status-seam-probe').remove());
         const top = await page.locator('.topbar').boundingBox();
         const back = await page.locator('.topbar .menu-btn').boundingBox();
-        assert.ok(back.y >= top.y + 59 + 20, 'controls clear both the status-bar safe area and iOS system blur pocket');
+        const cap = await page.locator('.status-bar-cap').evaluate(el => ({
+          position: getComputedStyle(el).position,
+          height: el.getBoundingClientRect().height,
+        }));
+        assert.equal(cap.position, 'fixed', 'the status-bar safe area uses a real fixed DOM element for WebKit sampling');
+        assert.ok(cap.height >= 58, 'the fixed status-bar cap spans the full top safe area');
+        assert.ok(back.y >= top.y + 59 && back.y <= top.y + 72, 'controls sit snugly right below the status-bar safe area');
       }
       await page.screenshot({ path: `${shots}/chat-${mobile ? 'phone' : 'desktop'}-${theme}.png` });
       await page.locator('.topbar-more').click();

@@ -2967,6 +2967,8 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
       {projectDialog === 'roots' && <RootsDialog api={api} roots={roots} onChange={applyWorkdirs} onCancel={() => setProjectDialog(null)} />}
       {/* The sidebar, the conversation and the panels beside it are one sheet of paper on a
           desktop; the window's band shows around it. Overlays stay outside, over the window. */}
+      {/* Real top-anchored fixed DOM strip for iOS 26/27 WebKit status-bar colour sampling (pseudo-elements are ignored). */}
+      <div className="status-bar-cap" aria-hidden="true" />
       <div className="shell">
       <aside className="sidebar">
         <Sidebar
