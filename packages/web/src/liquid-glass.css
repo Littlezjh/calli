@@ -3,8 +3,9 @@
  * independent status chips for transient header metadata, and a floating liquid-glass
  * composer with subtle mouse-tracked edge sheen on desktop.
  *
- * Scoped to chat views (.main:has(> .composer-slot)) and never applied inside native PWA
- * titlebars (.in-titlebar) or embedded sub-panes (.agent-panel, .thread-peek).
+ * Scoped to unified chat views (.glass-chat — shared by normal threads and Personal Assistant)
+ * and never applied inside native PWA titlebars (.in-titlebar) or embedded sub-panes
+ * (.agent-panel, .thread-peek).
  */
 
 :root {
@@ -189,11 +190,11 @@
   display: none;
 }
 
-.app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar::before {
+.app:not(.in-titlebar) .glass-chat > :is(.topbar, .chat-top)::before {
   display: none;
 }
 
-.app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar::after {
+.app:not(.in-titlebar) .glass-chat > :is(.topbar, .chat-top)::after {
   inset: 0 0 auto;
   height: env(safe-area-inset-top);
   background: transparent;
@@ -201,27 +202,31 @@
 
 /* Remove the legacy 40px bottom fog curtain and 92% opaque backing on phones too:
    scrolling text passes cleanly behind the floating liquid-glass composer and peeks out below it. */
-.main:has(> .composer-slot) > .composer-slot::before,
-.main:has(> .composer-slot) > .composer-slot::after {
+.glass-chat > :is(.composer-slot, .chat-composer)::before,
+.glass-chat > :is(.composer-slot, .chat-composer)::after {
   display: none;
 }
 
 @media (min-width: 900px) {
-  .app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar::before,
-  .app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar::after {
+  .app:not(.in-titlebar) .glass-chat > :is(.topbar, .chat-top)::before,
+  .app:not(.in-titlebar) .glass-chat > :is(.topbar, .chat-top)::after {
+    content: '';
+    position: absolute;
     display: block;
     inset: 0 0 auto;
     height: 22px;
+    z-index: -1;
+    pointer-events: none;
   }
 
-  .app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar::before {
+  .app:not(.in-titlebar) .glass-chat > :is(.topbar, .chat-top)::before {
     -webkit-backdrop-filter: blur(8px);
     backdrop-filter: blur(8px);
     -webkit-mask-image: linear-gradient(to bottom, #000 0%, transparent 100%);
     mask-image: linear-gradient(to bottom, #000 0%, transparent 100%);
   }
 
-  .app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar::after {
+  .app:not(.in-titlebar) .glass-chat > :is(.topbar, .chat-top)::after {
     background: linear-gradient(to bottom, color-mix(in srgb, var(--bg) 78%, transparent) 0%, transparent 100%);
   }
 
@@ -265,10 +270,10 @@
   }
 }
 
-/* Shared Liquid Glass material for chat topbar controls */
-.app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar .menu-btn,
-.app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar .topbar-actions,
-.app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar .topbar-lead {
+/* Shared Liquid Glass material for chat topbar controls (threads & Personal Assistant unified) */
+.app:not(.in-titlebar) .glass-chat > :is(.topbar, .chat-top) .menu-btn,
+.app:not(.in-titlebar) .glass-chat > :is(.topbar, .chat-top) .topbar-actions,
+.app:not(.in-titlebar) .glass-chat > :is(.topbar, .chat-top) .topbar-lead {
   border: 0;
   border-radius: var(--radius-pill);
   background: var(--lg-sheen), var(--lg-fill);
@@ -277,20 +282,20 @@
   backdrop-filter: var(--lg-filter);
 }
 
-.app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar .topbar-lead {
+.app:not(.in-titlebar) .glass-chat > :is(.topbar, .chat-top) .topbar-lead {
   margin-left: 0;
   height: 40px;
   padding: 0 4px;
 }
 
-.app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar .topbar-lead .icon-btn {
+.app:not(.in-titlebar) .glass-chat > :is(.topbar, .chat-top) .topbar-lead .icon-btn {
   background: transparent;
   border: 0;
   box-shadow: none;
 }
 
-/* Title becomes a floating Liquid Glass capsule whenever an active thread is shown */
-.app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar:has(.topbar-actions) .topbar-title-pill {
+/* Title becomes a floating Liquid Glass capsule whenever an active thread or Personal Assistant is shown */
+.app:not(.in-titlebar) .glass-chat > :is(.topbar, .chat-top):has(.topbar-actions, .topbar-desk, .chat-entries) .topbar-title-pill {
   height: 40px;
   padding: 0 15px 0 8px;
   border-radius: var(--radius-pill);
@@ -301,8 +306,12 @@
   max-width: min(520px, 100%);
 }
 
+.app:not(.in-titlebar) .glass-chat > :is(.topbar, .chat-top):has(.topbar-desk, .chat-entries) .topbar-title-pill {
+  padding: 0 15px;
+}
+
 /* Independent transient status chips (team status, handover segment, busy line, member back-to-lead) */
-.app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar .topbar-chip {
+.app:not(.in-titlebar) .glass-chat > :is(.topbar, .chat-top) .topbar-chip {
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -321,20 +330,20 @@
   text-overflow: ellipsis;
 }
 
-.app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar .topbar-chip.attention {
+.app:not(.in-titlebar) .glass-chat > :is(.topbar, .chat-top) .topbar-chip.attention {
   color: var(--warn);
   background: var(--lg-sheen), var(--lg-warn-fill);
   box-shadow: var(--lg-warn-rim);
 }
 
-.app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar .topbar-chip.topbar-lead-link {
+.app:not(.in-titlebar) .glass-chat > :is(.topbar, .chat-top) .topbar-chip.topbar-lead-link {
   color: var(--text);
 }
 
 /* Mobile: keep title pill compact right below the status bar (no extra gap) and paint the
    status-bar safe area via the real fixed .status-bar-cap element for iOS 26/27 WebKit sampling. */
 @media (max-width: 899.98px) {
-  .app:not(.in-titlebar):not(.drawer-open):has(> .shell > .main > .composer-slot) > .status-bar-cap {
+  .app:not(.in-titlebar):not(.drawer-open):has(> .shell > .main.glass-chat) > .status-bar-cap {
     display: block;
     position: fixed;
     top: 0;
@@ -346,13 +355,13 @@
     z-index: 5;
   }
 
-  .app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar:has(.topbar-actions) .topbar-title-pill {
+  .app:not(.in-titlebar) .glass-chat > :is(.topbar, .chat-top):has(.topbar-actions, .topbar-desk, .chat-entries) .topbar-title-pill {
     height: 42px;
     padding: 0 13px;
     max-width: 100%;
   }
 
-  .app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar .topbar-chips {
+  .app:not(.in-titlebar) .glass-chat > :is(.topbar, .chat-top) .topbar-chips {
     position: absolute;
     left: 12px;
     right: 12px;
@@ -361,7 +370,7 @@
     pointer-events: none;
   }
 
-  .app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar .topbar-chip {
+  .app:not(.in-titlebar) .glass-chat > :is(.topbar, .chat-top) .topbar-chip {
     pointer-events: auto;
     height: 30px;
     padding: 0 11px;
@@ -369,9 +378,13 @@
   }
 }
 
-/* ---------- Floating Liquid Glass Composer (desktop & mobile unified) ---------- */
+/* ---------- Floating Liquid Glass Composer (desktop, mobile, threads & Personal Assistant unified) ---------- */
 
-.main:has(> .composer-slot) > .composer-slot .composer-box {
+.glass-chat > .chat-composer {
+  z-index: 4;
+}
+
+.glass-chat > :is(.composer-slot, .chat-composer) .composer-box {
   position: relative;
   border: 1px solid transparent;
   background: var(--lg-sheen), var(--lg-composer-fill);
@@ -381,12 +394,12 @@
   transition: transform 0.2s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-.main:has(> .composer-slot) > .composer-slot .composer-box .composer-context {
+.glass-chat > :is(.composer-slot, .chat-composer) .composer-box .composer-context {
   background: color-mix(in srgb, var(--surface-2) 55%, transparent);
 }
 
 /* Pointer-tracking liquid specular highlight sits strictly BEHIND text and controls so it never hazes typed letters. */
-.main:has(> .composer-slot) > .composer-slot .composer-box > :not(.composer-sheen):not(.coord-mention-menu) {
+.glass-chat > :is(.composer-slot, .chat-composer) .composer-box > :not(.composer-sheen):not(.coord-mention-menu) {
   position: relative;
   z-index: 1;
 }
@@ -423,7 +436,7 @@
 }
 
 @media (hover: hover) and (pointer: fine) {
-  .main:has(> .composer-slot) > .composer-slot .composer-box:hover > .composer-sheen {
+  .glass-chat > :is(.composer-slot, .chat-composer) .composer-box:hover > .composer-sheen {
     opacity: 1;
   }
 }
@@ -506,15 +519,6 @@ button.pet-summon:hover,
   border-radius: var(--radius-pill);
 }
 
-/* Desk / Assistant floating composer joins the same liquid-glass family. */
-.chat-composer .composer-box {
-  border: 1px solid transparent;
-  background: var(--lg-sheen), var(--lg-composer-fill);
-  box-shadow: var(--lg-composer-rim);
-  -webkit-backdrop-filter: var(--lg-composer-filter);
-  backdrop-filter: var(--lg-composer-filter);
-}
-
 /* Modal dialogs wear translucent Apple Liquid Glass instead of flat bordered web cards. */
 .dialog:not(.desk-spread) {
   border: 0;
@@ -533,18 +537,18 @@ button.pet-summon:hover,
   animation-timing-function: cubic-bezier(0.22, 1.12, 0.36, 1);
 }
 
-.app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar .menu-btn,
-.app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar .topbar-lead .icon-btn,
-.app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar .topbar-actions .icon-btn,
-.app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar .topbar-chip.topbar-lead-link,
+.app:not(.in-titlebar) .glass-chat > :is(.topbar, .chat-top) .menu-btn,
+.app:not(.in-titlebar) .glass-chat > :is(.topbar, .chat-top) .topbar-lead .icon-btn,
+.app:not(.in-titlebar) .glass-chat > :is(.topbar, .chat-top) .topbar-actions .icon-btn,
+.app:not(.in-titlebar) .glass-chat > :is(.topbar, .chat-top) .topbar-chip.topbar-lead-link,
 .settings-topbar > .icon-btn {
   transition: transform 0.16s cubic-bezier(0.22, 1.12, 0.36, 1), background 0.14s ease, color 0.14s ease;
 }
 
-.app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar .menu-btn:active,
-.app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar .topbar-lead .icon-btn:active,
-.app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar .topbar-actions .icon-btn:active,
-.app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar .topbar-chip.topbar-lead-link:active,
+.app:not(.in-titlebar) .glass-chat > :is(.topbar, .chat-top) .menu-btn:active,
+.app:not(.in-titlebar) .glass-chat > :is(.topbar, .chat-top) .topbar-lead .icon-btn:active,
+.app:not(.in-titlebar) .glass-chat > :is(.topbar, .chat-top) .topbar-actions .icon-btn:active,
+.app:not(.in-titlebar) .glass-chat > :is(.topbar, .chat-top) .topbar-chip.topbar-lead-link:active,
 .round-btn:active,
 .jump-btn:active,
 .pet-summon:active,
@@ -622,20 +626,20 @@ button.pet-summon:hover,
 /* ---------- Accessibility & unsupported-browser fallbacks ---------- */
 
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar .menu-btn,
-  .app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar .topbar-actions,
-  .app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar .topbar-lead,
-  .app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar:has(.topbar-actions) .topbar-title-pill,
-  .app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar .topbar-chip,
-  .main:has(> .composer-slot) > .composer-slot .composer-box,
+  .app:not(.in-titlebar) .glass-chat > :is(.topbar, .chat-top) .menu-btn,
+  .app:not(.in-titlebar) .glass-chat > :is(.topbar, .chat-top) .topbar-actions,
+  .app:not(.in-titlebar) .glass-chat > :is(.topbar, .chat-top) .topbar-lead,
+  .app:not(.in-titlebar) .glass-chat > :is(.topbar, .chat-top):has(.topbar-actions, .topbar-desk, .chat-entries) .topbar-title-pill,
+  .app:not(.in-titlebar) .glass-chat > :is(.topbar, .chat-top) .topbar-chip,
+  .glass-chat > :is(.composer-slot, .chat-composer) .composer-box,
   .round-btn, .jump-btn, .pet-summon, .chat-entry, .chat-ask-orb, .quick-switch-handle,
   .menu-panel, .pop-panel.anchored-pop, .selection-menu, .command-menu, .coord-mention-menu,
-  .action-sheet-card, .quick-switch-panel, .chat-tray, .chat-composer .composer-box,
+  .action-sheet-card, .quick-switch-panel, .chat-tray,
   .dialog:not(.desk-spread), .settings-topbar > .icon-btn, .settings-actions,
   .files-panel.phone .files-head .icon-btn, .git-panel.phone .git-head .icon-btn, .trace-side.phone .trace-phone-head .icon-btn {
     background: var(--surface);
   }
-  .app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar::before {
+  .app:not(.in-titlebar) .glass-chat > :is(.topbar, .chat-top)::before {
     display: none;
   }
   .composer-sheen {
@@ -644,22 +648,22 @@ button.pet-summon:hover,
 }
 
 @media (prefers-reduced-transparency: reduce) {
-  .app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar .menu-btn,
-  .app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar .topbar-actions,
-  .app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar .topbar-lead,
-  .app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar:has(.topbar-actions) .topbar-title-pill,
-  .app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar .topbar-chip,
-  .main:has(> .composer-slot) > .composer-slot .composer-box,
+  .app:not(.in-titlebar) .glass-chat > :is(.topbar, .chat-top) .menu-btn,
+  .app:not(.in-titlebar) .glass-chat > :is(.topbar, .chat-top) .topbar-actions,
+  .app:not(.in-titlebar) .glass-chat > :is(.topbar, .chat-top) .topbar-lead,
+  .app:not(.in-titlebar) .glass-chat > :is(.topbar, .chat-top):has(.topbar-actions, .topbar-desk, .chat-entries) .topbar-title-pill,
+  .app:not(.in-titlebar) .glass-chat > :is(.topbar, .chat-top) .topbar-chip,
+  .glass-chat > :is(.composer-slot, .chat-composer) .composer-box,
   .round-btn, .jump-btn, .pet-summon, .chat-entry, .chat-ask-orb, .quick-switch-handle,
   .menu-panel, .pop-panel.anchored-pop, .selection-menu, .command-menu, .coord-mention-menu,
-  .action-sheet-card, .quick-switch-panel, .chat-tray, .chat-composer .composer-box,
+  .action-sheet-card, .quick-switch-panel, .chat-tray,
   .dialog:not(.desk-spread), .settings-topbar > .icon-btn, .settings-actions,
   .files-panel.phone .files-head .icon-btn, .git-panel.phone .git-head .icon-btn, .trace-side.phone .trace-phone-head .icon-btn {
     background: var(--surface);
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
   }
-  .app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar::before {
+  .app:not(.in-titlebar) .glass-chat > :is(.topbar, .chat-top)::before {
     display: none;
   }
   .composer-sheen {
@@ -668,14 +672,14 @@ button.pet-summon:hover,
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .main:has(> .composer-slot) > .composer-slot .composer-box,
+  .glass-chat > :is(.composer-slot, .chat-composer) .composer-box,
   .composer-sheen,
   .round-btn, .jump-btn, .pet-summon, .chat-entry, .chat-ask-orb, .quick-switch-handle,
   .settings-topbar > .icon-btn,
-  .app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar .menu-btn,
-  .app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar .topbar-lead .icon-btn,
-  .app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar .topbar-actions .icon-btn,
-  .app:not(.in-titlebar) .main:has(> .composer-slot) > .topbar .topbar-chip.topbar-lead-link {
+  .app:not(.in-titlebar) .glass-chat > :is(.topbar, .chat-top) .menu-btn,
+  .app:not(.in-titlebar) .glass-chat > :is(.topbar, .chat-top) .topbar-lead .icon-btn,
+  .app:not(.in-titlebar) .glass-chat > :is(.topbar, .chat-top) .topbar-actions .icon-btn,
+  .app:not(.in-titlebar) .glass-chat > :is(.topbar, .chat-top) .topbar-chip.topbar-lead-link {
     transition: none;
   }
   .dialog:not(.desk-spread),

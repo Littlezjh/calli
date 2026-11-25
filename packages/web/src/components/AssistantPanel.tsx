@@ -9,7 +9,7 @@ import { replaceRun, startConflict, askingPins, needTarget } from '../proactive'
 import { buildDesk, briefStatus, type BriefStatus } from '../desk';
 import { buildTimeline, type StoredEvent } from '../timeline';
 import { restoreVideos } from '../videos';
-import { useMinWidth } from '../hooks';
+import { useChatChromeOverlap, useMinWidth } from '../hooks';
 import { t } from '../i18n';
 import { ActionSheet, type SheetTarget } from './ActionSheet';
 import { Composer, type DraftNote } from './Composer';
@@ -657,9 +657,11 @@ export function AssistantHome({ api, todos, loading, error, threads, threadsKnow
     setPreviewId(null);
   }, [onOpenFile]);
 
+  useChatChromeOverlap(mainRef);
+
   return <div className={`chat-home${drawer ? ' drawer-open' : ''}${sideBySide ? ' side-by-side' : ''}`} ref={root}>
-    <div className="chat-main" ref={mainRef}>
-      {headerSlot && !sideBySide ? createPortal(header, headerSlot) : <header className="chat-top">{topLead}<span className="chat-brand">{t('desk.title')}</span><span className="sp" />{header}</header>}
+    <div className="chat-main glass-chat" ref={mainRef}>
+      {headerSlot && !sideBySide ? createPortal(header, headerSlot) : <header className="chat-top">{topLead}<span className="chat-brand topbar-title-pill">{t('desk.title')}</span><span className="sp" />{header}</header>}
 
       {threadId || threadError || !routerReady ? <>
         <div className="chat-flow" ref={scroll} tabIndex={0} data-note-target="assistant-home" data-note-thread={threadId ?? ''} onScroll={() => {

@@ -147,11 +147,24 @@ test('assistant thread links preview beside the retained conversation on desktop
         assert.ok(await flow.evaluate(el => el.scrollTop) > 100, phone ? 'touch scrolls the reader' : 'native scrollbar can be dragged');
         const geometry = await page.evaluate(() => {
           const flow = document.querySelector('.chat-flow'), main = document.querySelector('.chat-main');
+          const bar = document.querySelector('.main > .topbar'), box = document.querySelector('.chat-composer .composer-box');
+          const pill = document.querySelector('.topbar-title-pill');
           return { edge: Math.abs(flow.getBoundingClientRect().right - main.getBoundingClientRect().right),
             width: getComputedStyle(flow).scrollbarWidth,
-            outer: document.querySelector('.scroller:has(.chat-home)').scrollHeight - document.querySelector('.scroller:has(.chat-home)').clientHeight };
+            outer: document.querySelector('.scroller:has(.chat-home)').scrollHeight - document.querySelector('.scroller:has(.chat-home)').clientHeight,
+            flowTop: flow.getBoundingClientRect().top,
+            flowBottom: flow.getBoundingClientRect().bottom,
+            barBottom: bar.getBoundingClientRect().bottom,
+            boxBottom: box.getBoundingClientRect().bottom,
+            boxBlur: getComputedStyle(box).backdropFilter,
+            pillBlur: getComputedStyle(pill).backdropFilter };
         });
         assert.ok(geometry.edge < 2); assert.equal(geometry.width, 'thin'); assert.ok(geometry.outer <= 1, 'no outer vertical scroll');
+        assert.ok(geometry.flowTop < geometry.barBottom, 'assistant chat scrolls behind the floating glass topbar');
+        assert.ok(geometry.flowBottom >= geometry.boxBottom, 'assistant chat extends behind and below the floating glass composer');
+        assert.notEqual(geometry.boxBlur, 'none', 'assistant composer shares the Liquid Glass material');
+        assert.notEqual(geometry.pillBlur, 'none', 'assistant title wears the same Liquid Glass capsule');
+        await page.screenshot({ path: `/tmp/calli-assistant-glass-${phone ? 'phone' : 'desktop'}.png` });
         assert.deepEqual(errors, []);
       } finally { await context.close(); }
     }

@@ -41,7 +41,7 @@ import type { HubAction } from './commands';
 import { buildProjectOptions, projectRoot } from './projects';
 import { rootRows, withWorkdirs } from './workdirs';
 import { isBounce, useAppHistory } from './appHistory';
-import { useAppearance, useInTitlebar, useIsCompact, useListSwipe, useMinWidth, useStoredFlag } from './hooks';
+import { useAppearance, useChatChromeOverlap, useInTitlebar, useIsCompact, useListSwipe, useMinWidth, useStoredFlag } from './hooks';
 import { useModelPreferences } from './model-preferences';
 import { useHosts } from './hosts';
 import type { PreparedImage } from './images';
@@ -1184,33 +1184,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   const [advanceBusy, setAdvanceBusy] = useState(false);
   const scrollerRef = useRef<HTMLDivElement>(null);
   const mainRef = useRef<HTMLElement>(null);
-  useLayoutEffect(() => {
-    const el = mainRef.current;
-    if (!el) return;
-    const topbar = el.querySelector<HTMLElement>(':scope > .topbar');
-    const composer = el.querySelector<HTMLElement>(':scope > .composer-slot');
-    const box = composer?.querySelector<HTMLElement>(':scope > .composer');
-    const read = () => {
-      // What the column's lean toward the middle of the screen is worked out from (see styles.css).
-      // clientWidth includes the padding the lean adds, so the two do not chase each other.
-      el.style.setProperty('--main-w', `${el.clientWidth}px`);
-      // Let the conversation pass behind glass controls. Padding keeps both ends readable;
-      // measure the slot because queues, attachments and the phone keyboard change its height.
-      // Notices keep their place in the flow, and an installed window keeps its native title band.
-      const top = composer && topbar?.nextElementSibling?.classList.contains('scroller') && !el.closest('.in-titlebar') ? topbar.offsetHeight : 0;
-      el.style.setProperty('--chat-top-overlap', `${top}px`);
-      el.style.setProperty('--chat-bottom-overlap', `${composer?.offsetHeight ?? 0}px`);
-      // The edge wash under the composer is as tall as the box with its queue, not the notes stacked above it.
-      el.style.setProperty('--chat-composer-h', `${box?.offsetHeight ?? 0}px`);
-    };
-    read();
-    const watch = new ResizeObserver(read);
-    watch.observe(el);
-    if (topbar) watch.observe(topbar);
-    if (composer) watch.observe(composer);
-    if (box) watch.observe(box);
-    return () => watch.disconnect();
-  });
+  useChatChromeOverlap(mainRef, true);
   const [agentsStart, setAgentsStart] = useState<string | null>(null);
   const stickToBottom = useRef(true);
   const [jump, setJump] = useState<{ threadId: string; turnId: string } | null>(null);
@@ -3051,7 +3025,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
 
       {/* A conversation under way leans toward the middle of the screen, as in Codex; a new
           thread, and the pages, stay centred where they are. */}
-      <main className={`main${(selected || threadPending) && !onPage && hostUp && !compact && desktop !== 'open' ? ' lean' : ''}${overviewRoom || (activeOverviewDetail && overviewDock && overviewOpen && !dockOpen) ? ' overview-room' : ''}`} ref={mainRef}>
+      <main className={`main${(!onPage || onDesk) && !(host && !hostUp) ? ' glass-chat' : ''}${(selected || threadPending) && !onPage && hostUp && !compact && desktop !== 'open' ? ' lean' : ''}${overviewRoom || (activeOverviewDetail && overviewDock && overviewOpen && !dockOpen) ? ' overview-room' : ''}`} ref={mainRef}>
         {compact && selected && !listOpen && !onPage && hostUp && (
           <ThreadQuickSwitch threads={topLevelThreads} selectedId={selected.id} agents={agents} onSelect={pick} hostId={hostId} draftKeys={draftKeys} />
         )}

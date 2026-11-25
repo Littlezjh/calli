@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type TouchEvent } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type RefObject, type TouchEvent } from 'react';
 import { APPEARANCE_KEY, parseAppearance, resolveTheme, type Appearance, type Theme } from './appearance';
 import { noteEdgeSwipe } from './appHistory';
 
@@ -226,4 +226,65 @@ export function useAppearance(storageKey = APPEARANCE_KEY, forced?: Appearance):
     }
   };
   return [appearance, save, theme];
+}
+
+/**
+ * Measures floating Liquid Glass chat chrome (header + composer slot) on any `.glass-chat`
+ * container — shared by both normal threads (`.main`) and Personal Assistant (`.chat-main`) so
+ * scrolling content passes behind floating headers and composers identically from one code path.
+ */
+export function useChatChromeOverlap(ref: RefObject<HTMLElement | null>, trackWidth = false) {
+  const lastTopRef = useRef(0);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const header = el.querySelector<HTMLElement>(':scope > .topbar, :scope > .chat-top');
+    const composer = el.querySelector<HTMLElement>(':scope > .composer-slot, :scope > .chat-composer');
+    const box = composer?.querySelector<HTMLElement>(':scope > .composer');
+    const outerMain = el.classList.contains('chat-main') ? el.closest<HTMLElement>('.main') : null;
+    const read = () => {
+      if (trackWidth) el.style.setProperty('--main-w', `${el.clientWidth}px`);
+      const isChat = Boolean(composer) || Boolean(el.querySelector(':scope > .scroller > .chat-home'));
+      const inTitlebar = Boolean(el.closest('.in-titlebar'));
+      if (outerMain) {
+        // Keep the outer .main top overlap in sync within the exact same layout frame when
+        // side-by-side panels toggle .main > .topbar visibility, so .chat-flow never loses
+        // padding-top for a frame and clamps scrollTop.
+        const outerBar = outerMain.querySelector<HTMLElement>(':scope > .topbar');
+        const outerOverlap = !inTitlebar && outerBar && outerBar.nextElementSibling?.classList.contains('scroller')
+          ? outerBar.offsetHeight
+          : 0;
+        if (outerOverlap > 0) lastTopRef.current = outerOverlap;
+        outerMain.style.setProperty('--chat-top-overlap', `${outerOverlap}px`);
+      }
+      if (header) {
+        const next = header.nextElementSibling;
+        const canOverlap = isChat && !inTitlebar && Boolean(
+          next?.classList.contains('scroller')
+          || next?.classList.contains('chat-flow')
+          || next?.classList.contains('chat-fresh'),
+        );
+        const top = canOverlap ? header.offsetHeight : 0;
+        if (top > 0) lastTopRef.current = top;
+        el.style.setProperty('--chat-top-overlap', `${top}px`);
+      } else if (el.inert) {
+        // Phone full-screen preview hides .main > .topbar while covering .chat-main (which is
+        // marked inert). Preserve the last active top overlap on .chat-main so .chat-flow's
+        // padding-top never collapses behind the overlay and shifts scrollTop on close.
+        if (lastTopRef.current > 0) el.style.setProperty('--chat-top-overlap', `${lastTopRef.current}px`);
+      } else {
+        // Inherit --chat-top-overlap from the outer .main when sharing its global topbar.
+        el.style.removeProperty('--chat-top-overlap');
+      }
+      el.style.setProperty('--chat-bottom-overlap', `${composer?.offsetHeight ?? 0}px`);
+      el.style.setProperty('--chat-composer-h', `${box?.offsetHeight ?? 0}px`);
+    };
+    read();
+    const watch = new ResizeObserver(read);
+    watch.observe(el);
+    if (header) watch.observe(header);
+    if (composer) watch.observe(composer);
+    if (box) watch.observe(box);
+    return () => watch.disconnect();
+  });
 }

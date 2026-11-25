@@ -13620,11 +13620,12 @@ button.trace-step-head:hover { background: var(--hover); }
 .desk-action-error { margin: 0 0 24px; color: var(--warn); font-size: 13px; }
 
 /* Her home: the conversation is the page, everything else one drawer away. The scroller
-   yields its scroll to the conversation, which keeps its own. */
-.scroller:has(> .chat-home) { display: flex; padding: 0; overflow: hidden; }
+   yields its scroll to the conversation, which keeps its own, and pulls up under the global
+   topbar just like a regular thread so text flows behind the floating Liquid Glass chrome. */
+.scroller:has(> .chat-home) { display: flex; padding: 0; overflow: hidden; margin-top: calc(-1 * var(--chat-top-overlap, 0px)); }
 .chat-home { position: relative; display: flex; flex: 1; min-width: 0; min-height: 0; }
 .chat-main { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; }
-.chat-top { flex: none; display: flex; align-items: center; gap: 8px; height: var(--titlebar-row, calc(52px + env(safe-area-inset-top))); padding: env(safe-area-inset-top) 12px 0 18px; }
+.chat-top { flex: none; display: flex; align-items: center; gap: 8px; height: var(--titlebar-row, calc(58px + env(safe-area-inset-top))); padding: env(safe-area-inset-top) 12px 0 18px; }
 .sidebar-hidden .chat-top { padding-left: calc(12px + var(--titlebar-left)); }
 @media (min-width: 901px) { .main:has(.chat-home.side-by-side) > .topbar { display: none; } }
 .chat-top > .sp { flex: 1; }
@@ -13639,16 +13640,18 @@ button.trace-step-head:hover { background: var(--hover); }
 .topbar-desk { display: flex; align-items: center; gap: 8px; min-width: 0; margin-left: auto; }
 .topbar-desk .chat-entries { flex: none; }
 
-/* The conversation: a readable column on its own scroll, the translucent glass composer under it. */
-.chat-flow { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; width: 100%; padding: 0; scrollbar-gutter: stable; scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
-.chat-reading { width: min(760px, 100%); margin: 0 auto; padding: 10px 16px 42px; }
+/* The conversation: spans full height behind the floating header and liquid-glass composer,
+   sharing the exact same overlap variables (--chat-top-overlap / --chat-bottom-overlap) as threads. */
+.chat-flow { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; width: 100%; margin-bottom: calc(-1 * var(--chat-bottom-overlap, 0px)); padding: calc(var(--chat-top-overlap, 0px) + 12px) 0 calc(var(--chat-bottom-overlap, 0px) + 48px); scroll-padding-top: calc(var(--chat-top-overlap, 0px) + 12px); scroll-padding-bottom: calc(var(--chat-bottom-overlap, 0px) + 48px); scrollbar-gutter: stable; scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
+.chat-main:has(> .chat-top) > .chat-flow { margin-top: calc(-1 * var(--chat-top-overlap, 0px)); }
+.chat-reading { width: min(760px, 100%); margin: 0 auto; padding: 8px 16px 0; }
 .chat-error { margin: 8px 8px 4px; color: var(--warn); font-size: 12.5px; }
-.chat-composer { position: relative; flex: none; width: min(760px, 100%); margin: 0 auto; padding: 6px 16px calc(12px + var(--safe-bottom)); }
+.chat-composer { position: relative; flex: none; width: min(760px, 100%); margin: 0 auto; padding: 6px 16px calc(12px + var(--safe-bottom)); pointer-events: none; }
+.chat-composer > :not(.chat-asks) { pointer-events: auto; }
 .chat-composer .composer { width: auto; max-width: none; padding: 0; }
-.chat-composer .composer-box { border-color: transparent; background: color-mix(in srgb, var(--surface) 78%, transparent); box-shadow: var(--glass-shadow), var(--glass-halo); -webkit-backdrop-filter: var(--glass-filter); backdrop-filter: var(--glass-filter); }
 
 /* Nothing said yet: calm title and three quiet prompt pills. */
-.chat-fresh { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; width: min(560px, calc(100% - 40px)); margin: 0 auto; padding-bottom: 6vh; }
+.chat-fresh { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; width: min(560px, calc(100% - 40px)); margin: 0 auto; padding: var(--chat-top-overlap, 0px) 0 6vh; }
 .chat-fresh h2 { margin: 0; font-size: 19px; font-weight: 600; letter-spacing: -.02em; }
 .chat-fresh > p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.65; text-align: center; }
 .chat-starters { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; width: 100%; margin-top: 8px; }
@@ -14993,7 +14996,7 @@ body:has(.menu-float) .pop-panel.overview-dock { opacity: 0; pointer-events: non
   scroll-padding-top: calc(var(--chat-top-overlap, 0px) + 20px);
   scroll-padding-bottom: calc(var(--chat-bottom-overlap, 0px) + var(--composer-clear));
 }
-.main:has(> .composer-slot) > .topbar { position: relative; z-index: 4; }
+.glass-chat > :is(.topbar, .chat-top) { position: relative; z-index: 4; }
 .main:has(> .composer-slot) > .topbar::before,
 .main:has(> .composer-slot) > .topbar::after { content: ''; position: absolute; inset: 0 0 -30px; height: auto; z-index: -1; pointer-events: none; }
 /* The two edges are one effect, drawn twice: a wash of the page colour over what scrolls out, and a blur that
