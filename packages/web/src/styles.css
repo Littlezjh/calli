@@ -4484,6 +4484,18 @@ input.picker-search {
   pointer-events: none;
 }
 
+/* Finished work sits in one line at the sidebar's foot, out of the scrolling list, like T3's
+   Settled shelf. It clears the floating buttons; the scroller gives back its own clearance. */
+.done-fold-nav {
+  flex-shrink: 0;
+  margin: 0 10px calc(84px + var(--safe-bottom));
+  border-top: 1px solid var(--border);
+  background: var(--sidebar);
+}
+
+.sidebar-scroll.with-done-fold { padding-bottom: 8px; }
+.done-fold-rows { max-height: min(38vh, 340px); overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
+
 .sidebar-float > * {
   pointer-events: auto;
 }
