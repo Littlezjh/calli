@@ -586,7 +586,7 @@ export function Sidebar({
   const doneShown = (list: Thread[]) => (doneFoldOpen() ? list : list.filter((t) => t.id === selectedId));
   const doneFold = (count: number, rows: React.ReactNode) =>
     count > 0 && (
-      <section className="thread-group">
+      <section className="thread-group done-fold">
         <div className="group-head-row">
           <button className="group-head" aria-expanded={doneFoldOpen()} onClick={() => setDoneOpen(!doneOpen)}>
             <span className="group-chevron"><IconChevron size={13} open={doneFoldOpen()} /></span>
@@ -595,7 +595,7 @@ export function Sidebar({
             <span className="group-count">{count}</span>
           </button>
         </div>
-        {rows}
+        <div className="done-fold-rows">{rows}</div>
       </section>
     );
 
@@ -640,21 +640,6 @@ export function Sidebar({
           ))}
         </section>
       ))}
-      {doneFold(
-        mergedModel.done.length,
-        mergedModel.done
-          .filter(({ thread }) => doneFoldOpen() || thread.id === selectedId)
-          .map(({ thread, hostId: on }) => (
-            <Fragment key={`${on ?? ''}:${thread.id}`}>
-              {entry(thread, {
-                label: on === null ? undefined : labelOf.get(on),
-                offline: unavailableOf.get(on),
-                open: on === hostId ? undefined : () => onOpenElsewhere?.(on, thread.id),
-                agents: on === hostId ? undefined : agentsOf.get(on) ?? null,
-              })}
-            </Fragment>
-          )),
-      )}
     </nav>
   ) : activity ? (
     <nav className="thread-groups activity" aria-label={t('sidebar.threadsByActivity')}>
@@ -665,7 +650,6 @@ export function Sidebar({
           {groupedRows(g.threads, true)}
         </section>
       ))}
-      {doneFold(activity.done.length, groupedRows(doneShown(activity.done), true))}
     </nav>
   ) : (
     <nav className="thread-groups" aria-label={t('sidebar.threads')}>
@@ -730,9 +714,36 @@ export function Sidebar({
           model.scratch,
           <GroupAdd label={t('sidebar.newScratch')} onClick={() => onNewIn({ scratch: true })} />,
         )}
-      {doneFold(model.done.length, groupedRows(doneShown(model.done)))}
     </nav>
   );
+
+  // The fold lives outside the scrolling list, pinned at the sidebar's foot like T3's Settled
+  // shelf: one line that says how much is stored away, always in view, never a scroll away.
+  // It keeps its view's own nav classes, so the rows read the same as the list above it.
+  const doneFoldNav = mergedModel ? (
+    <nav className="thread-groups activity merged done-fold-nav">
+      {doneFold(
+        mergedModel.done.length,
+        mergedModel.done
+          .filter(({ thread }) => doneFoldOpen() || thread.id === selectedId)
+          .map(({ thread, hostId: on }) => (
+            <Fragment key={`${on ?? ''}:${thread.id}`}>
+              {entry(thread, {
+                label: on === null ? undefined : labelOf.get(on),
+                offline: unavailableOf.get(on),
+                open: on === hostId ? undefined : () => onOpenElsewhere?.(on, thread.id),
+                agents: on === hostId ? undefined : agentsOf.get(on) ?? null,
+              })}
+            </Fragment>
+          )),
+      )}
+    </nav>
+  ) : activity ? (
+    <nav className="thread-groups activity done-fold-nav">{doneFold(activity.done.length, groupedRows(doneShown(activity.done), true))}</nav>
+  ) : (
+    <nav className="thread-groups done-fold-nav">{doneFold(model.done.length, groupedRows(doneShown(model.done)))}</nav>
+  );
+  const hasDoneFold = !down && (mergedModel ? mergedModel.done.length : activity ? activity.done.length : model.done.length) > 0;
 
   // The pages after "Plans" and the pinned views: behind a "more" button, except the one on screen or one with a state to keep an eye on.
   const pages: NavPage[] = [
@@ -800,7 +811,7 @@ export function Sidebar({
       </div>
 
       {notice}
-      <div className="sidebar-scroll">
+      <div className={`sidebar-scroll${hasDoneFold ? ' with-done-fold' : ''}`}>
         {onHost && !search.trim() && <HostSwitcher hosts={hosts} current={hostId} onPick={onHost} all={Boolean(mergedModel)} onAll={onAll} />}
         {down && <p className="group-empty top">{t('sidebar.hostDown')}</p>}
         {!down && !search.trim() && (
@@ -908,6 +919,7 @@ export function Sidebar({
         )}
       </div>
 
+      {!down && doneFoldNav}
       <div className="sidebar-float">
         {compact && !down && (
           <button className="new-thread" onClick={onNew}>
