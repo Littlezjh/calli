@@ -221,7 +221,7 @@ export class ProactiveService {
         matterId: run.matterId, ...(run.model ? { model: run.model } : {}) }, threadId => {
         check();
         this.update(id, { status: 'answered', threadId, endedAt: new Date().toISOString() });
-      });
+      }, id);
       return this.get(id);
     } catch (error) {
       if (error instanceof HttpError && error.status === 409) throw new HttpError(409, error.message, { ...error.details, run: this.get(id) });
@@ -606,7 +606,7 @@ export class ProactiveService {
     const began = Date.now();
     const run: ProactiveRun = { id: randomUUID(), matterId: todo.id, kind, variant, ...(repo ? { repo } : {}), threadId: '', startedAt: now.toISOString(), status: 'running' };
     this.saveRun(run);
-    let createdThreadId = '';
+    let releaseEmpty: (() => Promise<void>) | undefined;
     try {
       const settings = await this.personal.resolvedSettings();
       const adapter = settings.agent ? this.adapters.get(settings.agent) : undefined;
@@ -617,10 +617,23 @@ export class ProactiveService {
       // Settings and threads may change while preparing git or discovering the agent.
       if (this.settings().mode !== 'auto' || repo && !this.settings().repos.includes(repo)) throw new HttpError(409, '主动行动已关闭或该仓库已移出允许列表');
       if (this.busy(todo.id) || this.atCapacity()) throw new HttpError(409, '有工作线程正在运行，本次主动行动未启动');
-      const thread = await this.manager.createThread({ agent: settings.agent!, cwd: sandbox?.root ?? settings.directory,
-        title: todo.text, permissionMode: adapter.capabilities.defaultPermissionMode, ...(settings.model ? { model: settings.model } : {}) });
+      let thread: ReturnType<ThreadManager['threadView']>;
+      if (sandbox) {
+        thread = await this.manager.createThread({ agent: settings.agent!, cwd: sandbox.root,
+          title: todo.text, permissionMode: adapter.capabilities.defaultPermissionMode, ...(settings.model ? { model: settings.model } : {}) });
+        const createdId = thread.id;
+        releaseEmpty = async () => {
+          if (!this.store.listEventsOfType(createdId, 'turn.started').length) await this.manager.deleteThread(createdId).catch(() => undefined);
+        };
+      } else {
+        const acquired = await this.personal.acquireWorkThread({
+          agent: settings.agent!, cwd: settings.directory, permissionMode: adapter.capabilities.defaultPermissionMode,
+          model: settings.model, kind: 'prepare',
+        });
+        thread = acquired.thread;
+        releaseEmpty = acquired.releaseEmpty;
+      }
       this.update(run.id, { threadId: thread.id });
-      createdThreadId = thread.id;
       const note = this.store.todoNote(todo.id).text || '尚未写入。';
       let prompt = kind === 'prepare'
         ? `由 Calli 发起的提前准备。\n事项：${todo.text}\nID：${todo.id}\n材料目录：${artifacts}\n接续说明：\n${note}\n\n按接续说明提前备好回复草稿、会前提纲或其他值得准备的材料，只写材料目录下的文件。这个目录中的 artifacts 是本轮唯一允许直接写入的事项材料，matter.md 仍只由 Calli 管理。\n先用 calli todo show ${todo.id} 读取最新 rev；产出写入 ${artifacts}/<名称>.md，再用 calli todo update ${todo.id} --rev N --note-file FILE 在接续说明记一句「已备好 X」，保留原有说明。\n不发消息、不推送、不删除、不改外部仓库，不做任何对外动作。不要自行 git 提交，Calli 会为材料留底。没有值得准备的材料就安静结束，不凑内容、不通知。结束回复只写材料摘要。`
@@ -635,7 +648,7 @@ export class ProactiveService {
     } catch (error) {
       this.turns.delete(run.id);
       // A thread whose turn never started is an empty shell on the matter; remove it, as delegate does.
-      if (createdThreadId && !this.store.listEventsOfType(createdThreadId, 'turn.started').length) await this.manager.deleteThread(createdThreadId).catch(() => undefined);
+      await releaseEmpty?.().catch(() => undefined);
       this.update(run.id, { status: 'failed', endedAt: new Date().toISOString(), summary: message(error) });
     }
   }

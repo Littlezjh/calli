@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { openCollaboration, api, startDaemon, openUi, launchBrowser, repoRoot, closeSettings } from '../harness.mjs';
 const chainDialog = async page => {
   await page.getByLabel('这个线程的更多操作').click();
+  await page.getByRole('menuitem', { name: '分叉与交接' }).click();
   await page.getByRole('menuitem', { name: '交接记录', exact: true }).click();
   await page.getByRole('dialog', { name: '交接记录', exact: true }).waitFor();
 };
@@ -83,7 +84,7 @@ test('near quota refreshes at turn end, writes summary, counts down, then hands 
     await idle(next.id);
     assert.equal(next.handover.mode, 'continue');
     await page.locator('.merged-history').waitFor();
-    await page.locator('.handover-readonly').waitFor();
+    await page.locator('.chain-line').first().waitFor();
     assert.equal(await page.locator('.sidebar .thread-fork').count(), 0);
     const starts = (await request(`/api/threads/${next.id}/events`)).filter(e => e.type === 'turn.started');
     assert.match(starts[0].data.text, /请写一份交接摘要/); assert.equal(starts[1].data.text, 'next queued step');

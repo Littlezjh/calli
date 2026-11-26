@@ -1420,6 +1420,24 @@ test('fork at a turn: the copy ends where that turn ended, on the hub and on the
   const afterStop = (await (await forkAt(claude.id, claudeFirst.turnId!)).json()) as Record<string, any>;
   assert.equal(afterStop.agentSessionId, 'hist-interrupted-fork-at-m1b');
 
+  // After a compaction Claude replays only what followed it, but its session file has every turn, so
+  // a copy can still stop at a turn from before it.
+  const sessions = join(process.env.HOME!, '.claude', 'projects', '-work');
+  mkdirSync(sessions, { recursive: true });
+  const line = (entry: Record<string, unknown>) => JSON.stringify(entry);
+  writeFileSync(join(sessions, 'hist-compacted.jsonl'), [
+    line({ type: 'user', uuid: 'a1', parentUuid: null, message: { role: 'user', content: 'first question' } }),
+    line({ type: 'assistant', uuid: 'a2', parentUuid: 'a1', message: { id: 'm1b', role: 'assistant', content: [{ type: 'text', text: 'first answer' }] } }),
+    line({ type: 'system', subtype: 'compact_boundary', uuid: 'b1', parentUuid: null, logicalParentUuid: 'not-in-the-file' }),
+    line({ type: 'user', uuid: 'b2', parentUuid: 'b1', isCompactSummary: true, message: { role: 'user', content: 'This session is being continued from a previous conversation' } }),
+    line({ type: 'user', uuid: 'b3', parentUuid: 'b2', message: { role: 'user', content: 'second question' } }),
+    line({ type: 'assistant', uuid: 'b4', parentUuid: 'b3', message: { id: 'm2', role: 'assistant', content: [{ type: 'text', text: 'second answer' }] } }),
+  ].join('\n') + '\n');
+  store.updateThread(claude.id, { agentSessionId: 'hist-compacted' });
+  const acrossCompaction = (await (await forkAt(claude.id, claudeFirst.turnId!)).json()) as Record<string, any>;
+  assert.equal(acrossCompaction.agentSessionId, 'hist-compacted-fork-at-m1b');
+  assert.deepEqual((await turnsOf(acrossCompaction.id)).map((e) => e.data.text), ['first question']);
+
   const agents = (await (await api('/api/agents')).json()) as Array<{ id: string; capabilities: { forkAt: boolean } }>;
   assert.deepEqual(agents.map((a) => [a.id, a.capabilities.forkAt]).sort(), [['agy', false], ['claude', true], ['pi', true]]);
 });
@@ -1463,6 +1481,17 @@ test('new thread in a worktree: offered for a git directory, made under .worktre
   assert.equal(refused.status, 400);
   assert.match(((await refused.json()) as { error: string }).error, /not in a git repository/);
   assert.equal(existsSync(join(plain, '.worktrees')), false);
+
+  // A fresh thread beside it works in the same directory and shares the worktree, wherever `cwd` points.
+  const besideRes = await api('/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'pi', cwd: repo, besideThread: thread.id }) });
+  assert.equal(besideRes.status, 201);
+  const beside = (await besideRes.json()) as Record<string, any>;
+  assert.equal(beside.cwd, thread.cwd);
+  assert.deepEqual(beside.worktree, thread.worktree);
+  assert.equal(beside.agentSessionId ?? null, null, 'a new conversation, not a copy');
+  assert.equal((await api('/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'pi', cwd: repo, besideThread: thread.id, worktree: true }) })).status, 400);
+  assert.equal((await api('/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'pi', cwd: repo, besideThread: 'missing' }) })).status, 404);
+  assert.equal((await api(`/api/threads/${beside.id}`, { method: 'DELETE' })).status, 204);
 
   // Deleted with its worktree, like a fork's: the carried-over file exists nowhere else, so it takes force.
   assert.equal((await api(`/api/threads/${thread.id}?worktree=1`, { method: 'DELETE' })).status, 409);
@@ -1614,22 +1643,26 @@ test('matchTurns pairs the two histories from the start and gives up when they d
   assert.deepEqual(matchTurns([], ['a'], 3), { hubToAgent: [-1], agentNext: 0 });
 });
 
-test('agy: two permission levels, no approvals, no images; settings are flags of its process', async () => {
+test('agy: ACP approvals, images, compact and per-session settings', async () => {
   const agents = (await (await api('/api/agents')).json()) as Array<{ id: string; label: string; available: boolean; capabilities: any }>;
   const agy = agents.find((a) => a.id === 'agy')!;
   assert.equal(agy.label, 'Antigravity');
   assert.equal(agy.available, true);
-  assert.deepEqual(agy.capabilities.permissionModes, ['auto_edit', 'full_access']);
-  assert.deepEqual([agy.capabilities.approvals, agy.capabilities.images, agy.capabilities.effortLevels.length], [false, true, 0]);
-  const models = (await (await api('/api/agents/agy/models')).json()) as Array<{ id: string; efforts: string[] }>;
-  assert.deepEqual(models.map((m) => [m.id, m.efforts]), [['fast', ['low', 'high']], ['big-thinking', []]]);
+  assert.deepEqual(agy.capabilities.permissionModes, ['ask', 'auto_edit', 'full_access']);
+  assert.equal(agy.capabilities.compact, true);
+  assert.deepEqual([agy.capabilities.approvals, agy.capabilities.images, agy.capabilities.effortLevels], [true, true, ['low', 'medium', 'high', 'xhigh', 'max']]);
+  const models = (await (await api('/api/agents/agy/models')).json()) as Array<{ id: string; label: string; efforts: string[]; isDefault?: boolean }>;
+  assert.deepEqual(models, [
+    { id: 'fast', label: 'Fast', efforts: ['low', 'high'], isDefault: true },
+    { id: 'big-thinking', label: 'Big (Thinking)', efforts: [] },
+  ]);
 
-  // It cannot ask, so "ask" is not offered, and a new thread starts with full access: at the lower
-  // level every command is refused. The lower level can still be chosen; other agents keep theirs.
+  // ACP adds ask while preserving the existing full-access default.
   assert.equal(agy.capabilities.defaultPermissionMode, 'full_access');
   const ask = await api('/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'agy', cwd: workdir, permissionMode: 'ask' }) });
-  assert.equal(ask.status, 400);
-  assert.equal((await api('/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'agy', cwd: workdir, effort: 'high' }) })).status, 400);
+  assert.equal(ask.status, 201);
+  assert.equal((await api('/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'agy', cwd: workdir, effort: 'max' }) })).status, 400);
+  assert.equal((await api('/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'agy', cwd: workdir, model: 'big-thinking', effort: 'low' }) })).status, 400);
   assert.equal(((await newThread({ agent: 'agy' })) as { permissionMode?: string }).permissionMode, 'full_access');
   assert.equal(((await newThread({ agent: 'claude' })) as { permissionMode?: string }).permissionMode, 'auto_edit');
   const thread = (await newThread({ agent: 'agy', model: 'fast-low', permissionMode: 'auto_edit' })) as { id: string; model?: string; effort?: string; permissionMode?: string };
@@ -1651,42 +1684,41 @@ test('agy: two permission levels, no approvals, no images; settings are flags of
 
   const first = await sendAndWait('use a tool');
   assert.equal(first.end.type, 'turn.done');
-  assert.equal(replyOf(first.list, first.turnId), 'echo:use a tool;model:fast-low;mode:accept-edits;conv:agy-conv-1');
+  assert.equal(replyOf(first.list, first.turnId), 'echo:use a tool;model:fast;effort:low;mode:accept-edits;conv:agy-conv-1');
   assert.ok(first.list.some((e) => e.type === 'tool.end' && e.data.output === 'hi\r\n'));
   const view = (await (await api(`/api/threads/${thread.id}`)).json()) as { agentSessionId: string; resumeCommand: string };
   assert.equal(view.agentSessionId, 'agy-conv-1');
-  assert.equal(view.resumeCommand, `cd ${workdir} && agy --conversation agy-conv-1`);
+  assert.equal(view.resumeCommand, `cd ${workdir} && '${process.execPath}' '${join(here, 'fixtures', 'fake-agy.mjs')}' --conversation 'agy-conv-1'`);
 
-  // A command needs a permission it cannot ask for: the turn ends with an explanation.
-  const refused = await sendAndWait('run a command');
-  assert.equal(refused.end.type, 'turn.error');
-  assert.match(refused.end.data.message, /full access/);
-  assert.deepEqual([refused.end.data.code, refused.end.data.refused], ['permission_refused', ['RunCommand']]);
+  // Native approval requests reach the ordinary approval API.
+  await post(`/api/threads/${thread.id}/turns`, { text: 'run a command' });
+  const approval = await waitFor(async () => {
+    const log = await events(thread.id);
+    return log.find(e => e.type === 'approval.request') ?? null;
+  });
+  await post(`/api/approvals/${approval.data.approvalId}`, { optionId: 'allow' });
+  await untilIdle(thread.id);
 
-  // Changing thinking effort restarts agy on the same conversation with the suffixed model flag;
-  // switching to a model without efforts drops effort back to null.
-  const effortPatch = await api(`/api/threads/${thread.id}`, { method: 'PATCH', body: JSON.stringify({ effort: 'high' }) });
-  assert.equal(effortPatch.status, 200);
-  assert.deepEqual(
-    await effortPatch.json().then((t: any) => [t.model, t.effort]),
-    ['fast', 'high'],
-  );
+  // Raising the level, changing the effort, and switching to a fixed-effort model all carry on in the same conversation.
+  assert.equal((await api(`/api/threads/${thread.id}`, { method: 'PATCH', body: JSON.stringify({ effort: 'high' }) })).status, 200);
   const higher = await sendAndWait('think harder');
   assert.equal(higher.end.type, 'turn.done');
-  assert.equal(replyOf(higher.list, higher.turnId), 'echo:think harder;model:fast-high;mode:accept-edits;conv:agy-conv-1');
+  assert.equal(replyOf(higher.list, higher.turnId), 'echo:think harder;model:fast;effort:high;mode:accept-edits;conv:agy-conv-1');
 
-  // Raising the level and changing the model both carry on in the same conversation.
-  const modelPatch = await api(`/api/threads/${thread.id}`, { method: 'PATCH', body: JSON.stringify({ permissionMode: 'full_access', model: 'big-thinking' }) });
-  assert.equal(modelPatch.status, 200);
-  assert.deepEqual(
-    await modelPatch.json().then((t: any) => [t.model, t.effort]),
-    ['big-thinking', null],
-  );
+  assert.equal((await api(`/api/threads/${thread.id}`, { method: 'PATCH', body: JSON.stringify({ permissionMode: 'full_access', model: 'big-thinking' }) })).status, 200);
   const allowed = await sendAndWait('run a command');
   assert.equal(allowed.end.type, 'turn.done');
-  assert.equal(replyOf(allowed.list, allowed.turnId), 'echo:run a command;model:big-thinking;mode:always-proceed;conv:agy-conv-1');
+  assert.equal(replyOf(allowed.list, allowed.turnId), 'echo:run a command;model:big-thinking;mode:auto;conv:agy-conv-1');
 
-  // Pictures go in as paths to the stored files; agy opens them itself.
+  // The picker sends null effort alongside a model even when effort is already unset.
+  // It must not discard the ACP session that just accepted the model.
+  const closes = (await events(thread.id)).filter(e => e.type === 'session.lifecycle' && e.data.action === 'close').length;
+  await post(`/api/threads/${thread.id}/turns`, { text: 'before model picker' });
+  await untilIdle(thread.id);
+  assert.equal((await api(`/api/threads/${thread.id}`, { method: 'PATCH', body: JSON.stringify({ model: 'fast', effort: null }) })).status, 200);
+  assert.equal((await events(thread.id)).filter(e => e.type === 'session.lifecycle' && e.data.action === 'close').length, closes);
+
+  // Pictures are native ACP image blocks.
   const image = await sendAndWait('look at this');
   assert.equal(image.end.type, 'turn.done');
   const pictured = await api(`/api/threads/${thread.id}/turns`, { method: 'POST', body: JSON.stringify({ text: 'look', images: [{ data: PNG, mimeType: 'image/png' }] }) });
@@ -1696,9 +1728,8 @@ test('agy: two permission levels, no approvals, no images; settings are flags of
     const all = await events(thread.id);
     return all.some((e) => e.turnId === picturedTurn && e.type === 'turn.done') ? all : null;
   });
-  const stored = withPicture.find((e) => e.turnId === picturedTurn && e.type === 'turn.started')!.data.images[0];
   const said = withPicture.filter((e) => e.turnId === picturedTurn && e.type === 'message.delta').map((e) => e.data.text).join('');
-  assert.ok(said.includes(join(dataDir, 'attachments', thread.id, `${stored.id}.png`)), said);
+  assert.ok(said.includes(';image:embedded;'), said);
 
   // What it cannot do is refused up front.
   assert.equal((await api(`/api/threads/${thread.id}/fork`, { method: 'POST' })).status, 400);
@@ -2435,7 +2466,7 @@ test('download serves any readable file whole or by range, with the name it has'
 test('commands: agy lists and answers its own commands; the answer is a normal turn in the thread', async () => {
   const list = (await (await api(`/api/agents/agy/commands?cwd=${encodeURIComponent(workdir)}`)).json()) as Array<{ name: string; kind: string }>;
   assert.ok(list.some((c) => c.name === 'usage' && c.kind === 'command'));
-  assert.ok(list.some((c) => c.name === 'make-video' && c.kind === 'skill'));
+  assert.ok(list.some((c) => c.name === 'make-video'));
   assert.ok(!list.some((c) => c.name === 'model'));
 
   const thread = await newThread({ agent: 'agy' });

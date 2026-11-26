@@ -1,7 +1,12 @@
 import { useState, type ReactNode } from 'react';
-import type { AgentMention } from '../api';
+import type { AgentMention, Coordination } from '../api';
 import { AgentMark, IconBack, IconCheck, IconSettings } from './icons';
 import { t } from '../i18n';
+
+/** Only the exact session leaves collaboration; other sessions of its instance remain candidates. */
+export function collaborationMembers(coordination: Coordination): AgentMention[] {
+  return coordination.members.filter(member => member.thread?.disabled !== true).map(member => ({ id: member.id, label: member.name, kind: 'member' }));
+}
 
 interface Props {
   options: AgentMention[];

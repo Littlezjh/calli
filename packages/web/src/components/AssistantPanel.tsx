@@ -401,7 +401,8 @@ export function AssistantHome({ api, todos, loading, error, threads, threadsKnow
     onEffort={effort => updateModel({ effort })} /> : null;
 
   const composer = <div className="chat-composer">
-    <Composer attachBlocked={null} attachmentsBlocked={threadId ? undefined : t('desk.chatAttachFirst')} restore={null} note={null}
+    <Composer referenceSource={!api.demo ? { api, cwd: thread?.cwd ?? personal?.directory ?? personal?.defaultDirectory ?? '', threadId: threadId ?? undefined } : undefined}
+      attachBlocked={null} attachmentsBlocked={threadId ? undefined : t('desk.chatAttachFirst')} restore={null} note={null}
       draftKey={threadId ? `assistant-home:${threadId}` : 'assistant-home:new'} running={running} placeholder={handingTo ? t('desk.handingOver', agentLabel(handingTo)) : t('desk.chatPlaceholder')} disabled={Boolean(handingTo)}
       onSend={async (text, images, _mentions, videos = []) => {
         await send(text, images.map(({ data, mimeType }) => ({ data, mimeType })),

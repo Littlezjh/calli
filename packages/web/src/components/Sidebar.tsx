@@ -1,7 +1,8 @@
 import brandIcon from '../assets/calli.svg';
-import { Fragment, useEffect, useState, type MouseEvent, type ReactNode } from 'react';
+import { Fragment, useEffect, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
 import type { ExternalSession, HostInfo, SearchHit, Section, Thread } from '../api';
 import type { AgentMarkInfo } from '../thread-cache';
+import { isThreadLinkQuery, parseThreadLink, type ThreadDeepLink } from '../thread-deep-links';
 import { clockLabel } from '../timeline';
 import { useInTitlebar, useLongPress, useStoredFlag, useStoredSet } from '../hooks';
 import { attentionCount, threadMark, waitingLabel, type ThreadMark } from '../notices';
@@ -14,7 +15,7 @@ import { Menu } from './Menu';
 import { PetBustImage, type PetBust } from './Pet';
 import type { HostIconName } from '@calli/extension-api';
 import { HostIcon } from '../extensions/ui';
-import { AgentMark, IconBell, IconChevron, IconClock, IconClose, IconDesktop, IconEdit, IconFolder, IconList, IconMore, IconPin, IconPlus, IconSearch, IconSettings, IconSidebar, IconSparkle, IconServer } from './icons';
+import { AgentMark, IconAgents, IconBell, IconChevron, IconClock, IconClose, IconDesktop, IconEdit, IconHandover, IconFolder, IconList, IconMore, IconPin, IconPlus, IconSearch, IconSettings, IconSidebar, IconSparkle, IconServer } from './icons';
 import { t } from '../i18n';
 
 export { folderName } from '../paths';
@@ -102,6 +103,10 @@ interface Props {
   onSearch?: (query: string) => Promise<SearchHit[]>;
   /** Opens the thread a found turn is in, at that turn. */
   onOpenHit?: (hit: SearchHit) => void;
+  /** Reads one exact identity on the link's machine without opening or restoring it. */
+  onResolveThreadLink?: (link: ThreadDeepLink) => Promise<Thread | null>;
+  /** Follows the original route only after the person clicks its result. */
+  onOpenThreadLink?: (query: string) => void;
   /** This machine's agent sessions that are not threads yet; they mix into the list by time. */
   external?: ExternalSession[];
   /** `off`: this machine does not list them (an older daemon, or the demo). */
@@ -123,8 +128,8 @@ interface Props {
 /** `agents`: that machine's, by id, when the row is another machine's; null while not known. */
 interface Elsewhere { label?: string; offline?: string; open?: () => void; agents?: Map<string, AgentMarkInfo> | null }
 
-/** Where a menu opened from a "more" button should appear: just under the button. */
-function below(e: MouseEvent<HTMLElement>): [number, number] {
+/** Where a row or "more" button's menu should appear: just below its anchor. */
+function below(e: MouseEvent<HTMLElement> | KeyboardEvent<HTMLElement>): [number, number] {
   const rect = e.currentTarget.getBoundingClientRect();
   return [rect.left, rect.bottom + 4];
 }
@@ -185,6 +190,8 @@ export function Sidebar({
   onOpenElsewhere,
   onSearch,
   onOpenHit,
+  onResolveThreadLink,
+  onOpenThreadLink,
   external = [],
   externalState = 'off',
   onImportExternal,
@@ -197,15 +204,32 @@ export function Sidebar({
   // What was said, looked up a moment after the typing stops. `for` is the search the hits answer.
   const [found, setFound] = useState<{ for: string; hits: SearchHit[] } | null>(null);
   const query = search.trim();
+  const linkQuery = isThreadLinkQuery(query);
+  const link = linkQuery ? parseThreadLink(query, window.location.href) : null;
+  const [linkFound, setLinkFound] = useState<{ for: string; resolver: Props['onResolveThreadLink']; thread: Thread | null; error?: string } | null>(null);
   useEffect(() => {
-    if (!onSearch || query.length < SEARCH_MIN) { setFound(null); return; }
+    if (linkQuery || !onSearch || query.length < SEARCH_MIN) { setFound(null); return; }
     let stale = false;
     const timer = setTimeout(() => {
       onSearch(query).then((hits) => { if (!stale) setFound({ for: query, hits }); }).catch(() => { if (!stale) setFound({ for: query, hits: [] }); });
     }, 220);
     return () => { stale = true; clearTimeout(timer); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query]);
+  }, [query, linkQuery, onSearch]);
+  useEffect(() => {
+    const target = linkQuery ? parseThreadLink(query, window.location.href) : null;
+    if (!target || !onResolveThreadLink) { setLinkFound(null); return; }
+    let stale = false;
+    const timer = setTimeout(() => {
+      onResolveThreadLink(target).then(thread => {
+        if (!stale) setLinkFound({ for: query, resolver: onResolveThreadLink, thread });
+      }).catch(error => {
+        if (!stale) setLinkFound({ for: query, resolver: onResolveThreadLink, thread: null, error: error instanceof Error ? error.message : t('search.linkFailed') });
+      });
+    }, 220);
+    // A new query or resolver scope invalidates both pending and already displayed results.
+    return () => { stale = true; clearTimeout(timer); };
+  }, [query, linkQuery, onResolveThreadLink]);
+  const resolvedLink = linkFound?.for === query && linkFound.resolver === onResolveThreadLink ? linkFound : null;
   const [expandedHandovers, setExpandedHandovers] = useState<Set<string>>(new Set());
   // A team is open on its own while a member works or waits, or is the one on screen; a click overrides that.
   const [teamOpen, setTeamOpen] = useState<Map<string, boolean>>(new Map());
@@ -219,6 +243,12 @@ export function Sidebar({
   };
   // A long press on a row is the phone's right click.
   const longPress = useLongPress<Thread>(onThreadMenu);
+  // Touch layouts hide "more"; the focused session still has its keyboard menu entry.
+  const keyboardMenu = (thread: Thread) => (e: KeyboardEvent<HTMLElement>) => {
+    if (e.key !== 'ContextMenu' && !(e.key === 'F10' && e.shiftKey)) return;
+    e.preventDefault();
+    onThreadMenu(thread, ...below(e));
+  };
   const inTitlebar = useInTitlebar() && !compact;
   const [collapsed, toggle] = useStoredSet(`${storagePrefix}.collapsed`);
   // The other way to read the list: by what is going on, not by where a thread is filed. Like Codex's activity view.
@@ -226,9 +256,11 @@ export function Sidebar({
   // This machine's sessions that are not threads yet mix into the list by their time; every
   // machine's own list (the merged view) shows threads only.
   const withExternal = merged ? threads : withExternalSessions(threads, external);
-  const model = buildSidebar(withExternal, sections, search);
-  const mergedModel = merged ? buildMerged(merged, search, new Date(), selectedId) : null;
-  const activity = byActivity && !mergedModel ? buildActivity(withExternal, search, new Date(), selectedId) : null;
+  // Link identities never enter the title, directory, or conversation keyword filters.
+  const listSearch = linkQuery ? '' : search;
+  const model = buildSidebar(withExternal, sections, listSearch);
+  const mergedModel = merged ? buildMerged(merged, listSearch, new Date(), selectedId) : null;
+  const activity = byActivity && !mergedModel ? buildActivity(withExternal, listSearch, new Date(), selectedId) : null;
   // Out of their project groups, rows say where they are and what was asked last.
   const flat = byActivity || Boolean(mergedModel);
   // The machine on screen being down hides its list, unless every machine is listed.
@@ -269,6 +301,7 @@ export function Sidebar({
     <div
       key={thread.id}
       className={`thread-row${thread.id === selectedId ? ' active' : ''}${mark === 'unread' || mark === 'waiting' ? ' attention' : ''}`}
+      onKeyDown={keyboardMenu(thread)}
       onContextMenu={(e) => {
         e.preventDefault();
         onThreadMenu(thread, e.clientX, e.clientY);
@@ -381,49 +414,57 @@ export function Sidebar({
     );
   };
 
-  // Like Orca's agents under a task: the lead's row, then one line per member saying what it is doing.
-  const entry = (thread: Thread, on?: Elsewhere) => {
-    if (thread.external) return externalRow(thread);
-    const team = members?.get(thread.id);
-    if (!team?.length || on?.open) return row(thread, thread.title, thread.preview, undefined, on);
+  const teamOf = (thread: Thread) => members?.get(thread.id);
+  const teamOpenFor = (thread: Thread, team: Thread[]) => Boolean(search.trim()) || (teamOpen.get(thread.id) ?? team.some((m) => busy(m) > 0 || m.id === selectedId));
+  /** A lead's team: a toggle with who is on it (`inline` for the chain card's shared row), then one line per member. */
+  const teamToggle = (thread: Thread, team: Thread[], inline = false, onOpen?: () => void) => {
     const sorted = [...team].sort(teamOrder);
-    const auto = sorted.some((m) => busy(m) > 0 || m.id === selectedId);
-    const open = Boolean(search.trim()) || (teamOpen.get(thread.id) ?? auto);
+    const open = teamOpenFor(thread, team);
     const working = sorted.filter((m) => m.status === 'running').length;
     const waiting = sorted.filter((m) => m.waiting).length;
     const stack = stackLine(sorted);
-    const current = thread.id === selectedId || sorted.some((m) => m.id === selectedId);
-    return <div key={thread.id} className={`handover-group team-group${open ? ' open' : ''}${current ? ' selected' : ''}`}>
+    return <button className={`handover-toggle${inline ? ' inline' : ''}`} aria-expanded={open} onClick={() => { if (!open) onOpen?.(); setTeamOpen((old) => new Map(old).set(thread.id, !open)); }}
+      aria-label={[t('sidebar.agents', sorted.length), waiting ? t('sidebar.waitingCount', waiting) : working ? t('team.running', working) : null, open ? t('sidebar.collapseTeam', thread.title) : t('sidebar.expandTeam', thread.title)].filter(Boolean).join(' · ')}>
+      {inline && <span className="handover-toggle-kind"><IconAgents size={13} /></span>}
+      {stack ? <>
+        {runDot(sorted)}
+        {stack}
+      </> : <>
+        <span>{t('sidebar.agents', sorted.length)}</span>
+        {(waiting || working) > 0 && <span className="team-note">{waiting ? t('sidebar.waitingCount', waiting) : t('team.running', working)}</span>}
+      </>}
+      {!inline && <IconChevron size={13} open={open} />}
+    </button>;
+  };
+  const teamList = (thread: Thread, team: Thread[]) => teamOpenFor(thread, team) && <div className="handover-members">{[...team].sort(teamOrder).map((m) => {
+    const agent = agentById.get(m.agent);
+    const mark = threadMark(m, m.id === selectedId);
+    return <button
+      key={m.id}
+      className={`handover-member${m.id === selectedId ? ' active' : ''}`}
+      aria-current={m.id === selectedId ? 'true' : undefined}
+      title={m.title}
+      onClick={() => onSelect(m.id)}
+      onKeyDown={keyboardMenu(m)}
+      onContextMenu={(e) => { e.preventDefault(); onThreadMenu(m, e.clientX, e.clientY); }}
+      {...longPress(m)}
+    >
+      <span className={`dot ${mark ?? 'idle'}`} role="img" aria-label={mark === 'waiting' ? waitingLabel(m) : mark ? MARK_LABELS[mark] : t('status.idle')} />
+      {agent?.icon ? <span className="agent-mark" role="img" aria-label={agent.label}><AgentMark path={agent.icon} size={compact ? 14 : 13} /></span> : null}
+      <span className="handover-member-name team-member-text">{deliveredPreview(m.coordination?.doing ?? '') || m.title}</span>
+      <time className="handover-member-time" dateTime={m.updatedAt}>{timeAgo(m.updatedAt, now)}</time>
+    </button>;
+  })}</div>;
+  // Like Orca's agents under a task: the lead's row, then one line per member saying what it is doing.
+  const entry = (thread: Thread, on?: Elsewhere) => {
+    if (thread.external) return externalRow(thread);
+    const team = teamOf(thread);
+    if (!team?.length || on?.open) return row(thread, thread.title, thread.preview, undefined, on);
+    const current = thread.id === selectedId || team.some((m) => m.id === selectedId);
+    return <div key={thread.id} className={`handover-group team-group${teamOpenFor(thread, team) ? ' open' : ''}${current ? ' selected' : ''}`}>
       {row(thread, thread.title, thread.preview, undefined, on)}
-      <button className="handover-toggle" aria-expanded={open} onClick={() => setTeamOpen((old) => new Map(old).set(thread.id, !open))}
-        aria-label={[t('sidebar.agents', sorted.length), waiting ? t('sidebar.waitingCount', waiting) : working ? t('team.running', working) : null, open ? t('sidebar.collapseTeam', thread.title) : t('sidebar.expandTeam', thread.title)].filter(Boolean).join(' · ')}>
-        {stack ? <>
-          {runDot(sorted)}
-          {stack}
-        </> : <>
-          <span>{t('sidebar.agents', sorted.length)}</span>
-          {(waiting || working) > 0 && <span className="team-note">{waiting ? t('sidebar.waitingCount', waiting) : t('team.running', working)}</span>}
-        </>}
-        <IconChevron size={13} open={open} />
-      </button>
-      {open && <div className="handover-members">{sorted.map((m) => {
-        const agent = agentById.get(m.agent);
-        const mark = threadMark(m, m.id === selectedId);
-        return <button
-          key={m.id}
-          className={`handover-member${m.id === selectedId ? ' active' : ''}`}
-          aria-current={m.id === selectedId ? 'true' : undefined}
-          title={m.title}
-          onClick={() => onSelect(m.id)}
-          onContextMenu={(e) => { e.preventDefault(); onThreadMenu(m, e.clientX, e.clientY); }}
-          {...longPress(m)}
-        >
-          <span className={`dot ${mark ?? 'idle'}`} role="img" aria-label={mark === 'waiting' ? waitingLabel(m) : mark ? MARK_LABELS[mark] : t('status.idle')} />
-          {agent?.icon ? <span className="agent-mark" role="img" aria-label={agent.label}><AgentMark path={agent.icon} size={compact ? 14 : 13} /></span> : null}
-          <span className="handover-member-name team-member-text">{deliveredPreview(m.coordination?.doing ?? '') || m.title}</span>
-          <time className="handover-member-time" dateTime={m.updatedAt}>{timeAgo(m.updatedAt, now)}</time>
-        </button>;
-      })}</div>}
+      {teamToggle(thread, team)}
+      {teamList(thread, team)}
     </div>;
   };
 
@@ -434,22 +475,40 @@ export function Sidebar({
     const marks = [...new Set(members.filter((thread) => thread.id !== latest.id).map((thread) => threadMark(thread, thread.id === selectedId)).filter(Boolean))] as ThreadMark[];
     const chainStack = stackLine(members, false);
     const chainDot = (['waiting', 'error', 'unread', 'running'] as const).find((m) => marks.includes(m));
-    const current = members.some((thread) => thread.id === selectedId);
+    // The team moves along with a handover, so one segment leads it, not always the one on the card.
+    const lead = members.find((thread) => teamOf(thread)?.length);
+    const team = lead && teamOf(lead);
+    const current = members.some((thread) => thread.id === selectedId) || Boolean(team?.some((m) => m.id === selectedId));
     // Like Orca's agents under a task: one card, the latest conversation on top, the chain folded below it.
     return <div key={key} className={`handover-group${expanded ? ' open' : ''}${current ? ' selected' : ''}`}>
       {row(latest, latest.title.replace(/(?:（接手）)+$/, ''), latest.preview, members)}
-      <button className="handover-toggle" aria-expanded={expanded} onClick={() => setExpandedHandovers((old) => {
-        const next = new Set(old);
-        if (next.has(storageKey)) next.delete(storageKey); else next.add(storageKey);
-        return next;
-      })}
-        aria-label={[t('sidebar.sessions', members.length), expanded ? t('sidebar.collapseHandover', latest.title) : t('sidebar.expandHandover', latest.title)].join(' · ')}>
-        {chainStack ? <>
-          {chainDot && <span className={`dot ${chainDot}`} role="img" aria-label={t('sidebar.otherHandover', MARK_LABELS[chainDot])} title={t('sidebar.otherHandover', MARK_LABELS[chainDot])} />}
-          {chainStack}
-        </> : <span>{t('sidebar.sessions', members.length)}</span>}
-        <IconChevron size={13} open={expanded} />
-      </button>
+      {(() => {
+        const toggleChain = () => {
+          if (!expanded && lead && team) setTeamOpen((old) => new Map(old).set(lead.id, false));
+          setExpandedHandovers((old) => {
+            const next = new Set(old);
+            if (next.has(storageKey)) next.delete(storageKey); else next.add(storageKey);
+            return next;
+          });
+        };
+        const chainButton = <button className={`handover-toggle${team ? ' inline' : ''}`} aria-expanded={expanded} onClick={toggleChain}
+          aria-label={[t('sidebar.sessions', members.length), expanded ? t('sidebar.collapseHandover', latest.title) : t('sidebar.expandHandover', latest.title)].join(' · ')}>
+          {team && <span className="handover-toggle-kind"><IconHandover size={13} /></span>}
+          {chainStack ? <>
+            {chainDot && <span className={`dot ${chainDot}`} role="img" aria-label={t('sidebar.otherHandover', MARK_LABELS[chainDot])} title={t('sidebar.otherHandover', MARK_LABELS[chainDot])} />}
+            {chainStack}
+          </> : <span>{t('sidebar.sessions', members.length)}</span>}
+          {!team && <IconChevron size={13} open={expanded} />}
+        </button>;
+        if (!lead || !team) return chainButton;
+        // Chain and team share one row: each side opens its own list, one at a time.
+        const closeChain = () => setExpandedHandovers((old) => { const next = new Set(old); next.delete(storageKey); return next; });
+        return <div className="handover-toggles">
+          {chainButton}
+          {teamToggle(lead, team, true, closeChain)}
+          <span className="handover-toggles-chevron" aria-hidden="true"><IconChevron size={13} open={expanded || teamOpenFor(lead, team)} /></span>
+        </div>;
+      })()}
       {expanded && <div className="handover-members handover-chain">{members.map((thread) => {
         const agent = agentById.get(thread.agent);
         const mark = threadMark(thread, thread.id === selectedId);
@@ -457,17 +516,21 @@ export function Sidebar({
           key={thread.id}
           className={`handover-member${thread.id === selectedId ? ' active' : ''}`}
           aria-current={thread.id === selectedId ? 'true' : undefined}
+          title={`${thread.title} · ${agent?.label ?? thread.agent}`}
           onClick={() => onSelect(thread.id)}
+          onKeyDown={keyboardMenu(thread)}
           onContextMenu={(e) => { e.preventDefault(); onThreadMenu(thread, e.clientX, e.clientY); }}
           {...longPress(thread)}
         >
           <span className={`dot ${mark ?? 'idle'}`} role="img" aria-label={mark === 'waiting' ? waitingLabel(thread) : mark ? MARK_LABELS[mark] : t('status.idle')} />
-          {agent?.icon ? <span className="agent-mark"><AgentMark path={agent.icon} size={compact ? 14 : 13} /></span> : null}
-          <span className="handover-member-name">{agent?.label ?? thread.agent}</span>
+          {agent?.icon ? <span className="agent-mark" role="img" aria-label={agent.label}><AgentMark path={agent.icon} size={compact ? 14 : 13} /></span> : null}
+          {/* Each segment by its own name, so one renamed later reads as renamed; the agent is its mark. */}
+          <span className="handover-member-name">{thread.title.replace(/(?:（接手）)+$/, '') || agent?.label || thread.agent}</span>
           <span className="handover-member-role">{thread.handover ? t('sidebar.successor') : t('sidebar.original')}</span>
           <time className="handover-member-time" dateTime={thread.updatedAt}>{timeAgo(thread.updatedAt, now)}</time>
         </button>;
       })}</div>}
+      {lead && team ? teamList(lead, team) : null}
     </div>;
   });
 
@@ -500,16 +563,17 @@ export function Sidebar({
     return sameDay ? hm : `${d.getMonth() + 1}/${d.getDate()} ${hm}`;
   };
   const labelOf = new Map((merged ?? []).map((s) => [s.hostId, s.label]));
-  const offlineOf = new Map((merged ?? []).filter(s => s.state === 'offline').map(s => [s.hostId, t('sidebar.merged.offline', s.label, clock(s.at))]));
+  const unavailableOf = new Map((merged ?? []).filter(s => s.state === 'offline' || s.state === 'failed')
+    .map(s => [s.hostId, s.state === 'offline' ? t('sidebar.merged.offline', s.label, clock(s.at)) : t('sidebar.merged.failed', s.label, clock(s.at))]));
   const agentsOf = new Map((merged ?? []).map((s) => [s.hostId, s.agents ? new Map(s.agents.map((a) => [a.id, a])) : null]));
   const groups = mergedModel ? (
     <nav className="thread-groups activity merged" aria-label={t('sidebar.merged.label')}>
-      {mergedModel.notes.filter(n => n.state !== 'offline').map((n) => (
+      {mergedModel.notes.filter(n => n.state === 'loading').map((n) => (
         <p key={n.hostId ?? ''} className={`merged-note ${n.state}`} role={n.state === 'loading' ? 'status' : undefined}>
-          {n.state === 'loading' ? t('sidebar.merged.loading', n.label) : t('sidebar.merged.failed', n.label, clock(n.at))}
+          {t('sidebar.merged.loading', n.label)}
         </p>
       ))}
-      {mergedModel.count === 0 && !mergedModel.notes.some((n) => n.state === 'loading') && (offlineOf.size ? <p className="group-empty">{t('sidebar.hostDown')}</p> : empty)}
+      {mergedModel.count === 0 && !mergedModel.notes.some((n) => n.state === 'loading') && (unavailableOf.size ? [...unavailableOf].map(([id, message]) => <p key={id ?? ''} className="group-empty">{message}</p>) : empty)}
       {mergedModel.groups.map((g) => (
         <section key={g.key} className="thread-group" aria-label={g.label}>
           <div className="group-label">{g.label}</div>
@@ -518,7 +582,7 @@ export function Sidebar({
               {entry(thread, {
                 // The hub's own machine is the usual one; only threads elsewhere are named.
                 label: on === null ? undefined : labelOf.get(on),
-                offline: offlineOf.get(on),
+                offline: unavailableOf.get(on),
                 open: on === hostId ? undefined : () => onOpenElsewhere?.(on, thread.id),
                 agents: on === hostId ? undefined : agentsOf.get(on) ?? null,
               })}
@@ -671,7 +735,7 @@ export function Sidebar({
       {notice}
       <div className="sidebar-scroll">
         {onHost && !search.trim() && <HostSwitcher hosts={hosts} current={hostId} onPick={onHost} all={Boolean(mergedModel)} onAll={onAll} />}
-        {down && <p className="group-empty top">{t('sidebar.hostDown')}</p>}
+        {down && !linkQuery && <p className="group-empty top">{t('sidebar.hostDown')}</p>}
         {!down && !search.trim() && (
           <div className="side-nav">
             {(() => {
@@ -729,10 +793,28 @@ export function Sidebar({
             )}
           </div>
         )}
-        {!down && groups}
+        {linkQuery ? (
+          <nav className="thread-groups thread-link-search" aria-label={t('sidebar.threads')}>
+            {!link ? <p className="group-empty top" role="alert">{t('search.linkInvalid')}</p>
+              : !onResolveThreadLink ? <p className="group-empty top" role="alert">{t('search.linkFailed')}</p>
+              : !resolvedLink ? <p className="group-empty top" role="status">{t('search.linkLoading')}</p>
+              : resolvedLink.error ? <p className="group-empty top" role="alert">{resolvedLink.error}</p>
+              : !resolvedLink.thread ? <p className="group-empty top">{t('search.linkEmpty')}</p>
+              : (
+                <button type="button" className={`search-hit thread-link-result${link.machine === hostId && resolvedLink.thread.id === selectedId ? ' active' : ''}`} onClick={() => onOpenThreadLink?.(query)}>
+                  <span className="search-hit-top">
+                    <span className="thread-title">{resolvedLink.thread.title}</span>
+                    {resolvedLink.thread.archivedAt && <span className="search-hit-tag">{t('search.linkArchived')}</span>}
+                    <time dateTime={resolvedLink.thread.updatedAt}>{clockLabel(resolvedLink.thread.updatedAt)}</time>
+                  </span>
+                  <span className="search-hit-text">{[link.machine !== null ? hosts.find(host => host.id === link.machine)?.label : null, folderName(projectDir(resolvedLink.thread).cwd)].filter(Boolean).join(' · ')}</span>
+                </button>
+              )}
+          </nav>
+        ) : !down && groups}
         {/* Reading the machine's sessions, or importing one, went wrong: said here, where the rows
             are, with a way to try again. Cleared by the next attempt. */}
-        {!down && !mergedModel && externalError && (
+        {!linkQuery && !down && !mergedModel && externalError && (
           <p className="group-empty external-error" role="alert">
             {externalError.message}
             {externalError.retry && (
@@ -751,7 +833,7 @@ export function Sidebar({
             {t('sidebar.moreExternal')}
           </button>
         )}
-        {!down && onSearch && query.length >= SEARCH_MIN && (
+        {!linkQuery && !down && onSearch && query.length >= SEARCH_MIN && (
           <section className="search-hits" aria-label={t('sidebar.inConversations')}>
             <div className="search-hits-head">{t('sidebar.inConversations')}</div>
             {found?.for !== query ? (

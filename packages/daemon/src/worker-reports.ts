@@ -70,7 +70,12 @@ export class WorkerReports {
     // A proactive turn's result (ready, failed) is recorded just after its ending.
     await this.manager.personal.proactive.flush();
     const outcome = turnOutcome(event)!;
-    const dispatch = this.manager.personal.proactive.runs().find(run => run.kind === 'dispatch' && run.status === 'answered' && run.threadId === event.threadId);
+    const turnStart = event.turnId ? this.store.listTurnEvents(event.threadId, event.turnId).find(item => item.type === 'turn.started') : undefined;
+    const dispatchRunId = typeof turnStart?.data.dispatchRunId === 'string' ? turnStart.data.dispatchRunId : null;
+    const runs = this.manager.personal.proactive.runs();
+    const dispatch = dispatchRunId
+      ? runs.find(run => run.id === dispatchRunId && run.kind === 'dispatch' && run.status === 'answered')
+      : [...runs].reverse().find(run => run.kind === 'dispatch' && run.status === 'answered' && run.threadId === event.threadId);
     const takeover = event.turnId ? this.takeovers.delete(event.turnId) : false;
     if (dispatch || takeover) {
       if (!this.worthSaying(event.threadId, outcome) || !event.turnId) return;

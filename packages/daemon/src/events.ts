@@ -4,6 +4,8 @@
  */
 export type EventType =
   | 'agent.notice'
+  /** A notice from the agent program itself (not the model), e.g. a refused default model. */
+  | 'agent.warning'
   | 'handover.updated'
   | 'handover.model'
   /** The quota reset came and the daemon resent the failed turn by itself. */

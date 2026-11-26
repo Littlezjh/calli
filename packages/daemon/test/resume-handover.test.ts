@@ -82,7 +82,7 @@ test('two fake Codex instances hand the rollout itself over, staged and forked b
   } finally { await manager.shutdown(); store.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
-async function setup(method?: 'resume' | 'summary') {
+async function setup(method?: 'resume' | 'summary', recordTurns = false) {
   const dir = mkdtempSync(join(tmpdir(), 'calli-resume-handover-'));
   mkdirSync(join(dir, 'account-two'));
   const store = new Store(dir);
@@ -92,7 +92,9 @@ async function setup(method?: 'resume' | 'summary') {
   for (const [id, configDir] of Object.entries(accounts)) {
     adapters.set(id, new ClaudeAcpAdapter([process.execPath, join(fixtures, 'fake-acp.mjs')], {
       CLAUDE_CONFIG_DIR: configDir, FAKE_SESSION_ROOT: configDir, FAKE_ACP_LOAD_LOG: loads,
-      FAKE_CLAUDE_SESSION_USED: '10', ...(id === 'claude2' ? { FAKE_ACP_PLAN_LEFT: '1' } : {}),
+      FAKE_CLAUDE_SESSION_USED: '10',
+      ...(recordTurns ? { FAKE_CLAUDE_RECORD_TURNS: '1' } : {}),
+      ...(id === 'claude2' ? { FAKE_ACP_PLAN_LEFT: '1' } : {}),
     }));
   }
   const manager = new ThreadManager(store, adapters, [dir], new AttachmentStore(dir), () => [...adapters.keys()].map(id => ({ id, adapter: 'claude' })));
@@ -191,5 +193,61 @@ test('taking over by hand also goes on in the conversation, with the note after 
     assert.ok(readFileSync(h.loads, 'utf8').includes(`${h.accounts.claude2}\t${next.agentSessionId}\n`));
     const start = h.store.listEvents(next.id, 0, -1).find(e => e.type === 'turn.started')!;
     assert.match(String(start.data.text), /^out of plan: finish the report\n\nkeep it short\n\n<calli-handover>/);
+  } finally { await h.close(); }
+});
+
+test('near-quota resume handover after compaction neither flags terminal activity nor folds later user asks, while real terminal turns still sync', async () => {
+  const h = await setup('resume', true);
+  try {
+    // Also exercise ClaudeAcpAdapter.loadHistory on a compacted replay directly.
+    const direct = await (h.manager as any).adapters.get('claude').loadHistory('hist-compacted', h.dir);
+    assert.deepEqual(direct.map((t: { text: string }) => t.text), ['second question']);
+
+    await h.manager.startTurn(h.thread.id, { text: 'warm up' }); await h.done(h.thread.id);
+    // Mid-turn compaction + 90% in-band quota on a completed turn -> near-quota resume handover (`failedTurn === null`).
+    await h.manager.startTurn(h.thread.id, { text: 'rate-limit-tell\nmid-compact' }); await h.done(h.thread.id);
+    await wait(() => h.manager.listThreads().some(t => t.handover?.sourceId === h.thread.id));
+    const next = h.manager.listThreads().find(t => t.handover?.sourceId === h.thread.id)!;
+    await h.done(next.id);
+
+    // Opening the successor polls /sync: copied pre-handover and compacted turns must not look like terminal activity.
+    const sync0 = await (await h.api(`/api/threads/${next.id}/sync`, 'POST')).json() as { added: number; terminalActivity: boolean };
+    assert.deepEqual(sync0, { added: 0, terminalActivity: false });
+    assert.equal(h.manager.threadView(next.id).terminalActivity, false);
+    assert.equal(h.store.listEvents(next.id, 0, -1).filter(e => e.data.fromTerminal === true).length, 0);
+
+    const info0 = await (await h.api(`/api/threads/${next.id}/history/handover`)).json() as { method: string; size: number; preview: string; reason: string | null };
+    assert.deepEqual({ method: info0.method, size: info0.size, preview: info0.preview, reason: info0.reason },
+      { method: 'resume', size: 0, preview: '', reason: null });
+
+    // The person's next question is an ordinary turn: neither hidden as a handover card nor flagged as terminal busy.
+    await h.manager.startTurn(next.id, { text: 'authtarget timeout prompt?' }); await h.done(next.id);
+    const sync1 = await (await h.api(`/api/threads/${next.id}/sync`, 'POST')).json() as { added: number; terminalActivity: boolean };
+    assert.deepEqual(sync1, { added: 0, terminalActivity: false });
+    const chainPage = await (await h.api(`/api/threads/${next.id}/history?chain=1`)).json() as { events: Array<{ type: string; data: Record<string, unknown> }> };
+    const started = chainPage.events.filter(e => e.type === 'turn.started');
+    assert.equal(started.length, 1);
+    assert.equal(started[0].data.handoverCollapsed, undefined);
+    assert.match(String(started[0].data.displayText ?? started[0].data.text), /^authtarget timeout prompt\?/);
+    const info1 = await (await h.api(`/api/threads/${next.id}/history/handover`)).json() as { size: number };
+    assert.equal(info1.size, 0);
+
+    // A turn genuinely appended to the successor's session in the terminal still syncs and raises terminalActivity.
+    const project = h.dir.replace(/[^a-zA-Z0-9]/g, '-');
+    const sessionFile = join(h.accounts.claude2, 'projects', project, `${next.agentSessionId}.jsonl`);
+    const existing = readFileSync(sessionFile, 'utf8').trim().split('\n').map(l => JSON.parse(l));
+    const lastUuid = existing.at(-1)!.uuid as string;
+    const appended = [
+      ...existing,
+      { type: 'user', uuid: 'u-term-1', parentUuid: lastUuid, sessionId: next.agentSessionId, message: { role: 'user', content: 'from the terminal after handover' } },
+      { type: 'assistant', uuid: 'a-term-1', parentUuid: 'u-term-1', sessionId: next.agentSessionId, message: { id: 'msg-term-1', role: 'assistant', content: [{ type: 'text', text: 'answered in terminal' }] } },
+    ].map(e => JSON.stringify(e)).join('\n') + '\n';
+    writeFileSync(sessionFile, appended);
+
+    const sync2 = await (await h.api(`/api/threads/${next.id}/sync`, 'POST')).json() as { added: number; terminalActivity: boolean };
+    assert.deepEqual(sync2, { added: 1, terminalActivity: true });
+    assert.equal(h.manager.threadView(next.id).terminalActivity, true);
+    const termStarts = h.store.listEvents(next.id, 0, -1).filter(e => e.type === 'turn.started' && e.data.fromTerminal === true);
+    assert.deepEqual(termStarts.map(e => e.data.text), ['from the terminal after handover']);
   } finally { await h.close(); }
 });

@@ -61,6 +61,26 @@ test('the merged list shows every machine, opens a thread on its own machine, an
           savedState = await context.storageState();
         }
 
+        // A live relay can still fail a list read: keep the cached rows and use the same
+        // status slot as a disconnected host. Recovering restores the underlying unread mark.
+        const unread = await row(page, 'devbox上的线程').locator('.dot.unread').count();
+        const listRoute = `**/api/hosts/${devboxId}/proxy/threads`;
+        await page.route(listRoute, route => route.fulfill({ status: 503, contentType: 'application/json', body: '{"error":"temporary list failure"}' }));
+        await page.reload();
+        if (mobile) await page.locator('.menu-btn').click();
+        const failed = row(page, 'devbox上的线程');
+        await failed.locator('.dot.offline').waitFor({ timeout: 10_000 });
+        assert.equal(await failed.locator('.dot').count(), 1, 'read failure and unread never draw two dots');
+        assert.match(await failed.locator('.dot.offline').getAttribute('aria-label'), /读取失败/);
+        assert.equal(await page.locator('.merged-note.failed').count(), 0, 'no red read-failure banner');
+        if (shots) await page.screenshot({ path: join(shots, `merged-failed-${mobile ? 'phone' : 'desktop'}-${colorScheme}.png`), animations: 'disabled' });
+        await page.unroute(listRoute);
+        await page.reload();
+        if (mobile) await page.locator('.menu-btn').click();
+        await row(page, 'devbox上的线程').waitFor();
+        await row(page, 'devbox上的线程').locator('.dot.offline').waitFor({ state: 'detached' });
+        assert.equal(await row(page, 'devbox上的线程').locator('.dot.unread').count(), unread, 'recovery preserves unread state');
+
         // Opening a thread elsewhere goes to that machine, the list still merged.
         await row(page, 'devbox上的线程').locator('.thread-item').click();
         await page.waitForFunction((id) => localStorage.getItem('calli.host') === id, devboxId, { timeout: 15_000 });

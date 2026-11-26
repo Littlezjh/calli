@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import { ApiError, type AgentInfo, type Api, type HandoverTarget, type Section, type Thread, type Todo } from '../api';
 import { copyText } from '../clipboard';
+import { threadDeepLink } from '../thread-deep-links';
 import { folderName } from '../paths';
 import { cancellableHandover } from '../handover';
 import { ChoiceDialog, Dialog } from './Dialog';
@@ -10,7 +11,7 @@ import { TakeoverDialog } from './TakeoverDialog';
 import { Menu, type MenuEntry } from './Menu';
 import { AgentPicker } from './Pickers';
 import { ChatQuotaMenu } from './ChatQuotaMenu';
-import { IconArchive, IconBack, IconBoard, IconCheck, IconCopy, IconDot, IconEdit, IconFiles, IconFork, IconHand, IconHandover, IconList, IconPin, IconPlus, IconSparkle, IconTerminal, IconTrace, IconTrash, IconWorktree } from './icons';
+import { IconDesktop, IconArchive, IconBack, IconBoard, IconCheck, IconCopy, IconDot, IconEdit, IconFiles, IconFork, IconHand, IconHandover, IconList, IconPause, IconPin, IconPlay, IconPlus, IconSparkle, IconTerminal, IconTrace, IconTrash, IconWorktree } from './icons';
 import { formatList, t } from '../i18n';
 import { boardStage, threadAttention, type BoardStage } from '../sidebar';
 
@@ -33,6 +34,10 @@ interface Deps {
   onSectionsChange: () => void;
   /** Opens the web terminal, from a menu item tied to the thread's directory. */
   onOpenTerminal: () => void;
+  /** Opens the machine desktop beside the conversation when it is available. */
+  onOpenDesktop?: () => void;
+  /** Opens a new-thread draft in the thread's exact directory and worktree. */
+  onNewBeside?: (thread: Thread) => void;
   /** Opens the open thread's files, from its own page menu. */
   onOpenFiles: (thread: Thread) => void;
   onOpenGit?: () => void;
@@ -63,6 +68,7 @@ interface Deps {
 type MenuState = { x: number; y: number; where: 'list' | 'page' } & ({ thread: Thread } | { section: Section });
 
 type DialogState =
+  | { kind: 'copy-link-failed'; link: string }
   | { kind: 'rename'; thread: Thread }
   | { kind: 'delete'; thread: Thread }
   /** The worktree to be deleted holds work that exists nowhere else: asked once more, with the count. */
@@ -97,7 +103,7 @@ export function forkBlocked(thread: Thread, turnId?: string): string | null {
  * open thread's own menu serves the conversation being read.
  */
 export function useThreadActions(deps: Deps) {
-  const { api, agents, sections, todos, chain, onTodosChange, onThreadChange, onThreadRemove, onThreadOpen, onMarkedUnread, onSectionsChange, onOpenTerminal, onOpenFiles, onOpenGit, onOpenTrace, onError, onBusy, onArchived, markdownOf, autotitle, board } = deps;
+  const { api, agents, sections, todos, chain, onTodosChange, onThreadChange, onThreadRemove, onThreadOpen, onMarkedUnread, onSectionsChange, onOpenTerminal, onOpenDesktop, onNewBeside, onOpenFiles, onOpenGit, onOpenTrace, onError, onBusy, onArchived, markdownOf, autotitle, board } = deps;
   /** The chain record when this thread belongs to any handover chain, automatic or manual. */
   const chainOf = (thread: Thread) => chain && (thread.handover
     || chain.threads.some(x => x.handover?.sourceId === thread.id)) ? chain : undefined;
@@ -194,19 +200,27 @@ export function useThreadActions(deps: Deps) {
     }
   };
 
-  const copy = async (value: string | null | Promise<string>) => {
+  const copy = async (value: string | null | Promise<string>, reportFailure?: (text: string) => void) => {
     try {
       const text = await value;
       if (!text) return;
       // The clipboard holds the result; only a failure needs saying.
-      if (!(await copyText(text))) onError(t('actions.copyFailed'));
+      if (!(await copyText(text))) {
+        if (reportFailure) reportFailure(text);
+        else onError(t('actions.copyFailed'));
+      }
     } catch (e) {
       onError(e);
     }
   };
 
-  /** What a row's menu offers: how the thread sits in the list. As in ChatGPT and the Claude app,
-   *  a row menu holds only row management, never the conversation's own tools. */
+  // The scoped API belongs to the menu's thread, including rows on another machine.
+  const copyLink = (thread: Thread): MenuEntry => ({
+    id: 'copy-link', label: t('actions.copyDeepLink'), icon: IconCopy,
+    onSelect: () => void copy(threadDeepLink(thread.id, api?.host ?? null, window.location.href), link => setDialog({ kind: 'copy-link-failed', link })),
+  });
+
+  /** What a row's menu offers: how the thread sits in the list and its stable address. */
   const listItems = (thread: Thread): MenuEntry[] => {
     const filed = sections.some((s) => s.id === thread.sectionId);
     const linkedTodoIds = new Set(todos.filter((todo) => todo.threads.some((it) => it.id === thread.id)).map((todo) => todo.id));
@@ -223,6 +237,7 @@ export function useThreadActions(deps: Deps) {
       onSelect: () => void (id === 'done' ? patch(thread, { done: stage !== 'done' }) : stage !== id && patch(thread, { stage: id })),
     });
     return [
+      ...(onNewBeside ? [{ id: 'new-beside', label: t('actions.newBeside'), icon: IconPlus, onSelect: () => onNewBeside(thread) }] : []),
       { id: 'pin', label: thread.pinned ? t('actions.unpin') : t('actions.pin'), icon: IconPin, onSelect: () => run('pin', thread) },
       {
         id: 'unread',
@@ -231,6 +246,7 @@ export function useThreadActions(deps: Deps) {
         onSelect: () => void patch(thread, { unread: !thread.unread }, thread.unread ? undefined : () => onMarkedUnread(thread)),
       },
       { id: 'rename', label: t('actions.rename'), icon: IconEdit, onSelect: () => run('rename', thread) },
+      copyLink(thread),
       ...(autotitle ? [{ id: 'autotitle', label: t('actions.autotitle'), icon: IconSparkle, onSelect: () => void autoName(thread) }] : []),
       ...(board ? [{ id: 'board', label: t('actions.board'), icon: IconBoard, submenu: (['backlog', 'doing', 'blocked', 'review', 'done'] as const).map(place) }] : []),
       {
@@ -282,6 +298,13 @@ export function useThreadActions(deps: Deps) {
           },
         ],
       },
+      // Only current members can opt out; ordinary mains and retired lead segments have no switch.
+      ...(typeof thread.disabled === 'boolean' && thread.coordination && !thread.coordination.retired && thread.coordination.rootId !== thread.id ? [{
+        id: thread.disabled ? 'enable' : 'disable',
+        label: thread.disabled ? t('actions.enable') : t('actions.disable'),
+        icon: thread.disabled ? IconPlay : IconPause,
+        onSelect: () => void patch(thread, { disabled: !thread.disabled }),
+      }] : []),
       'separator',
       thread.archivedAt
         ? { id: 'restore', label: t('archive.restore'), icon: IconArchive, onSelect: () => run('restore', thread) }
@@ -296,6 +319,8 @@ export function useThreadActions(deps: Deps) {
     { id: 'files', label: t('files.files'), icon: IconFiles, onSelect: () => onOpenFiles(thread) },
     ...(onOpenGit && !api?.demo ? [{ id: 'git', label: t('git.label'), icon: IconWorktree, onSelect: onOpenGit }] : []),
     { id: 'terminal', label: t('actions.terminal'), icon: IconTerminal, onSelect: onOpenTerminal },
+    ...(onOpenDesktop ? [{ id: 'desktop', label: t('desktop.title'), icon: IconDesktop, onSelect: onOpenDesktop }] : []),
+    ...(onNewBeside ? [{ id: 'new-beside', label: t('actions.newBeside'), icon: IconPlus, onSelect: () => onNewBeside(thread) }] : []),
     { id: 'pin', label: thread.pinned ? t('actions.unpin') : t('actions.pin'), icon: IconPin, onSelect: () => run('pin', thread) },
     {
       id: 'unread',
@@ -310,6 +335,7 @@ export function useThreadActions(deps: Deps) {
       label: t('common.copy'),
       icon: IconCopy,
       submenu: [
+        copyLink(thread),
         { id: 'copy-md', label: t('actions.copyMarkdown'), onSelect: () => void copy(markdownOf(thread)) },
         {
           id: 'copy-resume',
@@ -379,7 +405,13 @@ export function useThreadActions(deps: Deps) {
   };
 
   let dialogNode: ReactNode = null;
-  if (dialog && api) {
+  if (dialog?.kind === 'copy-link-failed') {
+    // The phone's open list hides page banners: keep the failure and selectable address above it.
+    dialogNode = <Dialog title={t('actions.copyDeepLink')} message={t('actions.copyFailed')}
+      confirmLabel={t('common.close')} hideCancel onConfirm={close} onCancel={close}>
+      <label className="dialog-field"><input readOnly value={dialog.link} aria-label={t('actions.copyDeepLink')} onFocus={event => event.currentTarget.select()} /></label>
+    </Dialog>;
+  } else if (dialog && api) {
     if (dialog.kind === 'rename') {
       const { thread } = dialog;
       dialogNode = (
@@ -521,7 +553,7 @@ export function useThreadActions(deps: Deps) {
       const { thread } = dialog;
       dialogNode = (
         <TakeoverDialog api={api} thread={thread} agents={agents} onClose={close}
-          onTakeOver={async (target, summary) => onThreadOpen(await api.takeOver(thread.id, target, undefined, summary))} />
+          onTakeOver={async (target, summary, returnTo) => onThreadOpen(await api.takeOver(thread.id, target, undefined, summary, returnTo))} />
       );
     } else if (dialog.kind === 'chain') {
       const record = chainOf(dialog.thread);
@@ -590,10 +622,10 @@ export function useThreadActions(deps: Deps) {
      * place, with its queue and collaboration lead. For when the thread's own agent cannot go on, so
      * it is not asked. `note` is what the person adds for the successor.
      */
-    takeOver: async (thread: Thread, target: string | HandoverTarget, note?: string) => {
+    takeOver: async (thread: Thread, target: string | HandoverTarget, note?: string, returnTo?: string) => {
       if (!api) return;
       try {
-        onThreadOpen(await api.takeOver(thread.id, target, note));
+        onThreadOpen(await api.takeOver(thread.id, target, note, undefined, returnTo));
       } catch (e) {
         onError(e);
         throw e;

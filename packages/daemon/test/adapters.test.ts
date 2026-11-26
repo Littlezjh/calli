@@ -40,6 +40,9 @@ test('mapAcpUpdate maps message, thought, tool and plan updates', () => {
     data: { text: 'hi' },
   });
   assert.equal(mapAcpUpdate({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'x' } })?.type, 'reasoning.delta');
+  assert.deepEqual(mapAcpUpdate({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '**Notice:** Hook blocked' }, _meta: { claudeCode: { kind: 'informational', level: 'notice' } } }), {
+    type: 'agent.warning', data: { level: 'notice', text: 'Hook blocked' },
+  });
   assert.equal(mapAcpUpdate({ sessionUpdate: 'tool_call', toolCallId: 'a', title: 'ls', status: 'pending' })?.type, 'tool.start');
   // The raw tool name rides along when the bridge sends it, so the activity page can tell MCP calls.
   assert.equal(mapAcpUpdate({ sessionUpdate: 'tool_call', toolCallId: 'a', title: 'ls', status: 'pending', name: 'mcp__github__create_issue' })?.data.tool, 'mcp__github__create_issue');
@@ -186,6 +189,24 @@ test('ClaudeAcpAdapter: resume uses session/load and keeps the same id', async (
   // The replayed text sent during session/load must not leak into this turn.
   assert.ok(!events.some((e) => String(e.data.text ?? '').includes('replayed')));
   await session.close();
+});
+
+test('ClaudeAcpAdapter: a resumed session starts its process on the selected model', async (t) => {
+  const env = { FAKE_CLAUDE_REFUSED_MODEL: 'refused' };
+  const unselected = await new ClaudeAcpAdapter([process.execPath, fakeAcp], env).start({ cwd: here, resumeId: 'previous-session' });
+  t.after(() => unselected.close());
+  const before = collectingHooks();
+  await unselected.prompt(turn('hi'), before.hooks);
+  // Without a selection the agent's own warning is shown as such, not as the model's answer.
+  assert.deepEqual(before.events.find(e => e.type === 'agent.warning')?.data, { level: 'warning', text: 'Model "refused" is restricted by your organization\'s settings. Using fallback instead.' });
+  assert.ok(!before.events.some(e => e.type === 'message.delta' && String(e.data.text).includes('restricted')));
+
+  const session = await new ClaudeAcpAdapter([process.execPath, fakeAcp], env).start({ cwd: here, resumeId: 'previous-session', model: 'big' });
+  t.after(() => session.close());
+  const { hooks, events } = collectingHooks();
+  await session.prompt(turn('model?'), hooks);
+  assert.ok(!events.some(e => e.type === 'agent.warning'), 'the refused settings model must not be started on');
+  assert.equal(events.at(-1)?.data.text, 'model:big;mode:default;effort:default');
 });
 
 test('DshAcpAdapter: resume goes through session/resume, which never replays', async (t) => {
@@ -698,147 +719,47 @@ test('pi fork points are matched to turns by what was asked, not by position', (
   assert.deepEqual(withPiForkRefs([turn('one')], []).map((t) => t.forkRef), [undefined]);
 });
 
-import { AgyAdapter, agyArgs, agyTurnResult, mapAgyStep, parseAgyModels } from '../src/adapters/agy.js';
+import { AgyAdapter, parseAgyModels } from '../src/adapters/agy.js';
 
 const fakeAgy = join(here, 'fixtures', 'fake-agy.mjs');
 const textFrom = (events: EmittedEvent[]) => events.filter((e) => e.type === 'message.delta').map((e) => e.data.text).join('');
 
-test('mapAgyStep maps reply text and tool steps, and ignores bookkeeping steps', () => {
-  const started = new Set<number>();
-  assert.deepEqual(mapAgyStep({ step_index: 0, state: 'DONE', step_type: 'user_input' }, started), []);
-  assert.deepEqual(mapAgyStep({ step_index: 3, state: 'DONE', step_type: 'system_message' }, started), []);
-  // A reply step with no text is the model deciding to call a tool.
-  assert.deepEqual(mapAgyStep({ step_index: 1, state: 'DONE', step_type: 'agent_response', usage: {} }, started), []);
-  assert.deepEqual(mapAgyStep({ step_index: 1, state: 'ACTIVE', step_type: 'agent_response', text_delta: 'Hel' }, started), [
-    { type: 'message.delta', data: { text: 'Hel' } },
+test('parseAgyModels groups multi-effort families, keeps single-variant models fixed, and skips invalid lines', () => {
+  const models = parseAgyModels(
+    'Fetching available models...\nfast-high\tFast (High)\nfast-low\tFast (Low)\n\nbroken line\nsolo-medium\tSolo (Medium)\nbig\tBig (Thinking)\n\tno id\n',
+  );
+  assert.deepEqual(models, [
+    { id: 'fast', label: 'Fast', efforts: ['low', 'high'], isDefault: true },
+    { id: 'solo-medium', label: 'Solo (Medium)', efforts: [] },
+    { id: 'big', label: 'Big (Thinking)', efforts: [] },
   ]);
-
-  const info = { name: 'run_command', parameters: { CommandLine: 'npm test\necho done' } };
-  assert.deepEqual(mapAgyStep({ step_index: 2, state: 'ACTIVE', step_type: 'tool', tool_name: 'run_command', tool_info: info }, started), [
-    { type: 'tool.start', data: { id: 'agy-step-2', title: 'npm test', kind: 'execute', status: 'in_progress', tool: 'run_command', input: info.parameters } },
-  ]);
-  assert.deepEqual(
-    mapAgyStep({ step_index: 2, state: 'DONE', step_type: 'tool', tool_name: 'run_command', tool_info: { ...info, output: '12 passed' } }, started),
-    [{ type: 'tool.end', data: { id: 'agy-step-2', status: 'completed', output: '12 passed' } }],
-  );
-
-  // A refused command arrives as an error with the reason.
-  const refused = mapAgyStep(
-    { step_index: 5, state: 'ERROR', step_type: 'tool', tool_name: 'run_command', tool_info: { ...info, error: { type: 'TOOL_ERROR', message: 'user denied permission' } } },
-    started,
-  );
-  assert.deepEqual(refused.map((e) => [e.type, e.data.status]), [['tool.start', 'in_progress'], ['tool.end', 'failed']], 'a step never seen active still gets its start');
-  assert.equal(refused[1].data.output, 'user denied permission');
-});
-
-test('mapAgyStep names file tools by what they do, and shows a subagent by its role and task', () => {
-  const start = (tool_name: string, parameters: Record<string, unknown>, index: number) =>
-    mapAgyStep({ step_index: index, state: 'ACTIVE', step_type: 'tool', tool_name, tool_info: { name: tool_name, parameters } }, new Set())[0].data;
-  assert.deepEqual([start('write_to_file', { TargetFile: '/w/a.txt' }, 1).title, start('write_to_file', { TargetFile: '/w/a.txt' }, 1).kind], ['Write /w/a.txt', 'edit']);
-  assert.equal(start('replace_file_content', { TargetFile: '/w/a.txt' }, 2).title, 'Edit /w/a.txt');
-  assert.deepEqual([start('view_file', { AbsolutePath: '/w/a.txt' }, 3).title, start('view_file', { AbsolutePath: '/w/a.txt' }, 3).kind], ['Read /w/a.txt', 'read']);
-  assert.deepEqual([start('grep_search', { Query: 'TODO' }, 4).title, start('grep_search', { Query: 'TODO' }, 4).kind], ['grep_search TODO', 'search']);
-  assert.deepEqual([start('manage_task', {}, 5).title, start('manage_task', {}, 5).kind], ['manage_task', 'other']);
-
-  const [sub] = mapAgyStep(
-    {
-      step_index: 6,
-      state: 'ACTIVE',
-      step_type: 'subagent',
-      tool_name: 'invoke_subagent',
-      subagent_info: { subagents: [{ type_name: 'image-generator', role: 'Image Generator', initial_prompt: 'An orange circle.\nKeep it flat.' }] },
-    },
-    new Set(),
-  );
-  assert.equal(sub.data.title, 'Image Generator: An orange circle.');
-});
-
-test('agyTurnResult: success, interruption, errors, and actions refused for lack of a prompt', () => {
-  assert.deepEqual(agyTurnResult({ status: 'SUCCESS', response: 'ok' }, false), { stopReason: 'end_turn' });
-  assert.deepEqual(agyTurnResult({ status: 'ERROR', error: 'interrupted' }, true), { stopReason: 'cancelled' });
-  assert.deepEqual(agyTurnResult({ status: 'ERROR', error: 'quota exceeded' }, false), { stopReason: 'error', error: 'quota exceeded' });
-  const denied = agyTurnResult(
-    { status: 'SUCCESS', response: '', denied_actions: [{ action: 'command', display_name: 'RunCommand' }, { action: 'command', display_name: 'RunCommand' }] },
-    false,
-  );
-  assert.equal(denied.stopReason, 'error');
-  assert.equal(denied.errorCode, 'permission_refused');
-  assert.deepEqual(denied.refused, ['RunCommand'], 'each kind of action is named once');
-  assert.match(denied.error!, /refused RunCommand:/);
-  assert.match(denied.error!, /full access/);
-});
-
-test('parseAgyModels folds multi-tier thinking families and leaves single entries standalone', () => {
-  const single = parseAgyModels('Fetching available models...\nfast-low\tFast (Low)\n\nbroken line\nbig\tBig (Thinking)\n\tno id\n');
-  assert.deepEqual(single.map((m) => [m.id, m.label]), [['fast-low', 'Fast (Low)'], ['big', 'Big (Thinking)']]);
-  assert.ok(single.every((m) => m.efforts?.length === 0 && m.images === undefined), 'single variants keep empty efforts');
-
-  const multi = parseAgyModels([
-    'claude-opus-5-5-low\tClaude Opus 5.5 (Low)',
-    'claude-opus-5-5-medium\tClaude Opus 5.5 (Medium)',
-    'claude-opus-5-5-high\tClaude Opus 5.5 (High)',
-    'gemini-4-carbon-medium\tGemini 4 Carbon (Medium)',
-    'gemini-4-carbon-high\tGemini 4 Carbon (High)',
-    'gemini-4-carbon-low\tGemini 4 Carbon (Low)',
-    'gemini-4-hydrogen-high\tGemini 4 Hydrogen (High)',
-    'gemini-4-hydrogen-xhigh\tGemini 4 Hydrogen (XHigh)',
-    'gemini-4-hydrogen-medium\tGemini 4 Hydrogen (Medium)',
-    'gemini-4-hydrogen-low\tGemini 4 Hydrogen (Low)',
-    'gemini-pro-orchestrator\tOrchestrator (Carbon)',
-    'gpt-oss-120b-medium\tGPT-OSS 120B (Medium)',
-  ].join('\n'));
-  assert.deepEqual(
-    multi.map((m) => [m.id, m.label, m.efforts]),
-    [
-      ['claude-opus-5-5', 'Claude Opus 5.5', ['low', 'medium', 'high']],
-      ['gemini-4-carbon', 'Gemini 4 Carbon', ['low', 'medium', 'high']],
-      ['gemini-4-hydrogen', 'Gemini 4 Hydrogen', ['low', 'medium', 'high', 'xhigh']],
-      ['gemini-pro-orchestrator', 'Orchestrator (Carbon)', []],
-      ['gpt-oss-120b-medium', 'GPT-OSS 120B (Medium)', []],
-    ],
-  );
   assert.deepEqual(parseAgyModels(''), []);
-});
-
-test('agyArgs turns the permission level, model, effort and conversation into flags', () => {
-  const base = ['--input-format', 'stream-json', '--output-format', 'stream-json'];
-  assert.deepEqual(agyArgs({}), [...base, '--mode', 'accept-edits', '-p=']);
-  assert.deepEqual(agyArgs({ permissionMode: 'auto_edit', model: 'fast-low' }), [...base, '--mode', 'accept-edits', '--model', 'fast-low', '-p=']);
-  assert.deepEqual(agyArgs({ permissionMode: 'auto_edit', model: 'fast', effort: 'high' }), [...base, '--mode', 'accept-edits', '--model', 'fast-high', '-p=']);
-  assert.deepEqual(
-    agyArgs({ permissionMode: 'auto_edit', model: 'fast', defaultModels: new Map([['fast', 'fast-medium']]) }),
-    [...base, '--mode', 'accept-edits', '--model', 'fast-medium', '-p='],
-  );
-  assert.deepEqual(agyArgs({ permissionMode: 'full_access', conversationId: 'c1' }), [...base, '--dangerously-skip-permissions', '--conversation', 'c1', '-p=']);
-  assert.equal(agyArgs({ permissionMode: 'full_access' }).includes('--mode'), false);
 });
 
 test('AgyAdapter: models, a turn with a tool, and several turns in one process', async () => {
   const adapter = new AgyAdapter([process.execPath, fakeAgy]);
   assert.equal(await adapter.available(), true);
   assert.equal(await new AgyAdapter(['definitely-not-installed-agy']).available(), false);
-  assert.deepEqual(
-    (await adapter.models()).map((m) => [m.id, m.label, m.efforts]),
-    [['fast', 'Fast', ['low', 'high']], ['big-thinking', 'Big (Thinking)', []]],
-  );
-  assert.deepEqual(adapter.normalizeModel('fast-high', null), { model: 'fast', effort: 'high' });
-  assert.deepEqual(adapter.normalizeModel('big-thinking', null), { model: 'big-thinking', effort: null });
+  assert.deepEqual(await adapter.models(), [
+    { id: 'fast', label: 'Fast', efforts: ['low', 'high'], isDefault: true },
+    { id: 'big-thinking', label: 'Big (Thinking)', efforts: [] },
+  ]);
   assert.ok((await adapter.commands()).some((c) => c.name === 'usage'));
-  assert.equal(adapter.resumeCommand('abc'), 'agy --conversation abc');
+  assert.equal(adapter.resumeCommand('abc'), `'${process.execPath}' '${fakeAgy}' --conversation 'abc'`);
 
-  const session = await adapter.start({ cwd: here, model: 'fast' });
+  const session = await adapter.start({ cwd: here, model: 'fast', effort: 'low' });
   try {
     assert.equal(session.agentSessionId, 'agy-conv-1', 'the conversation id is known before the first message');
     const first = collectingHooks();
     assert.deepEqual(await session.prompt(turn('use a tool'), first.hooks), { stopReason: 'end_turn' });
-    assert.deepEqual(first.events.map((e) => e.type), ['tool.start', 'tool.end', 'message.delta', 'message.delta']);
+    assert.deepEqual(first.events.map((e) => e.type), ['tool.start', 'tool.end', 'message.delta', 'message.delta', 'usage.updated']);
     assert.equal(first.events[1].data.output, 'hi\r\n');
-    assert.equal(textFrom(first.events).trim(), 'echo:use a tool;model:fast-low;mode:accept-edits;conv:agy-conv-1');
+    assert.equal(textFrom(first.events).trim(), 'echo:use a tool;model:fast;effort:low;mode:auto;conv:agy-conv-1');
 
     const second = collectingHooks();
     await session.prompt(turn('again'), second.hooks);
     assert.match(textFrom(second.events), /^echo:again;/);
-    assert.deepEqual(second.events.map((e) => e.type), ['message.delta', 'message.delta'], 'steps of the first turn are not repeated');
+    assert.deepEqual(second.events.map((e) => e.type), ['message.delta', 'message.delta', 'usage.updated'], 'steps of the first turn are not repeated');
   } finally {
     await session.close();
   }
@@ -847,13 +768,13 @@ test('AgyAdapter: models, a turn with a tool, and several turns in one process',
   try {
     const highTurn = collectingHooks();
     assert.deepEqual(await highSession.prompt(turn('check effort'), highTurn.hooks), { stopReason: 'end_turn' });
-    assert.match(textFrom(highTurn.events), /model:fast-high;/);
+    assert.match(textFrom(highTurn.events), /model:fast;effort:high;/);
   } finally {
     await highSession.close();
   }
 });
 
-test('AgyAdapter: emits reasoning.delta from transcript_full.jsonl before tool steps and falls back to transcript.jsonl', async () => {
+test('AgyAdapter: streams ACP thinking before tools and keeps each turn separate in history', async () => {
   const fullHome = mkdtempSync(join(tmpdir(), 'calli-agy-think-full-'));
   const compactHome = mkdtempSync(join(tmpdir(), 'calli-agy-think-compact-'));
   try {
@@ -871,7 +792,7 @@ test('AgyAdapter: emits reasoning.delta from transcript_full.jsonl before tool s
         ['step-thought:think first', 'final-thought:think first'],
       );
       assert.equal(textFrom(first.events).trim(), 'thought-reply:think first');
-      // Trailing "\n" from agent_response DONE must flush before final thinking so history keeps the full answer.
+      // ACP's trailing answer chunk must precede final thinking so history keeps the full answer.
       const now = new Date().toISOString();
       const { summary, blocks } = partitionHistory([
         { threadId: 't1', turnId: 'u1', seq: 1, ts: now, type: 'turn.started', data: { text: 'think first' } },
@@ -919,21 +840,20 @@ test('AgyAdapter: emits reasoning.delta from transcript_full.jsonl before tool s
   }
 });
 
-test('AgyAdapter: a permission change restarts the process on the same conversation', async () => {
+test('AgyAdapter: permission changes use the same ACP conversation and native approval', async () => {
   const adapter = new AgyAdapter([process.execPath, fakeAgy]);
   const session = await adapter.start({ cwd: here, resumeId: 'conv-kept', permissionMode: 'auto_edit' });
   try {
     assert.equal(session.agentSessionId, 'conv-kept');
     const refused = collectingHooks();
     const result = await session.prompt(turn('run a command'), refused.hooks);
-    assert.equal(result.stopReason, 'error');
-    assert.match(result.error!, /refused RunCommand/);
-    assert.deepEqual(refused.events.map((e) => [e.type, e.data.status]), [['tool.start', 'in_progress'], ['tool.end', 'failed']]);
+    assert.equal(result.stopReason, 'end_turn');
+    assert.equal(refused.approvals.length, 1);
 
     await session.setPermissionMode!('full_access');
     const allowed = collectingHooks();
     assert.deepEqual(await session.prompt(turn('run a command'), allowed.hooks), { stopReason: 'end_turn' });
-    assert.match(textFrom(allowed.events), /mode:always-proceed;conv:conv-kept/);
+    assert.match(textFrom(allowed.events), /mode:auto;conv:conv-kept/);
     assert.equal(session.agentSessionId, 'conv-kept');
   } finally {
     await session.close();
@@ -960,21 +880,22 @@ test('AgyAdapter: cancelling stops the turn, and the next message carries on in 
   }
 });
 
-test('AgyAdapter: a process that dies mid-turn is reported with what it said, and the session recovers', async () => {
+test('AgyAdapter: a process that dies is reported and a new session resumes its conversation', async () => {
   const adapter = new AgyAdapter([process.execPath, fakeAgy]);
   const session = await adapter.start({ cwd: here });
   try {
     const result = await session.prompt(turn('crash'), collectingHooks().hooks);
     assert.equal(result.stopReason, 'error');
-    assert.match(result.error!, /code=7.*something broke/);
-    const after = collectingHooks();
-    assert.deepEqual(await session.prompt(turn('still there?'), after.hooks), { stopReason: 'end_turn' });
+    assert.match(result.error!, /code=7/);
+    assert.equal(session.isAlive?.(), false);
+    const resumed = await adapter.start({ cwd: here, resumeId: session.agentSessionId });
+    try { assert.equal((await resumed.prompt(turn('still there?'), collectingHooks().hooks)).stopReason, 'end_turn'); } finally { await resumed.close(); }
   } finally {
     await session.close();
   }
-  await assert.rejects(new AgyAdapter(['definitely-not-installed-agy']).start({ cwd: here }), /could not be started/);
+  await assert.rejects(new AgyAdapter(['definitely-not-installed-agy']).start({ cwd: here }), /ENOENT/);
   // Something that is not agy exits without announcing a conversation; its complaint is passed on.
-  await assert.rejects(new AgyAdapter([process.execPath, '--no-such-flag']).start({ cwd: here }), /agy exited \(code=\d+.*bad option/);
+  await assert.rejects(new AgyAdapter([process.execPath, '--no-such-flag']).start({ cwd: here }), /agy-acp exited \(code=\d+/);
 });
 
 import { formatAgyOutput, parseAgyHelp, parseAgySkills } from '../src/adapters/agy.js';
@@ -1008,7 +929,7 @@ test('AgyAdapter: lists what agy answers itself plus its skills, and answers tho
   const commands = await adapter.commands(here);
   assert.deepEqual(
     commands.map((c) => [c.name, c.kind]),
-    [['config', 'command'], ['skills', 'command'], ['usage', 'command'], ['broken', 'command'], ['make-video', 'skill'], ['review', 'skill']],
+    [['skills', 'command'], ['usage', 'command'], ['make-video', 'skill'], ['review', 'skill']],
     'model and effort are left out: they are set by the hub, per session',
   );
 
@@ -1021,8 +942,10 @@ test('AgyAdapter: lists what agy answers itself plus its skills, and answers tho
     await session.prompt(turn('/quota'), alias.hooks);
     assert.match(textFrom(alias.events), /Weekly Limit Remaining/, 'aliases work too');
 
-    const broken = await session.prompt(turn('/broken'), collectingHooks().hooks);
-    assert.deepEqual(broken, { stopReason: 'error', error: 'agy /broken failed: /broken failed: not available here' });
+    assert.ok((await adapter.commands(here)).some(c => c.name === 'compact'));
+    const compact = collectingHooks();
+    assert.equal((await session.prompt(turn('/compact'), compact.hooks)).stopReason, 'end_turn');
+    assert.deepEqual(compact.events.filter(e => e.type === 'tool.start' || e.type === 'tool.end').map(e => e.data.status), ['in_progress', 'completed']);
 
     // Skills and unknown commands go to the model as text, through the session's process.
     const skill = collectingHooks();
@@ -1177,14 +1100,14 @@ test('imagePathNote lists the stored files of a message, and nothing for images 
   assert.match(imagePathNote([{ data: PNG, mimeType: 'image/png', path: '/d/a.png' }, { data: PNG, mimeType: 'image/jpeg', path: '/d/b.jpg' }]), /attached 2 images\. Look at them[\s\S]*- \/d\/a\.png\n- \/d\/b\.jpg$/);
 });
 
-test('agy gets the pictures of a message as file paths', async () => {
+test('agy gets images as native ACP blocks', async () => {
   const adapter = new AgyAdapter([process.execPath, fakeAgy]);
   assert.equal(adapter.capabilities.images, true);
   const session = await adapter.start({ cwd: here });
   try {
     const { hooks, events } = collectingHooks();
     await session.prompt(turn('what is this', [{ data: PNG, mimeType: 'image/png', path: '/data/attachments/t/1.png' }]), hooks);
-    assert.match(textFrom(events), /^echo:what is this\n\nThe user attached an image\. Look at it before answering:\n- \/data\/attachments\/t\/1\.png;/);
+    assert.match(textFrom(events), /^echo:what is this;image:embedded;/);
   } finally {
     await session.close();
   }

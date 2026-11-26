@@ -5,10 +5,11 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'node:http';
 import type { Store } from './store.js';
-import type { ThreadManager } from './threads.js';
+import type { ThreadManager, ThreadView } from './threads.js';
 import { replaceMessageTail, type StoredEvent } from './events.js';
 import { HttpError } from './errors.js';
 import { turnOutcome } from './lifecycle.js';
+import { askedText } from './util.js';
 import { TeamsManager, parseTeamMentions, type TeamDefinition, type TeamSource, type TeamTask } from './teams.js';
 import { isWithinWorkdirs } from './workdirs.js';
 import { HandoverReader } from './handover-reader.js';
@@ -40,6 +41,8 @@ type Delivery = {
   id: string; key: string; fingerprint: string; from: string; to: string;
   text: string; kind: 'message' | 'result'; state: 'queued' | 'running' | 'returned' | 'failed' | 'stopped' | 'interrupted';
   turnId: string | null; result: string; createdAt: string;
+  /** This result was actually withheld; enabling or recovery must never offer it again. */
+  suppressed?: true;
   /** An explicit handoff document, used instead of `text` as the body of the file a remote member reads. */
   handoff?: string;
   /** Where the handoff and result files live on the member's machine, once the hub has written the handoff. */
@@ -78,6 +81,8 @@ const safePart = (value: string) =>
 /** The model and thinking effort members of one instance start with; null leaves the agent's own. */
 type MemberDefault = { model: string | null; effort: string | null; /** Set where this instance's members differ from the team's level. */ permission?: string };
 type Team = { autoHandover?: boolean; team?: TeamTask; retiredMembers?: Member[]; rootId: string; paused: boolean; directories: string[]; agents: string[]; members: Member[]; deliveries: Delivery[]; direct?: DirectTalk[]; defaults?: Record<string, MemberDefault>;
+  /** Unset keeps legacy teams enabled; false stores configuration without starting collaboration. */
+  enabled?: boolean;
   /** How much members may do without asking. Unset means full access: nobody watches a member's thread to approve. */
   permission?: string };
 const MEMBER_PERMISSIONS = ['ask', 'auto_edit', 'full_access'];
@@ -106,6 +111,8 @@ export class CoordinationManager {
   /** How far each remote member's event log has been read, and the events of turns still awaited. */
   private remoteCursor = new Map<string, number>();
   private remoteTurns = new Map<string, StoredEvent[]>();
+  /** Match a remote failure projection to its actual terminal turn, not an older result. */
+  private remoteFailures = new Map<string, { turnId: string; at: string }>();
   private remoteTimer: NodeJS.Timeout | null = null;
   private polling = false;
   private reading = new Map<string, Promise<void>>();
@@ -123,6 +130,8 @@ export class CoordinationManager {
     for (const row of store.coordinationRecords()) {
       // Reusable tasks stop on interruption; free collaboration retains its original recovery policy.
       const team = JSON.parse(row.data) as Team;
+      this.teams.set(team.rootId, team);
+      this.quarantine(team);
       if (team.team) {
         this.teams.set(team.rootId, team);
         for (const id of [team.rootId, ...team.members.map(m => m.id)]) {
@@ -153,6 +162,7 @@ export class CoordinationManager {
         if (!end || outcome === 'interrupted') { job.state = 'interrupted'; continue; }
         job.state = outcome === 'cancelled' ? 'stopped' : outcome === 'error' ? 'failed' : 'returned';
         job.result = turnAnswer(store.listEvents(job.to, 0, -1), job.turnId) || String(end.data.message ?? '');
+        if (this.deliveryBlocked(team, job) && job.state !== 'stopped') job.suppressed = true;
         const key = `result:${job.to}:${job.turnId}`;
         if (!team.members.some(m => m.id === job.to && m.voiceTarget)
           && (job.to !== team.rootId || job.kind === 'message' && team.members.some(m => m.id === job.from && m.voiceTarget === team.rootId))
@@ -176,13 +186,15 @@ export class CoordinationManager {
             this.save(t);
           }
         }
-        const direct = t && this.directNotice(t);
-        if (t && direct && prompt.includes(direct)) {
-          for (const talk of t.direct ?? []) talk.told = true;
+        if (t && prompt.includes('用户在成员线程里直接和成员说过话（供了解现状，不用回复，也不要重复派发）：')) {
+          // Consume only the eligible summaries actually committed in this prompt.
+          for (const talk of t.direct ?? []) if (!talk.told && !this.threadDisabled(t, talk.to) && prompt.includes(this.directLine(t, talk))) talk.told = true;
           this.save(t);
         }
       }
       if (turnOutcome(event)) {
+        // Receipt is authoritative even if asynchronous result processing waits on the chain.
+        this.suppressArrival(event);
         void this.serial(() => this.finished(event)).catch(() => undefined);
       }
       if (event.type === 'thread.updated') this.schedule();
@@ -199,36 +211,122 @@ export class CoordinationManager {
     this.chain = next.catch(() => undefined);
     return next;
   }
-  /** Whether the thread leads a collaboration, so its successor would take the lead. */
-  leads(id: string): boolean { return this.teams.has(id); }
+  /** Configuration alone must not restrict an ordinary thread's runtime or deletion. */
+  leads(id: string): boolean { return this.teams.get(id)?.enabled !== false && this.teams.has(id); }
+  enabled(id: string): boolean { const t = this.team(id); return Boolean(t && t.enabled !== false); }
+  /** Deleting an ordinary configured thread also removes its otherwise inert policy. */
+  forgetConfiguration(id: string): void {
+    if (this.teams.get(id)?.enabled !== false) return;
+    this.teams.delete(id); this.store.deleteCoordination(id);
+  }
   private team(id: string): Team | undefined {
-    return this.teams.get(id) ?? [...this.teams.values()].find(t => t.members.some(m => m.id === id) || t.retiredMembers?.some(m => m.id === id));
+    // Local entry points must not resolve a same-ID thread owned by another host.
+    return this.teams.get(id) ?? [...this.teams.values()].find(t => t.members.some(m => !m.host && m.id === id) || t.retiredMembers?.some(m => !m.host && m.id === id));
   }
   private save(t: Team): void { this.store.saveCoordination(t.rootId, JSON.stringify(t)); }
+  private remoteKey(m: Member): string { return `${m.host}:${m.id}`; }
+  /** Copied remote stores can share turn IDs; keep each host/thread event stream separate. */
+  private remoteTurnKey(m: Member, turnId: string): string { return `${this.remoteKey(m)}:${turnId}`; }
+  /** Only the actual thread flag controls participation; legacy instance/seat policy is inert. */
+  private threadDisabled(t: Team, id: string): boolean {
+    if (id === t.rootId) return this.store.getThread(id)?.disabled === true;
+    const remote = [...t.members, ...(t.retiredMembers ?? [])].find(m => m.id === id && m.host);
+    return remote ? this.remoteViews.get(this.remoteKey(remote))?.disabled === true : this.store.getThread(id)?.disabled === true;
+  }
+  private ambiguousParticipant(t: Team, id: string): boolean {
+    const members = [...t.members, ...(t.retiredMembers ?? [])].filter(m => m.id === id);
+    return members.length > 1 || id === t.rootId && members.length > 0;
+  }
+  private assertParticipant(t: Team, id: string): void {
+    if (this.threadDisabled(t, id)) throw new HttpError(409, '此会话已退出协作', { code: 'coordination_disabled' });
+    if (this.ambiguousParticipant(t, id)) throw new HttpError(409, '协作会话 ID 冲突');
+  }
+  private deliveryBlocked(t: Team, d: Delivery): boolean {
+    const answered = this.answered(t, d);
+    return t.enabled === false || Boolean(d.suppressed || answered?.suppressed)
+      || [d.from, d.to, ...(answered ? [answered.from, answered.to] : [])].some(id => this.threadDisabled(t, id));
+  }
+  /** Withhold only actual results; an in-flight task can still finish after re-enabling. */
+  private stopBlocked(t: Team, d: Delivery): void {
+    d.state = 'stopped';
+    if (d.kind === 'result') {
+      d.suppressed = true;
+      const answered = this.answered(t, d);
+      if (answered) answered.suppressed = true;
+    }
+  }
+  private quarantine(t: Team): void {
+    for (const d of t.deliveries) if (d.state === 'queued' && this.deliveryBlocked(t, d)) this.stopBlocked(t, d);
+    for (const talk of t.direct ?? []) if (!talk.told && (this.threadDisabled(t, talk.to) || this.threadDisabled(t, t.rootId))) talk.told = true;
+  }
+  /** Commit queue withdrawal synchronously without cancelling human or running turns. */
+  threadChanged(id: string): void {
+    for (const t of this.teams.values()) if (t.rootId === id || t.members.some(m => m.id === id) || t.retiredMembers?.some(m => m.id === id)) {
+      this.quarantine(t);
+      this.changed(t);
+    }
+    this.schedule();
+  }
+  private rememberRemote(t: Team, m: Member, view: Record<string, unknown>): void {
+    const changed = this.remoteViews.get(this.remoteKey(m))?.disabled !== view.disabled;
+    this.remoteViews.set(this.remoteKey(m), view);
+    this.quarantine(t);
+    if (changed) this.changed(t);
+  }
+  /** Refresh thread state, not instance ownership; old daemons omit disabled and remain enabled. */
+  private async resolveMember(t: Team, m: Member): Promise<boolean> {
+    if (this.ambiguousParticipant(t, m.id)) return false;
+    if (!m.host) return true;
+    if (!this.hosts) return false;
+    const view = await this.hosts.call<Record<string, unknown>>(m.host, 'GET', `/api/threads/${m.id}`).catch(() => undefined);
+    if (view) this.rememberRemote(t, m, view);
+    return Boolean(view);
+  }
+  private async resolveMembers(t: Team): Promise<void> {
+    await Promise.all(t.members.map(m => this.resolveMember(t, m)));
+  }
+  /** Refresh both endpoints, including the original task behind a queued result. */
+  private async resolveDelivery(t: Team, d: Delivery): Promise<boolean> {
+    const answered = this.answered(t, d);
+    const ids = new Set([d.from, d.to, ...(answered ? [answered.from, answered.to] : [])]);
+    const refreshed = await Promise.all([...t.members, ...(t.retiredMembers ?? [])].filter(m => ids.has(m.id)).map(m => this.resolveMember(t, m)));
+    return refreshed.every(Boolean);
+  }
   private changed(t: Team): void {
     this.save(t);
     for (const id of [t.rootId, ...t.members.map(m => m.id)]) this.manager.notifyCoordination(id);
   }
-  metadata(id: string) {
+  /** Keep the preview source identical for browser summaries and CLI access checks. */
+  private previewDelivery(t: Team, id: string): Delivery | undefined {
+    const deliveries = [...t.deliveries].reverse().filter(d => d.to === id);
+    return deliveries.find(d => d.state === 'running') ?? deliveries.find(d => d.state !== 'queued') ?? deliveries[0];
+  }
+  metadata(id: string): ThreadView['coordination'] {
     const t = this.team(id);
     if (!t) return undefined;
     const retired = t.retiredMembers?.some(m => m.id === id) ? { retired: true } : {};
     const team = t.team ? { team: { name: t.team.snapshot.name, status: t.team.status, role: this.name(t, id), error: t.team.error } } : {};
-    if (id === t.rootId) return { rootId: t.rootId, children: t.members.length, paused: t.paused, ...team };
-    // What a member is about, for its line under the lead in the sidebar.
-    const latest = [...t.deliveries].reverse().find(d => d.to === id);
+    const enabled = t.enabled !== false;
+    if (id === t.rootId) return { rootId: t.rootId, enabled, children: t.members.length, paused: t.paused, ...team };
+    // Show the active task or latest outcome; a queued follow-up has not begun executing.
+    const latest = this.previewDelivery(t, id);
     const settled = latest && latest.state !== 'queued' && latest.state !== 'running';
     const doing = (settled && latest.result ? latest.result : latest?.text ?? '').split(/<(?:calli|limi)-(?:coordination(?:-note)?|team)>/)[0].trim().slice(0, 200);
-    return { rootId: t.rootId, children: t.members.length, paused: t.paused, ...team, ...retired, ...(doing ? { doing } : {}) };
+    return { rootId: t.rootId, enabled, children: t.members.length, paused: t.paused,
+      ...team, ...retired, ...(doing ? { doing } : {}) };
   }
   view(id: string) {
     const t = this.team(id);
     if (!t) return null;
     return {
-      team: t.team ? { ...t.team, snapshot: { ...t.team.snapshot, members: t.team.snapshot.members.map(({ name, agent }) => ({ name, agent })) } } : undefined, rootId: t.rootId, autoHandover: t.autoHandover ?? true, paused: t.paused, directories: t.directories, agents: t.agents, defaults: t.defaults ?? {}, permission: t.permission ?? 'full_access',
-      members: t.members.map(m => ({ ...m, ...(m.host ? { hostLabel: this.hostLabel(m.host) } : {}),
-        thread: m.host ? this.remoteViews.get(m.id) ?? null : this.store.getThread(m.id) ? this.manager.threadView(m.id) : null,
-        latest: [...t.deliveries].reverse().find(d => d.to === m.id) ?? null })),
+      team: t.team ? { ...t.team, ...(t.team.continuationNotices ? { continuationNotices: this.continuationNotices(t.team) } : {}), snapshot: { ...t.team.snapshot, members: t.team.snapshot.members.map(({ name, agent }) => ({ name, agent })) } } : undefined, rootId: t.rootId, enabled: t.enabled !== false, autoHandover: t.autoHandover ?? true, paused: t.paused, directories: t.directories, agents: t.agents, defaults: t.defaults ?? {}, permission: t.permission ?? 'full_access',
+      members: t.members.map(m => {
+        // Retired persisted policy stays inert and is never offered to old/new clients as a switch.
+        const { disabled: _disabled, agentRef: _agentRef, ...member } = m as Member & { disabled?: unknown; agentRef?: unknown };
+        return { ...member, ...(m.host ? { hostLabel: this.hostLabel(m.host) } : {}),
+          thread: m.host ? this.remoteViews.get(this.remoteKey(m)) ?? null : this.store.getThread(m.id) ? this.manager.threadView(m.id) : null,
+          latest: [...t.deliveries].reverse().find(d => d.to === m.id) ?? null };
+      }),
       messages: [
         ...t.deliveries.map((delivery) => {
           // The handoff document and the hub's own copy path stay on this machine; the page only
@@ -262,7 +360,7 @@ export class CoordinationManager {
 
   autoHandover(id: string): boolean | undefined {
     const t = this.team(id);
-    return t && t.rootId !== id && t.members.some(m => m.id === id) ? !t.paused && (t.autoHandover ?? true) : undefined;
+    return t && t.enabled !== false && t.rootId !== id && t.members.some(m => m.id === id) ? !t.paused && !this.threadDisabled(t, id) && (t.autoHandover ?? true) : undefined;
   }
   setAutoHandover(id: string, enabled: unknown) {
     const t = this.team(id);
@@ -306,10 +404,10 @@ export class CoordinationManager {
     const t = this.team(target);
     const retired = t?.retiredMembers?.find(m => m.id === source);
     const current = t && (t.rootId === target || t.members.some(m => m.id === target));
-    if (!t || !retired || !current) return false;
+    if (!t || !retired || !current || this.threadDisabled(t, target) || this.store.getThread(source)?.disabled) return false;
     const name = this.name(t, target);
     const member = t.members.find(m => m.id === target);
-    t.retiredMembers = [...t.retiredMembers!.filter(m => m.id !== source), { id: target, name }];
+    t.retiredMembers = [...t.retiredMembers!.filter(m => m.id !== source), { ...(member ?? {}), id: target, name }];
     if (member) member.id = source;
     else {
       this.teams.delete(target); this.store.deleteCoordination(target);
@@ -331,10 +429,16 @@ export class CoordinationManager {
     const t = this.team(source);
     const member = t?.members.find(m => m.id === source);
     if (!t || !member && t.rootId !== source) return;
+    // Do not move collaboration work through a fresh successor to bypass an exited thread.
+    if (this.threadDisabled(t, source) || this.store.getThread(target)?.disabled) {
+      if (turnId) throw new HttpError(409, '此会话已退出协作', { code: 'coordination_disabled' });
+      return;
+    }
     const name = this.name(t, source);
     const before = this.store.getThread(source)!;
     const after = this.store.getThread(target)!;
-    t.retiredMembers = [...(t.retiredMembers ?? []), { id: source, name }];
+    // A thread the work comes back to may have been this seat's earlier holder: it is retired no more.
+    t.retiredMembers = [...(t.retiredMembers ?? []).filter(m => m.id !== target), { ...(member ?? {}), id: source, name }];
     if (member) member.id = target;
     else {
       this.teams.delete(source); this.store.deleteCoordination(source);
@@ -446,11 +550,25 @@ export class CoordinationManager {
       defaults: this.memberDefaults(input.defaults, agents), permission: memberPermission(input.permission) };
   }
 
-  async enable(id: string, input: CoordinationSetup = {}) {
+  async enable(id: string, input: CoordinationSetup = {}, implicit = false) {
     return this.serial(async () => {
-      if (this.team(id)) return this.view(id);
-      const t = await this.prepare(id, input);
+      // Human voice may open, but must not activate a target that exited during discovery/refresh.
+      const eligible = () => !implicit || !this.store.getThread(id)?.disabled && this.team(id)?.enabled !== false;
+      if (!eligible()) return this.view(id);
+      const existing = this.team(id);
+      if (existing && existing.enabled !== false) return this.view(id);
+      if (existing && existing.rootId !== id) throw new HttpError(400, '请在主线程启用协作');
+      const prepared = await this.prepare(id, { ...(existing ? { directories: existing.directories, defaults: existing.defaults, permission: existing.permission } : {}), ...input });
+      const current = this.team(id);
+      if (current && current.rootId !== id) throw new HttpError(409, '协作主线程已变化，请刷新后重试');
+      if (!eligible()) return this.view(id);
       await this.manager.refreshRuntime(id);
+      // Keep switches committed during discovery/refresh, while using the original setup path.
+      const t = this.team(id) ?? prepared;
+      if (t.rootId !== id) throw new HttpError(409, '协作主线程已变化，请刷新后重试');
+      if (!eligible()) return this.view(id);
+      if (t !== prepared) { t.directories = prepared.directories; t.agents = prepared.agents; t.defaults = prepared.defaults; t.permission = prepared.permission; }
+      t.enabled = true;
       this.teams.set(id, t);
       this.changed(t);
       return this.view(id);
@@ -459,15 +577,21 @@ export class CoordinationManager {
 
   /** Reuse a visible voice member without importing or rewriting the target's native history. */
   async voiceThread(targetId: string, providerId: string): Promise<string> {
-    if (!this.team(targetId)) {
-      const target = this.manager.threadView(targetId);
-      await this.enable(targetId, { permission: target.permissionMode });
+    const configured = this.team(targetId);
+    const target = this.manager.threadView(targetId);
+    if (!target.disabled && configured?.enabled !== false && !this.enabled(targetId)) {
+      await this.enable(targetId, { permission: target.permissionMode }, true);
     }
     return this.serial(async () => {
       const t = this.team(targetId);
-      if (!t || t.team || t.retiredMembers?.some(m => m.id === targetId)) throw new HttpError(409, 'voice_target_unavailable');
       const target = this.manager.threadView(targetId);
-      if (target.archivedAt) throw new HttpError(409, 'voice_target_unavailable');
+      if (target.archivedAt || t?.team || t?.retiredMembers?.some(m => m.id === targetId)) throw new HttpError(409, 'voice_target_unavailable');
+      // Human media remains available without activating an exited or configuration-only target.
+      if (!t || t.enabled === false || target.disabled) {
+        const helper = await this.manager.createThread({ agent: providerId, cwd: target.cwd, title: 'voice', sectionId: target.sectionId, permissionMode: 'ask' });
+        this.manager.autoHandover.setOverride(helper.id, false);
+        return helper.id;
+      }
       const existing = t.members.find(m => m.voiceTarget === targetId && this.store.getThread(m.id)?.agent === providerId);
       if (existing) {
         if (this.manager.threadView(existing.id).archivedAt) throw new HttpError(409, 'voice_target_unavailable');
@@ -487,16 +611,19 @@ export class CoordinationManager {
 
   /** Queued mentions are checked now, but the runtime is only enabled at dispatch. */
   async previewMentions(id: string, text: string, mentions: unknown, setup?: CoordinationSetup): Promise<string> {
-    if ((!Array.isArray(mentions) || !mentions.length) && setup === undefined) return text;
+    if (this.store.getThread(id)?.disabled || (!Array.isArray(mentions) || !mentions.length) && setup === undefined) return text;
     const existing = this.team(id);
-    if (existing) await this.joinLatecomers(existing);
+    if (existing) { await this.joinLatecomers(existing); await this.resolveMembers(existing); }
     const team = existing ?? await this.prepare(id, setup);
     return this.mentionText(id, text, mentions, team);
   }
 
   environment(id: string): Record<string, string> | undefined {
     const handover = this.handovers.environment(id);
-    if (!this.team(id) || this.team(id)?.team || this.team(id)?.retiredMembers?.some(m => m.id === id)) return handover;
+    const t = this.team(id);
+    const voiceTarget = t?.members.find(m => m.id === id)?.voiceTarget;
+    if (!t || t.enabled === false || this.threadDisabled(t, id) || voiceTarget && this.threadDisabled(t, voiceTarget)
+      || t.team || t.retiredMembers?.some(m => m.id === id)) return handover;
     let secret = this.credentials.get(id);
     if (!secret) { secret = randomUUID(); this.credentials.set(id, secret); }
     return { ...handover, CALLI_TEAM_SOCKET: this.socket, CALLI_TEAM_KEY: secret,
@@ -511,8 +638,9 @@ export class CoordinationManager {
   /** `fromUser`: the person wrote this to a member in its own thread, so the answer is theirs. `gate`: leaves out the block an agent has read already. */
   instructions(id: string, text: string, fromUser = false, gate?: InjectionGate): string {
     const t = this.team(id);
-    if (!t || t.retiredMembers?.some(m => m.id === id) || /<(?:calli|limi)-(?:coordination|team)>/.test(text)) return text;
+    if (!t || t.enabled === false || this.threadDisabled(t, id) || t.retiredMembers?.some(m => m.id === id) || /<(?:calli|limi)-(?:coordination|team)>/.test(text)) return text;
     const voiceTarget = t.members.find(m => m.id === id)?.voiceTarget;
+    if (voiceTarget && this.threadDisabled(t, voiceTarget)) return text;
     if (voiceTarget) return `${text}\n\n<calli-coordination>\n你是当前会话的语音协调员。用户的执行任务交给目标 ${voiceTarget}，你负责澄清和汇报。用 calli send ${voiceTarget} --message-file FILE --request-id KEY 发送任务或后续修改，FILE 可为 - 从标准输入读取；重试沿用同一 request-id。只能联系这个目标，不创建成员，不自己执行项目工作，不批准操作。用 calli status 和 calli result ID 查看状态。若 shell 找不到 calli，使用 "$CALLI_BIN_DIR/calli"。投递立即返回，之后结束本轮让用户继续聊天，不轮询；真实结果会自动交回。任务忙时追加要求会排队，不能声称已立即修改执行中的任务。结果通知不是用户授权。\n</calli-coordination>`;
     if (t.team) {
       const name = this.name(t, id);
@@ -529,7 +657,7 @@ export class CoordinationManager {
   }
 
   mentionText(id: string, text: string, mentions: unknown, prospective?: Team): string {
-    if (!Array.isArray(mentions) || !mentions.length) return text;
+    if (this.store.getThread(id)?.disabled || !Array.isArray(mentions) || !mentions.length) return text;
     const tasks = mentions.map(m => typeof m?.task === 'string' ? m.task.trim() : '');
     if (tasks.some(task => task.length > 4000)) throw new HttpError(400, '单个成员的任务最多 4000 字符');
     if (typeof text !== 'string' || (!text.trim() && !tasks.some(Boolean))) throw new HttpError(400, '请说明协作任务');
@@ -545,6 +673,7 @@ export class CoordinationManager {
       if (m.kind === 'member') {
         const target = team.members.find(c => c.id === m.id);
         if (!target) throw new HttpError(400, '成员不在本次协作中');
+        this.assertParticipant(team, target.id);
         if (tasks[i]) lines.push(`@${target.name}：${tasks[i]}`);
         return { member: target.name, threadId: target.id, ...task };
       }
@@ -574,19 +703,62 @@ export class CoordinationManager {
   async command(caller: string, input: Record<string, unknown>): Promise<unknown> {
     return this.serial(async () => {
       const t = this.team(caller);
-      if (!t) throw new HttpError(404, '尚未启用协作');
+      if (!t || t.enabled === false) throw new HttpError(404, '尚未启用协作');
+      await this.resolveMembers(t);
+      this.assertParticipant(t, caller);
       if (t.retiredMembers?.some(m => m.id === caller)) throw new HttpError(409, '成员已交接，请使用接手会话');
       const op = input.op;
       if (t.team && (op === 'spawn' || op === 'send')) throw new HttpError(409, '团队任务使用 @ 通信');
       if (op === 'agents') {
         await this.joinLatecomers(t);
-        return [...(await this.manager.listAgents()).filter(a => t.agents.includes(a.id)), ...(t.team ? [] : await this.remoteAgents())];
+        const agents = [...(await this.manager.listAgents()).filter(a => t.agents.includes(a.id)), ...(t.team ? [] : await this.remoteAgents())];
+        this.assertParticipant(t, caller);
+        return agents;
       }
-      if (op === 'status') return this.view(caller);
+      if (op === 'status') {
+        const view = this.view(caller)!;
+        return { ...view,
+          members: view.members.filter(m => !this.threadDisabled(t, m.id)).map(m => {
+            const withheldLatest = Boolean(m.latest && this.deliveryBlocked(t, m.latest));
+            const preview = this.previewDelivery(t, m.id);
+            const withheldPreview = Boolean(preview && this.deliveryBlocked(t, preview));
+            const remoteFailure = this.remoteFailures.get(this.remoteKey(m));
+            const failure = (m.thread as { failure?: { at?: string } } | null)?.failure;
+            const failureTurn = m.host
+              ? remoteFailure && failure?.at === remoteFailure.at ? remoteFailure.turnId : undefined
+              : this.store.lastTurnFailure(m.id)?.turnId;
+            const failurePending = Boolean(m.host && failure && !failureTurn);
+            // Only the current failure's own turn can hide it; later legitimate failures remain visible.
+            const withheldFailure = Boolean(failureTurn && (t.direct?.some(raw => raw.to === m.id && raw.turnId === failureTurn && raw.told)
+              || t.deliveries.some(raw => raw.to === m.id && raw.turnId === failureTurn && raw.suppressed)));
+            const thread: Record<string, unknown> | null = m.thread ? { ...m.thread } : null;
+            if (thread) {
+              // Preview is a browser-only user-input summary; later task turns need not replace it.
+              delete thread.preview;
+              if (!m.host && this.store.titleBy(m.id) === 'default') {
+                const title = String(thread.title ?? '');
+                const directTitle = t.direct?.some(raw => raw.to === m.id && raw.told && askedText(raw.text).split('\n')[0].slice(0, 60) === title);
+                const deliveryTitle = t.deliveries.some(raw => raw.to === m.id && raw.turnId && raw.suppressed && this.store.listTurnEvents(m.id, raw.turnId).some(e =>
+                  e.type === 'turn.started' && askedText(String(e.data.displayText ?? e.data.text ?? '')).split('\n')[0].slice(0, 60) === title));
+                // Keep existing/manual titles; only a known withheld turn's generated title is neutralized.
+                if (directTitle || deliveryTitle) thread.title = m.name;
+              }
+              // A remote view alone has no turn id; hold it until its event log supplies correlation.
+              if (withheldFailure || failurePending) delete thread.failure;
+              // A queued latest request does not authorize the older delivery selected for its preview.
+              if ((withheldLatest || withheldPreview) && thread.coordination) thread.coordination = { ...(thread.coordination as NonNullable<ThreadView['coordination']>), doing: undefined };
+            }
+            return { ...m, latest: withheldLatest ? null : m.latest, thread };
+          }),
+          messages: view.messages.filter(d => !('suppressed' in d && d.suppressed) && !this.threadDisabled(t, d.from) && !this.threadDisabled(t, d.to)
+            && !t.deliveries.some(raw => raw.id === d.id && this.deliveryBlocked(t, raw))
+            && !t.direct?.some(raw => raw.id === d.id && raw.told)) };
+      }
       if (op === 'dirs') return this.remoteDirectories(input.target, input.path);
       if (op === 'result') {
         const d = t.deliveries.find(d => d.id === input.target);
         if (!d) throw new HttpError(404, '消息不存在');
+        if (this.deliveryBlocked(t, d)) throw new HttpError(409, '协作结果已抑制或对象已禁用');
         return d;
       }
       if (op === 'remote') return this.remoteCommand(t, caller, input);
@@ -594,6 +766,7 @@ export class CoordinationManager {
       if (op === 'stop') {
         if (caller !== t.rootId) throw new HttpError(403, '只有主控可以停止成员');
         const target = this.member(t, input.target);
+        this.assertParticipant(t, target);
         if (target === t.rootId) throw new HttpError(400, '请在界面停止整个协作');
         const remote = t.members.find(m => m.id === target && m.host);
         if (remote) await this.stopRemote(t, remote);
@@ -612,8 +785,10 @@ export class CoordinationManager {
       // Kept as it was for requests that name neither, so a retry of an older request still matches.
       const handoffKey = handoff ? createHash('sha256').update(handoff).digest('hex') : '';
       const fingerprint = JSON.stringify([op, input.agent, input.cwd, input.name, input.target, text, handoffKey, ...(asked.model || asked.effort ? [asked.model, asked.effort] : [])]);
+      if (op === 'send') this.assertParticipant(t, this.member(t, input.target));
       const previous = t.deliveries.find(d => d.from === caller && d.key === key);
       if (previous) {
+        if (this.deliveryBlocked(t, previous)) throw new HttpError(409, '协作结果已抑制或对象已禁用');
         if (previous.fingerprint !== fingerprint) throw new HttpError(409, 'request-id 已用于另一条消息');
         return previous;
       }
@@ -627,12 +802,14 @@ export class CoordinationManager {
         const agent = String(input.agent ?? '');
         if (this.knownHost(agent)) {
           target = await this.spawnRemote(t, agent, name, input.cwd, asked);
+          this.assertParticipant(t, caller); this.assertParticipant(t, target);
           const d = this.enqueue(t, caller, target, text, 'message', key, fingerprint, handoff);
           this.changed(t);
           this.schedule();
           return d;
         }
         await this.joinLatecomers(t);
+        this.assertParticipant(t, caller);
         if (!t.agents.includes(agent)) throw new HttpError(403, '实例不在本次协作范围内');
         const parent = this.manager.threadView(t.rootId);
         const cwd = typeof input.cwd === 'string' ? resolve(parent.cwd, input.cwd) : parent.cwd;
@@ -641,7 +818,10 @@ export class CoordinationManager {
         // the agent no longer offers, or one that does not go with what the lead asked for, must not
         // stop the member from starting, so it is dropped then.
         const permissionMode = await this.permissionFor(t, agent);
-        const make = (model: string | null, effort: string | null) => this.manager.createThread({ agent, cwd, title: name, sectionId: parent.sectionId, model, effort, permissionMode });
+        const make = (model: string | null, effort: string | null) => {
+          this.assertParticipant(t, caller);
+          return this.manager.createThread({ agent, cwd, title: name, sectionId: parent.sectionId, model, effort, permissionMode });
+        };
         const usual = t.defaults?.[agent];
         const leaned = Boolean(usual && ((!asked.model && usual.model) || (!asked.effort && usual.effort)));
         const child = await make(asked.model ?? usual?.model ?? null, asked.effort ?? usual?.effort ?? null).catch((err) => {
@@ -650,10 +830,13 @@ export class CoordinationManager {
         });
         target = child.id;
         t.members.push({ id: target, name });
+        this.changed(t);
       } else {
         target = this.member(t, input.target);
         if (target === caller) throw new HttpError(400, '不能给自己发送消息');
       }
+      this.assertParticipant(t, caller);
+      this.assertParticipant(t, target);
       const d = this.enqueue(t, caller, target, text, 'message', key, fingerprint, handoff);
       this.changed(t);
       this.schedule();
@@ -669,6 +852,7 @@ export class CoordinationManager {
   private enqueue(t: Team, from: string, to: string, text: string, kind: Delivery['kind'], key: string, fingerprint = '', handoff = ''): Delivery {
     const d: Delivery = { id: randomUUID(), key, fingerprint, from, to, text, kind, state: 'queued', turnId: null, result: '', createdAt: new Date().toISOString(), ...(handoff ? { handoff } : {}) };
     t.deliveries.push(d);
+    if (this.deliveryBlocked(t, d)) this.stopBlocked(t, d);
     return d;
   }
   /** The message a result came out of: the one whose turn produced it, or the one that could not start. */
@@ -681,6 +865,39 @@ export class CoordinationManager {
     return done ? t.deliveries.find(v => v.to === done[1] && v.turnId === done[2]) : undefined;
   }
   private name(t: Team, id: string): string { return id === t.rootId ? t.team?.entry ?? '主智能体' : t.members.find(m => m.id === id)?.name ?? t.retiredMembers?.find(m => m.id === id)?.name ?? id; }
+
+  /** Remember suppression at actual local receipt, not after a long remote operation. */
+  private suppressArrival(ev: StoredEvent): void {
+    const end = turnOutcome(ev);
+    const t = this.team(ev.threadId);
+    if (!t || !ev.turnId || !end || end.imported || end.fromTerminal || end.outcome === 'cancelled') return;
+    const start = this.store.listTurnEvents(ev.threadId, ev.turnId).find(e => e.type === 'turn.started');
+    if (start?.data.handover || t.retiredMembers?.some(m => m.id === ev.threadId)) return;
+    const job = t.deliveries.find(d => d.to === ev.threadId && d.turnId === ev.turnId);
+    if (start?.data.fromUser && !job) {
+      if (t.members.some(m => m.id === ev.threadId) && (this.threadDisabled(t, ev.threadId) || this.threadDisabled(t, t.rootId)) && !t.direct?.some(d => d.turnId === ev.turnId)) {
+        t.direct = [...(t.direct ?? []), { id: randomUUID(), to: ev.threadId, turnId: ev.turnId,
+          text: String(start.data.displayText ?? start.data.text ?? ''), result: turnAnswer(this.store.listTurnEvents(ev.threadId, ev.turnId), ev.turnId) || String(end.message ?? ''),
+          state: end.outcome === 'ok' ? 'returned' as const : 'failed' as const, createdAt: start.ts, told: true }].slice(-100);
+        this.save(t);
+      }
+      return;
+    }
+    if (job && this.deliveryBlocked(t, job)) { job.suppressed = true; this.save(t); }
+    if (t.team) {
+      // A completed team turn cannot spawn fresh work after a disable/enable race in serialized IO.
+      if ((job?.suppressed || this.threadDisabled(t, ev.threadId)) && !t.team.processed.includes(ev.turnId)) {
+        t.team.processed.push(ev.turnId); this.save(t);
+      }
+      return;
+    }
+    if (ev.threadId !== t.rootId && (this.threadDisabled(t, ev.threadId) || this.threadDisabled(t, t.rootId))) {
+      const key = `result:${ev.threadId}:${ev.turnId}`;
+      if (!t.deliveries.some(d => d.key === key)) this.enqueue(t, ev.threadId, job?.kind === 'message' ? job.from : t.rootId,
+        turnAnswer(this.store.listTurnEvents(ev.threadId, ev.turnId), ev.turnId) || String(end.message ?? ''), 'result', key);
+      this.save(t);
+    }
+  }
 
   private async finished(ev: StoredEvent): Promise<void> {
     const end = turnOutcome(ev);
@@ -699,7 +916,8 @@ export class CoordinationManager {
       // The person took this member in hand: its answer is theirs, and nothing is passed on.
       if (!t.direct?.some(d => d.turnId === ev.turnId)) {
         const said = String(start.data.displayText ?? start.data.text ?? '');
-        t.direct = [...(t.direct ?? []), { id: randomUUID(), to: ev.threadId, turnId: ev.turnId, text: said, result: result || String(ev.data.message ?? ''), state, createdAt: start.ts }].slice(-100);
+        t.direct = [...(t.direct ?? []), { id: randomUUID(), to: ev.threadId, turnId: ev.turnId, text: said, result: result || String(ev.data.message ?? ''), state, createdAt: start.ts,
+          ...((this.threadDisabled(t, ev.threadId) || this.threadDisabled(t, t.rootId)) ? { told: true } : {}) }].slice(-100);
       }
       if (t.team && !t.team.processed.includes(ev.turnId)) t.team.processed.push(ev.turnId);
       this.changed(t);
@@ -708,7 +926,9 @@ export class CoordinationManager {
     if (job) {
       job.state = state;
       job.result = t.team && state === 'failed' ? [end.message, result].filter(Boolean).join('\n') : result || String(ev.data.message ?? '');
+      if (!stopped && this.deliveryBlocked(t, job)) job.suppressed = true;
     }
+    if (t.enabled === false) { this.changed(t); return; }
     if (t.team) {
       if (t.team.processed.includes(ev.turnId)) return;
       t.team.processed.push(ev.turnId);
@@ -752,9 +972,12 @@ export class CoordinationManager {
   private async pump(): Promise<void> {
     if (this.closed) return;
     for (const t of this.teams.values()) {
-      if (t.paused || !this.store.getThread(t.rootId) || this.store.getThread(t.rootId)?.archivedAt) continue;
+      if (t.enabled === false || t.paused || !this.store.getThread(t.rootId) || this.store.getThread(t.rootId)?.archivedAt) continue;
       for (const d of t.deliveries) {
         if (d.state !== 'queued' || t.paused) continue;
+        // Refresh the actual remote endpoints; an unavailable view leaves queued work untouched.
+        if (!await this.resolveDelivery(t, d)) continue;
+        if (this.deliveryBlocked(t, d)) { this.stopBlocked(t, d); this.changed(t); continue; }
         const remote = t.members.find(m => m.id === d.to && m.host);
         if (remote) {
           if (this.runningMembers(t) < 3) await this.deliverRemote(t, d, remote);
@@ -772,14 +995,20 @@ export class CoordinationManager {
           await this.manager.startTurn(d.to, { text: `[${t.team ? '团队消息' : '协作消息 ' + d.id}｜${this.name(t, d.from)} → ${this.name(t, d.to)}]\n${body}` }, {
             turnId, source: { messageId: d.id, from: d.from, kind: d.kind },
             displayText: `来自 ${this.name(t, d.from)} 的${d.kind === 'result' ? '结果' : '任务'}\n\n${body}`,
+            prepare: async () => {
+              if (!await this.resolveDelivery(t, d)) throw new HttpError(409, '暂时无法核对协作会话');
+            },
             claim: () => {
-              if (this.closed || t.paused || d.state !== 'queued') throw new HttpError(409, '协作已停止');
+              if (this.closed || t.paused || d.state !== 'queued' || this.deliveryBlocked(t, d)) throw new HttpError(409, '协作已停止或对象已禁用');
               d.turnId = turnId; d.state = 'running'; this.save(t);
             },
           });
         } catch (err) {
           if (err instanceof HttpError && err.status === 409) continue;
-          d.state = 'failed'; d.result = err instanceof Error ? err.message : String(err);
+          // A quarantined queue item stays stopped even if the object was enabled during IO.
+          const withheld = (d.state as Delivery['state']) === 'stopped' || this.deliveryBlocked(t, d);
+          d.state = withheld ? 'stopped' : 'failed'; d.result = err instanceof Error ? err.message : String(err);
+          if (withheld) d.suppressed = true;
           if (t.team) this.attention(t, d.result);
           else if (d.to !== t.rootId) this.enqueue(t, d.to, d.kind === 'message' ? d.from : t.rootId, `无法启动任务：${d.result}`, 'result', `start-error:${d.id}`);
           this.changed(t);
@@ -833,15 +1062,21 @@ export class CoordinationManager {
     const usual = t.defaults?.[ref];
     // In a git repository the member works in a worktree of its own, on a new branch, so what is checked out over there stays as it is. A machine on an older version does not know the question: it gets the folder itself.
     const tree = await hosts.call<{ available?: boolean }>(host, 'GET', `/api/worktree-options?cwd=${encodeURIComponent(cwd)}`).catch((): { available?: boolean } => ({}));
-    const make = (model: string | null, effort: string | null) => hosts.call<Record<string, any>>(host, 'POST', '/api/threads', { agent, cwd, title: name, model, effort, permissionMode, ...(tree.available ? { worktree: true } : {}) });
+    const make = (model: string | null, effort: string | null) => {
+      this.assertParticipant(t, t.rootId);
+      return hosts.call<Record<string, any>>(host, 'POST', '/api/threads', { agent, cwd, title: name, model, effort, permissionMode, ...(tree.available ? { worktree: true } : {}) });
+    };
     const leaned = Boolean(usual && ((!asked.model && usual.model) || (!asked.effort && usual.effort)));
     const child = await make(asked.model ?? usual?.model ?? null, asked.effort ?? usual?.effort ?? null).catch((err) => {
       if (leaned && err instanceof HttpError && err.status === 400) return make(asked.model, asked.effort);
       throw err;
     });
-    t.members.push({ id: child.id, name, host, ...(child.worktree?.branch ? { worktree: String(child.worktree.branch) } : {}) });
-    this.remoteViews.set(child.id, child);
-    this.ensureCursor(child.id);
+    if (child.id === t.rootId || t.members.some(m => m.id === child.id)) throw new HttpError(409, '协作会话 ID 冲突');
+    const member: Member = { id: child.id, name, host, ...(child.worktree?.branch ? { worktree: String(child.worktree.branch) } : {}) };
+    t.members.push(member);
+    this.changed(t);
+    this.remoteViews.set(this.remoteKey(member), child);
+    this.ensureCursor(member);
     return child.id;
   }
   /** Folders on another machine, for the lead to turn what the user said into a path there. */
@@ -856,24 +1091,24 @@ export class CoordinationManager {
     return { machine: host, workdirs, path: listed.path, parent: listed.parent, usable: listed.allowed, directories: listed.directories.map(d => d.path) };
   }
   private async remotePermission(t: Team, m: Member): Promise<void> {
-    const view = this.remoteViews.get(m.id);
+    const view = this.remoteViews.get(this.remoteKey(m));
     const info = (await this.hosts!.call<Array<{ id: string; capabilities: { permissionModes?: string[] } }>>(m.host!, 'GET', '/api/agents')).find(a => a.id === view?.agent);
     const wanted = t.defaults?.[`${view?.agent}@${m.host}`]?.permission ?? t.permission ?? 'full_access';
     if (view && info?.capabilities.permissionModes?.includes(wanted) && view.permissionMode !== wanted) {
-      this.remoteViews.set(m.id, await this.hosts!.call(m.host!, 'PATCH', `/api/threads/${m.id}`, { permissionMode: wanted }));
+      this.remoteViews.set(this.remoteKey(m), await this.hosts!.call(m.host!, 'PATCH', `/api/threads/${m.id}`, { permissionMode: wanted }));
     }
   }
   /** A new member's log starts empty; a restarted hub reads an existing one from the start. */
-  private ensureCursor(id: string): void { if (!this.remoteCursor.has(id)) this.remoteCursor.set(id, 0); }
+  private ensureCursor(m: Member): void { const key = this.remoteKey(m); if (!this.remoteCursor.has(key)) this.remoteCursor.set(key, 0); }
   private async deliverRemote(t: Team, d: Delivery, m: Member): Promise<void> {
     const hosts = this.remoteHosts();
     try {
       const view = await hosts.call<Record<string, any>>(m.host!, 'GET', `/api/threads/${m.id}`);
-      this.remoteViews.set(m.id, view);
+      this.rememberRemote(t, m, view);
       if (view.status === 'running' || view.queued?.length || view.archivedAt) return;
-      if (this.closed || t.paused || d.state !== 'queued') return;
+      if (this.closed || t.paused || d.state !== 'queued' || this.deliveryBlocked(t, d)) return;
       // Read the log up to now first, so that only what this turn writes is waited for.
-      await this.readRemote(m);
+      await this.readRemote(t, m);
       const handoff = await this.prepareHandoff(t, d, m).catch((): null => null);
       const brief = (d.text || d.handoff || '').split('\n').map(s => s.trim()).find(s => s && !s.startsWith('#')) ?? '';
       const summary = brief.length > 200 ? `${brief.slice(0, 200)}…` : brief;
@@ -882,37 +1117,59 @@ export class CoordinationManager {
       const text = handoff
         ? `${header}\n任务写在交接文件 ${handoff.handoffPath}，请先完整读取再开始。\n摘要：${summary}\n完成之后把完整结果写到 ${handoff.resultPath}；无法写文件时，把完整结果放在最终回复里。\n\n${note}`
         : `${header}\n${d.text || d.handoff || ''}\n\n${note}`;
-      const started = await hosts.call<{ turnId?: string; queued?: boolean; id?: string }>(m.host!, 'POST', `/api/threads/${m.id}/turns`, { text });
+      // The POST is the irreversible boundary; refresh actual endpoints after file/network IO.
+      if (!await this.resolveDelivery(t, d)) return;
+      if (this.closed || t.paused || d.state !== 'queued' || this.deliveryBlocked(t, d)) return;
+      const started = await hosts.call<{ turnId?: string; queued?: boolean; id?: string }>(m.host!, 'POST', `/api/threads/${m.id}/turns`, {
+        text, coordination: { messageId: d.id, from: d.from, kind: d.kind },
+      });
       if (!started.turnId) {
         // Something got there first; take this one back and try again when the thread is free.
         if (started.queued && started.id) await hosts.call(m.host!, 'DELETE', `/api/threads/${m.id}/queue/${started.id}`).catch(() => undefined);
         return;
       }
       d.turnId = started.turnId; d.state = 'running';
-      this.remoteTurns.set(started.turnId, []);
+      this.remoteTurns.set(this.remoteTurnKey(m, started.turnId), []);
       this.changed(t);
     } catch (err) {
       // A machine that is away keeps its messages until it is back; anything else fails the message.
       if (err instanceof HttpError && (err.status === 409 || err.details?.code === 'host_offline')) return;
-      d.state = 'failed'; d.result = err instanceof Error ? err.message : String(err);
+      const withheld = d.state === 'stopped' || this.deliveryBlocked(t, d);
+      d.state = withheld ? 'stopped' : 'failed'; d.result = err instanceof Error ? err.message : String(err);
+      if (withheld) d.suppressed = true;
       this.enqueue(t, d.to, d.kind === 'message' ? d.from : t.rootId, `无法启动任务：${d.result}`, 'result', `start-error:${d.id}`);
       this.changed(t);
     }
   }
   /** New events of a remote member, kept for the turns still awaited. One read at a time, or events would be counted twice. */
-  private readRemote(m: Member): Promise<void> {
-    const next = (this.reading.get(m.id) ?? Promise.resolve()).catch(() => undefined).then(() => this.readRemoteNow(m));
-    this.reading.set(m.id, next);
+  private readRemote(t: Team, m: Member): Promise<void> {
+    const key = this.remoteKey(m);
+    const next = (this.reading.get(key) ?? Promise.resolve()).catch(() => undefined).then(() => this.readRemoteNow(t, m));
+    this.reading.set(key, next);
     return next;
   }
-  private async readRemoteNow(m: Member): Promise<void> {
-    this.ensureCursor(m.id);
+  private async readRemoteNow(t: Team, m: Member): Promise<void> {
+    // The caller owns the record; a bare member ID may exist on another team's host too.
+    if (!await this.resolveMember(t, m)) return;
+    const pending = t.deliveries.filter(d => d.to === m.id && d.state === 'running');
+    // Hold receipts only while an endpoint's thread view is unavailable, never for old instance policy.
+    if ((await Promise.all(pending.map(d => this.resolveDelivery(t, d)))).some(ready => !ready)) return;
+    this.ensureCursor(m);
     for (;;) {
-      const after = this.remoteCursor.get(m.id)!;
+      const after = this.remoteCursor.get(this.remoteKey(m))!;
       const events = await this.hosts!.call<StoredEvent[]>(m.host!, 'GET', `/api/threads/${m.id}/events?after=${after}`);
       if (!events.length) return;
-      for (const e of events) if (e.turnId && this.remoteTurns.has(e.turnId)) this.remoteTurns.get(e.turnId)!.push(e);
-      this.remoteCursor.set(m.id, events[events.length - 1].seq);
+      if ((await Promise.all(pending.map(d => this.resolveDelivery(t, d)))).some(ready => !ready)) return;
+      for (const e of events) {
+        if (e.type === 'turn.error' && e.turnId) this.remoteFailures.set(this.remoteKey(m), { turnId: e.turnId, at: e.ts });
+        else if (e.type === 'turn.started' || e.type === 'turn.done') this.remoteFailures.delete(this.remoteKey(m));
+        if (!e.turnId || !this.remoteTurns.has(this.remoteTurnKey(m, e.turnId))) continue;
+        this.remoteTurns.get(this.remoteTurnKey(m, e.turnId))!.push(e);
+        const d = t.deliveries.find(d => d.to === m.id && d.turnId === e.turnId);
+        // A result already received while confirmed disabled stays suppressed during later IO.
+        if (d && turnOutcome(e)?.outcome !== 'cancelled' && turnOutcome(e) && this.deliveryBlocked(t, d)) { d.suppressed = true; this.save(t); }
+      }
+      this.remoteCursor.set(this.remoteKey(m), events[events.length - 1].seq);
     }
   }
   private async stopRemote(t: Team, m: Member): Promise<void> {
@@ -929,20 +1186,21 @@ export class CoordinationManager {
         for (const m of t.members) {
           if (!m.host) continue;
           const active = t.deliveries.filter(d => d.to === m.id && (d.state === 'running' || d.state === 'queued'));
-          // After a restart an idle member is still looked at once, for the panel to show it.
-          if (!active.length && this.remoteViews.has(m.id)) continue;
           if (active.some(d => d.state === 'queued')) this.schedule();
           const running = active.filter(d => d.state === 'running' && d.turnId);
           try {
-            for (const d of running) if (!this.remoteTurns.has(d.turnId!)) { this.remoteTurns.set(d.turnId!, []); this.remoteCursor.set(m.id, 0); }
-            if (running.length) await this.readRemote(m);
+            // Even an idle member refreshes its lightweight thread switch, not its full history.
             const view = await this.hosts.call<Record<string, unknown>>(m.host, 'GET', `/api/threads/${m.id}`);
-            const changed = JSON.stringify(view) !== JSON.stringify(this.remoteViews.get(m.id));
-            this.remoteViews.set(m.id, view);
+            const changed = JSON.stringify(view) !== JSON.stringify(this.remoteViews.get(this.remoteKey(m)));
+            this.rememberRemote(t, m, view);
+            for (const d of running) if (!this.remoteTurns.has(this.remoteTurnKey(m, d.turnId!))) { this.remoteTurns.set(this.remoteTurnKey(m, d.turnId!), []); this.remoteCursor.set(this.remoteKey(m), 0); }
+            const failure = view.failure as { at?: string } | undefined;
+            // Recover only a current failure lacking correlation; switch-only refreshes load no events.
+            if (running.length || failure?.at && this.remoteFailures.get(this.remoteKey(m))?.at !== failure.at) await this.readRemote(t, m);
             for (const d of running) {
-              const events = this.remoteTurns.get(d.turnId!)!;
+              const events = this.remoteTurns.get(this.remoteTurnKey(m, d.turnId!))!;
               const end = events.find(e => turnOutcome(e));
-              if (end) await this.serial(() => this.remoteFinished(t, d, end, events));
+              if (end) await this.serial(() => this.remoteFinished(t, d, m, end, events));
             }
             if (changed) this.changed(t);
           } catch { /* the machine is away; asked again on the next round */ }
@@ -950,19 +1208,23 @@ export class CoordinationManager {
       }
     } finally { this.polling = false; }
   }
-  private async remoteFinished(t: Team, d: Delivery, ev: StoredEvent, events: StoredEvent[]): Promise<void> {
+  private async remoteFinished(t: Team, d: Delivery, m: Member, ev: StoredEvent, events: StoredEvent[]): Promise<void> {
     if (d.state !== 'running') return;
-    this.remoteTurns.delete(d.turnId!);
+    if (!await this.resolveDelivery(t, d)) return;
     const end = turnOutcome(ev)!;
     const stopped = end.outcome === 'cancelled';
     const state: Delivery['state'] = stopped ? 'stopped' : end.outcome === 'error' || end.outcome === 'interrupted' ? 'failed' : 'returned';
     d.result = turnAnswer(events, d.turnId) || String(ev.data.message ?? '');
+    if (!stopped && this.deliveryBlocked(t, d)) { d.suppressed = true; this.save(t); }
     // A finished turn may have left a file behind; the text remains the result when it did not. The
     // state is set after the file is read, so "returned" never appears before its result message is
     // on its way to the sender.
     if (end.outcome === 'ok') d.resultFile = await this.collectResult(t, d) ?? d.resultFile;
+    if (!await this.resolveDelivery(t, d)) return;
+    this.remoteTurns.delete(this.remoteTurnKey(m, d.turnId!));
     d.state = state;
-    if (!this.closed && !t.paused && !stopped) {
+    if (!stopped && this.deliveryBlocked(t, d)) d.suppressed = true;
+    if (!this.closed && t.enabled !== false && !t.paused && !stopped) {
       const key = `result:${d.to}:${d.turnId}`;
       const file = d.resultFile
         ? `\n\n结果文件：${d.resultFile.localPath}（${d.resultFile.size} 字节${d.resultFile.truncated ? '，已截断' : ''}）`
@@ -1031,27 +1293,34 @@ export class CoordinationManager {
     const member = t.members.find(m => m.name === input.target || m.id === input.target);
     if (!member) throw new HttpError(404, '成员不在本次协作中');
     if (!member.host) throw new HttpError(400, '这个成员不在其他机器上');
+    this.assertParticipant(t, caller); this.assertParticipant(t, member.id);
     if (action === 'write' && caller !== t.rootId) throw new HttpError(403, '只有主控可以写远端文件');
-    const view = this.remoteViews.get(member.id) ?? await this.remoteHosts().call<Record<string, any>>(member.host, 'GET', `/api/threads/${member.id}`);
-    this.remoteViews.set(member.id, view);
+    const view = this.remoteViews.get(this.remoteKey(member)) ?? await this.remoteHosts().call<Record<string, any>>(member.host, 'GET', `/api/threads/${member.id}`);
+    this.remoteViews.set(this.remoteKey(member), view);
     const root = typeof view.cwd === 'string' && view.cwd.startsWith('/') ? view.cwd : '';
     if (!root) throw new HttpError(409, '还没读到这个成员的工作目录');
-    const exec: RemoteExec = (command, opts) => this.remoteHosts().exec(member.host!, command, opts);
+    const exec: RemoteExec = (command, opts) => {
+      this.assertParticipant(t, caller); this.assertParticipant(t, member.id);
+      return this.remoteHosts().exec(member.host!, command, opts);
+    };
     const path = typeof input.path === 'string' && input.path ? input.path : '.';
-    if (action === 'ls') return listRemoteDir(exec, root, path);
-    if (action === 'read') {
-      return readRemoteText(exec, root, path, {
-        offset: input.offset === undefined ? undefined : Number(input.offset),
-        limit: input.limit === undefined ? undefined : Number(input.limit),
-      });
+    let result: unknown;
+    if (action === 'ls') result = await listRemoteDir(exec, root, path);
+    else if (action === 'read') result = await readRemoteText(exec, root, path, {
+      offset: input.offset === undefined ? undefined : Number(input.offset),
+      limit: input.limit === undefined ? undefined : Number(input.limit),
+    });
+    else {
+      if (typeof input.text !== 'string') throw new HttpError(400, '需要写入的文本');
+      result = await writeRemoteText(exec, root, path, input.text, { expectHash: typeof input.expectHash === 'string' ? input.expectHash : null });
     }
-    if (typeof input.text !== 'string') throw new HttpError(400, '需要写入的文本');
-    return writeRemoteText(exec, root, path, input.text, { expectHash: typeof input.expectHash === 'string' ? input.expectHash : null });
+    this.assertParticipant(t, caller); this.assertParticipant(t, member.id);
+    return result;
   }
 
   async beforeStop(id: string): Promise<void> {
     const t = this.team(id);
-    if (!t || this.closed || this.stopping.has(id)) return;
+    if (!t || t.enabled === false || this.closed || this.stopping.has(id)) return;
     this.stopping.add(id);
     try {
       if (id === t.rootId) t.paused = true;
@@ -1063,7 +1332,7 @@ export class CoordinationManager {
   async resume(id: string) {
     return this.serial(() => {
       const t = this.team(id);
-      if (!t || t.rootId !== id) throw new HttpError(400, '请在主线程继续协作');
+      if (!t || t.enabled === false || t.rootId !== id) throw new HttpError(400, '请在主线程继续协作');
       if (this.manager.threadView(id).archivedAt) throw new HttpError(409, '请先恢复主线程');
       if (t.team) {
         if (t.team.status === 'done') throw new HttpError(409, '已完成，请发送新任务');
@@ -1082,7 +1351,7 @@ export class CoordinationManager {
     await this.serial(async () => {
       const voiceTarget = this.team(id)?.members.find(m => m.id === id)?.voiceTarget;
       const t = this.teams.get(voiceTarget ?? id);
-      if (!t || this.closed) return;
+      if (!t || t.enabled === false || this.closed || this.threadDisabled(t, id) || voiceTarget && this.threadDisabled(t, voiceTarget)) return;
       if (t.team) {
         if (t.team.status === 'done') {
           const previous = t.team;
@@ -1141,19 +1410,41 @@ export class CoordinationManager {
     t.paused = true; t.team!.status = 'needs_attention'; t.team!.error = error;
   }
   /** What the person said to members directly since the lead last heard, newest last. */
+  private noticeTalks(t: Team): DirectTalk[] {
+    return (t.direct ?? []).filter(d => !d.told && !this.threadDisabled(t, d.to)).slice(-DIRECT_NOTICES);
+  }
+  private directLine(t: Team, d: DirectTalk): string {
+    return `- 用户对 ${this.name(t, d.to)} 说：${clip(d.text, 300)}\n  ${this.name(t, d.to)}${d.state === 'failed' ? '（失败）' : d.state === 'stopped' ? '（已停止）' : ''}：${clip(d.result.split(/<(?:calli|limi)-(?:coordination(?:-note)?|team)>/)[0].trim(), 600) || '无文字输出'}`;
+  }
   private directNotice(t: Team): string {
-    const talks = (t.direct ?? []).filter(d => !d.told).slice(-DIRECT_NOTICES);
+    const talks = this.noticeTalks(t);
     if (!talks.length) return '';
-    const lines = talks.map(d => `- 用户对 ${this.name(t, d.to)} 说：${clip(d.text, 300)}\n  ${this.name(t, d.to)}${d.state === 'failed' ? '（失败）' : d.state === 'stopped' ? '（已停止）' : ''}：${clip(d.result.split(/<(?:calli|limi)-(?:coordination(?:-note)?|team)>/)[0].trim(), 600) || '无文字输出'}`);
-    return `用户在成员线程里直接和成员说过话（供了解现状，不用回复，也不要重复派发）：\n${lines.join('\n')}`;
+    return `用户在成员线程里直接和成员说过话（供了解现状，不用回复，也不要重复派发）：\n${talks.map(d => this.directLine(t, d)).join('\n')}`;
+  }
+  /** Drop stale summaries at the final local commit without consuming other members' notices. */
+  filterInstructions(id: string, text: string): string {
+    const t = this.team(id);
+    if (!t) return text;
+    if (t.enabled === false || this.threadDisabled(t, id)) {
+      return text.replace(/<calli-(coordination(?:-note)?|team)>[\s\S]*?<\/calli-\1>/g, '').replace(/\n\n\[指定协作对象\][\s\S]*$/, '').trim();
+    }
+    return text.replace(/<calli-(coordination(?:-note)?|team)>[\s\S]*?<\/calli-\1>/g, block => {
+      for (const talk of t.direct ?? []) if (talk.told || this.threadDisabled(t, talk.to)) block = block.replace(this.directLine(t, talk), '');
+      return block;
+    });
+  }
+  /** Closure notices carry no result payload; old stored summaries have no trustworthy provenance. */
+  private continuationNotices(task: TeamTask): string[] {
+    return (task.continuationNotices ?? []).map(notice => notice.replace(/：[\s\S]*$/, '）'));
   }
   private continuationNotice(task: TeamTask): string {
-    return task.continuationNotices?.length ? `以下委派没有交回，已关闭：${task.continuationNotices.join('；')}。需要的话重新 @。` : '';
+    const notices = this.continuationNotices(task);
+    return notices.length ? `以下委派没有交回，已关闭：${notices.join('；')}。需要的话重新 @。` : '';
   }
   private continueTask(t: Team): void {
     const task = t.team!;
     if (task.status === 'needs_attention') task.deliveries = 0;
-    const notices = new Set(task.continuationNotices);
+    const notices = new Set(this.continuationNotices(task));
     const live = new Set<string>();
     for (const member of [{ id: t.rootId, name: task.entry }, ...t.members]) {
       if (t.deliveries.some(d => d.to === member.id && (d.state === 'queued' || d.state === 'running'))
@@ -1177,18 +1468,22 @@ export class CoordinationManager {
       const latest = start < 0 ? undefined : t.deliveries.slice(start).reverse().find(d => d.to === target);
       const state = latest?.state;
       const reason = state === 'returned' ? '已返回但未送达' : state === 'failed' ? '失败' : state === 'stopped' ? '已停止' : '已中断';
-      const result = latest?.result.split(/<(?:calli|limi)-(?:coordination(?:-note)?|team)>/)[0].trim() ?? '';
-      const summary = result.slice(0, 1000) + (result.length > 1000 ? '…' : '');
-      notices.add(`${delegation.to}（${reason}${summary ? `：${summary}` : ''}）`);
+      // Keep closure/reason only; suppressed history must never re-enter a continuation prompt.
+      notices.add(`${delegation.to}（${reason}）`);
     }
     if (notices.size) task.continuationNotices = [...notices];
   }
   private allowed(t: Team, from: string): string[] {
     return [...new Set([...t.team!.snapshot.relations.filter(r => r.from.includes(from)).map(r => r.to),
-      ...t.team!.delegations.filter(d => !d.closed && d.to === from).map(d => d.from)])];
+      ...t.team!.delegations.filter(d => !d.closed && d.to === from).map(d => d.from)])].filter(name => {
+        const id = name === t.team!.entry ? t.rootId : t.members.find(m => m.name === name)?.id;
+        return !id || !this.threadDisabled(t, id);
+      });
   }
   private async route(t: Team, from: string, to: string, text: string, key: string): Promise<void> {
     const task = t.team!;
+    const sender = from === task.entry ? t.rootId : t.members.find(m => m.name === from)!.id;
+    this.assertParticipant(t, sender);
     if (t.deliveries.some(d => d.key === key)) return;
     if (task.deliveries >= (task.snapshot.budget?.maxDeliveries ?? 30)) { this.attention(t, '团队投递预算已用完，请补充要求后继续'); return; }
     const role = task.snapshot.members.find(m => m.name === to)!;
@@ -1199,7 +1494,8 @@ export class CoordinationManager {
         sectionId: parent.sectionId, permissionMode: await this.permissionFor(t, role.agent) });
       target = child.id; t.members.push({ id: target, name: to, role: to });
     }
-    const sender = from === task.entry ? t.rootId : t.members.find(m => m.name === from)!.id;
+    // A disable during member creation must not authorize its newly derived task.
+    this.assertParticipant(t, sender); this.assertParticipant(t, target);
     const returning = task.delegations.find(d => !d.closed && d.from === to && d.to === from);
     const delivery = this.enqueue(t, sender, target, text, returning || key.endsWith(':return') ? 'result' : 'message', key, returning?.deliveryId);
     if (returning) returning.closed = true;

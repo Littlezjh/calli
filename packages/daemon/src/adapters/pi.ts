@@ -450,14 +450,14 @@ class PiSession implements AgentSession {
     label: string,
     env: Record<string, string> = {},
     /** Instead of resuming `opts.resumeId`: the arguments that say which session this pi is on. */
-    sessionArgs: string[] = opts.resumeId ? ['--session', opts.resumeId] : [],
+    sessionArgs: string[] = opts.resumeId ? ['--session', opts.resumeId] : opts.ephemeral ? ['--no-session'] : [],
   ): Promise<PiSession> {
     const session = PiSession.spawn(command, sessionArgs, opts.cwd, label, sessionEnvironment(env, opts.coordinationEnv) as Record<string, string>);
     cancelSessionOnAbort(opts.signal, () => { void session.close(); });
     try {
       opts.signal?.throwIfAborted();
       const state = await session.request('get_state', {});
-      const sessionId = String(state?.sessionId ?? '');
+      const sessionId = String(state?.sessionId ?? '') || (opts.ephemeral ? 'ephemeral' : '');
       if (!sessionId) throw new Error('pi did not report a session id');
       session.agentSessionId = sessionId;
       session.workMode = opts.workMode ?? 'execute';

@@ -1,4 +1,5 @@
-import { referencePreview, splitReferences, withReferences } from '../context-references';
+import { referencePreview, resolveThreadLinkReferences, splitReferences, withReferences } from '../context-references';
+import { readDrafts, writeDraft } from '../drafts';
 import { ReferenceChips } from './ContextReferences';
 import { MessageActionButton, MessageMore, PointMessageMenu, SelectMessage, useMessageGestures, type MessageAction } from './MessageActions';
 import { channelRows, hydrateHistoryFiles } from '../timeline';
@@ -58,7 +59,7 @@ import {
 import { VoiceCloud } from './VoiceOrb';
 import { Lightbox } from './Lightbox';
 import { PlanCopyButton, PlanDownloadButton } from './plan-tools';
-import { IconBell, ActivityIcon, IconArrowRight, IconCheck, IconChevron, IconClipboard, IconClose, IconCompact, IconCopy, IconEdit, IconExternal, IconFile, IconFork, IconHand, IconHandover, IconPaperclip, IconQuote, IconRead, IconSparkle, IconTray, IconWorktree } from './icons';
+import { IconBell, ActivityIcon, IconArrowRight, IconCheck, IconChevron, IconClipboard, IconClose, IconCompact, IconCopy, IconEdit, IconExternal, IconFile, IconFork, IconHand, IconHandover, IconInfo, IconPaperclip, IconQuote, IconRead, IconSparkle, IconTray, IconWorktree } from './icons';
 import { t } from '../i18n';
 
 // The daemon's confirmation marker is replaced by the localized notice label.
@@ -101,7 +102,7 @@ interface Props {
    * When the last turn failed because the agent's plan ran out: hand the thread to another agent.
    * `label` names the quota-aware one-click target when one is available; `choose` opens the handover to pick another.
    */
-  takeover?: { label?: string; go?: () => void; choose: () => void; busy?: boolean } | null;
+  takeover?: { label?: string; go?: () => void; /** An earlier conversation of the chain that can take the work back, offered beside a new one. */ goBack?: { title: string; go: () => void }; choose: () => void; busy?: boolean } | null;
   /**
    * When the last turn failed because the agent's plan ran out: wait for the quota to reset and
    * continue with the same agent. `armed` mirrors the daemon's watch; `onArm`/`onCancel` toggle it.
@@ -319,6 +320,7 @@ export function ThreadView({ onOpenFinds, chain = false, observeOlder = true, be
           const go = onOpenFinds ? <button type="button" className="agent-notice-link" onClick={onOpenFinds}>{t('personal.openFinds')}</button> : <a href="#/todos">{t('personal.openPlans')}</a>;
           return <div key={item.key} className="agent-notice"><IconBell size={14} /><span>{item.confirmation ? (title ? t('personal.confirmTitle', title) : t('personal.confirm')) : <>{t('personal.notice')} {title}</>}{item.confirmation && <> · {go}</>}</span></div>;
         }
+        case 'agent-warning': return <div key={item.key} className={'agent-notice agent-warning' + (item.warning ? ' warn' : '')}><IconInfo size={14} /><span>{item.text}</span></div>;
         case 'model-switch': return <div key={item.key} className="context-compaction handover-divider">{t('auto.switched', item.model, item.previous, t(item.reason === 'exhausted' ? 'auto.exhausted' : 'auto.near'))}</div>;
         case 'quota-resume': return <div key={item.key} className="context-compaction handover-divider">{t('auto.resumed')}</div>;
         case 'turn-retry': return <div key={item.key} className="context-compaction handover-divider">{t('auto.retried', item.attempt, item.max)}</div>;
@@ -377,6 +379,9 @@ export function ThreadView({ onOpenFinds, chain = false, observeOlder = true, be
                   text={item.text}
                   imageIds={item.images.map((img) => img.id)}
                   revision={revision}
+                  api={historyApi}
+                  threadId={historyThreadId}
+                  draftKey={historyThreadId ? `message-edit:${historyApi?.host ?? 'main'}:${historyThreadId}:${item.turnId}` : undefined}
                   onSend={(edit) => onEdit(item.turnId, edit)}
                 />
               )}
@@ -451,26 +456,30 @@ export function ThreadView({ onOpenFinds, chain = false, observeOlder = true, be
           // The current writer conflict owns the composer; older conflicts remain quiet history.
           if (item.sessionInUse) return item === items[items.length - 1] ? null : <div key={item.key} className="row session-in-use-history">{item.message}</div>;
           return (
-            <ErrorNotice key={item.key} item={item}>
-              {item.planExhausted && item === items[items.length - 1] && (takeover || resume) && <div className="exhausted-actions">
-                {takeover?.go && takeover.label && <button className="exhausted-hand" onClick={takeover.go} disabled={takeover.busy}>
-                  {takeover.busy ? t('view.handingOver') : t('view.handTo', takeover.label)}
-                  <IconArrowRight size={14} />
-                </button>}
-                {takeover && <button className="exhausted-quiet" onClick={takeover.choose} disabled={takeover.busy}>{t('view.chooseOtherShort')}</button>}
-                {resume && !resume.armed && <button className="exhausted-quiet" onClick={resume.onArm} disabled={resume.busy}>{t('view.resumeArm')}</button>}
-                {resume?.armed && <>
-                  <span role="status">{resume.resetsAt ? t('view.resumeArmedAt', resetClock(resume.resetsAt)) : t('view.resumeArmedAny')}</span>
-                  <button className="exhausted-quiet" onClick={resume.onCancel} disabled={resume.busy}>{t('view.resumeCancel')}</button>
-                </>}
-                {resume?.error && <small className="exhausted-error">{resume.error}</small>}
-              </div>}
-              {autoRetry && item === items[items.length - 1] && <div className="error-retry">
-                <span role="status">{t('view.autoRetryStatus', autoRetry.attempts + 1, autoRetry.max, resetClock(autoRetry.nextAt))}</span>
-                <button onClick={autoRetry.onCancel} disabled={autoRetry.busy}>{t('view.autoRetryCancel')}</button>
-              </div>}
-            </ErrorNotice>
-          );
+          <ErrorNotice key={item.key} item={item}>
+            {item.planExhausted && item === items[items.length - 1] && (takeover || resume) && <div className="exhausted-actions">
+              {takeover?.goBack && <button className="exhausted-hand" onClick={takeover.goBack.go} disabled={takeover.busy}>
+                {takeover.busy ? t('view.handingOver') : t('handover.choice.old', takeover.goBack.title)}
+                <IconArrowRight size={14} />
+              </button>}
+              {takeover?.go && takeover.label && <button className={takeover.goBack ? 'exhausted-quiet' : 'exhausted-hand'} onClick={takeover.go} disabled={takeover.busy}>
+                {takeover.busy ? t('view.handingOver') : takeover.goBack ? t('handover.choice.new') : t('view.handTo', takeover.label)}
+                {!takeover.goBack && <IconArrowRight size={14} />}
+              </button>}
+              {takeover && <button className="exhausted-quiet" onClick={takeover.choose} disabled={takeover.busy}>{t('view.chooseOtherShort')}</button>}
+              {resume && !resume.armed && <button className="exhausted-quiet" onClick={resume.onArm} disabled={resume.busy}>{t('view.resumeArm')}</button>}
+              {resume?.armed && <>
+                <span role="status">{resume.resetsAt ? t('view.resumeArmedAt', resetClock(resume.resetsAt)) : t('view.resumeArmedAny')}</span>
+                <button className="exhausted-quiet" onClick={resume.onCancel} disabled={resume.busy}>{t('view.resumeCancel')}</button>
+              </>}
+              {resume?.error && <small className="exhausted-error">{resume.error}</small>}
+            </div>}
+            {autoRetry && item === items[items.length - 1] && <div className="error-retry">
+              <span role="status">{t('view.autoRetryStatus', autoRetry.attempts + 1, autoRetry.max, resetClock(autoRetry.nextAt))}</span>
+              <button onClick={autoRetry.onCancel} disabled={autoRetry.busy}>{t('view.autoRetryCancel')}</button>
+            </div>}
+          </ErrorNotice>
+        );
         }
         case 'fork':
           return (
@@ -696,7 +705,7 @@ function DeferredFileDiff({ detail, path }: { detail: DetailRef; path: string })
  * conversation up to just before this message and asks again from there; the page then reloads
  * the current conversation. Nothing changes until the user sends.
  */
-function EditMessage({ text, imageIds, revision, onSend }: { text: string; imageIds: string[]; revision: number; onSend: (edit: { text: string; images: string[]; revision: number; requestId: string }) => Promise<void> }) {
+function EditMessage({ text, imageIds, revision, onSend, api, threadId, draftKey }: { text: string; imageIds: string[]; revision: number; api?: Api; threadId?: string; draftKey?: string; onSend: (edit: { text: string; images: string[]; revision: number; requestId: string }) => Promise<void> }) {
   const [open, setOpen] = useState(false);
   const parsed = splitReferences(text);
   const [references, setReferences] = useState(parsed.references);
@@ -705,9 +714,21 @@ function EditMessage({ text, imageIds, revision, onSend }: { text: string; image
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const area = useRef<HTMLTextAreaElement | null>(null);
+  const sending = useRef(false);
+  const mounted = useRef(true);
+  const identity = useRef({ api, draftKey });
+  identity.current = { api, draftKey };
+  useLayoutEffect(() => { setOpen(false); setBusy(false); }, [api, draftKey]);
+  let store: Storage | null = null;
+  try { store = window.localStorage; } catch { /* A private browser may not expose storage. */ }
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  useEffect(() => {
+    if (open && store && draftKey !== undefined && !sending.current) writeDraft(store, draftKey, { text: draft, references, notes: [] });
+  }, [open, draft, references, draftKey, store]);
   const start = () => {
-    setDraft(parsed.body);
-    setReferences(parsed.references);
+    const saved = store && draftKey !== undefined ? readDrafts(store)[draftKey] : undefined;
+    setDraft(saved?.text ?? parsed.body);
+    setReferences(saved?.references ?? parsed.references);
     setKept(imageIds);
     setError('');
     setOpen(true);
@@ -720,17 +741,33 @@ function EditMessage({ text, imageIds, revision, onSend }: { text: string; image
     });
   };
   const send = async () => {
-    if (busy || (!draft.trim() && !references.length)) return;
+    if (busy || sending.current || (!draft.trim() && !references.length)) return;
+    sending.current = true;
     setBusy(true);
     setError('');
+    const recipient = api;
+    const key = draftKey;
+    const current = () => mounted.current && identity.current.api === recipient && identity.current.draftKey === key;
     try {
       const noted = splitNotes(draft);
-      await onSend({ text: withNotes(noted.notes, withReferences(references, noted.body)), images: kept, revision, requestId: editRequestId() });
-      setOpen(false);
+      const resolved = await resolveThreadLinkReferences({ body: noted.body, references, deployment: window.location.href, editingThreadId: threadId,
+        source: recipient ? { host: recipient.host, createReference: input => recipient.createReference(input) } : undefined,
+        onResolved: resolved => {
+          // Failed edits and reloads keep their snapshots; a switched message never receives them.
+          if (store && key !== undefined) writeDraft(store, key, { text: draft, references: resolved, notes: [] });
+          if (current()) setReferences(resolved);
+        },
+      });
+      if (store && key !== undefined) writeDraft(store, key, { text: draft, references: resolved, notes: [] });
+      if (current()) setReferences(resolved);
+      await onSend({ text: withNotes(noted.notes, withReferences(resolved, noted.body)), images: kept, revision, requestId: editRequestId() });
+      if (store && key !== undefined) writeDraft(store, key, null);
+      if (current()) setOpen(false);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (current()) setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setBusy(false);
+      sending.current = false;
+      if (current()) setBusy(false);
     }
   };
   if (!open) return (
@@ -744,6 +781,7 @@ function EditMessage({ text, imageIds, revision, onSend }: { text: string; image
       <textarea
         ref={area}
         value={draft}
+        disabled={busy}
         aria-label={t('view.editMessage')}
         onChange={(e) => {
           setDraft(e.target.value);

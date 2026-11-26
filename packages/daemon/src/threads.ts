@@ -18,7 +18,7 @@ import type { VoiceTransport } from './voice-sessions.js';
 import { VoiceConversation } from './voice-conversation.js';
 import { turnOutcome } from './lifecycle.js';
 import { UserInputs } from './user-input.js';
-import type { SystemPrompt, WorkMode } from './adapters/types.js';
+import type { HistoryTurn, SystemPrompt, WorkMode } from './adapters/types.js';
 import { diagnosticFailure } from './adapters/diagnostics.js';
 import { turnAnswer, type CoordinationManager, type CoordinationSetup } from './coordination.js';
 import { Injections, type InjectionGate } from './injections.js';
@@ -67,7 +67,7 @@ import { MessageEdits } from './message-edits.js';
 import { addWorktree, countChanges, findCheckout, initRepository, removeWorktree, samePath, worktreeLeftovers, type Checkout, type Worktree } from './worktrees.js';
 import { isProbeSession } from './local-sessions.js';
 
-type SessionContext = Pick<ThreadRecord, 'id' | 'agent' | 'cwd' | 'permissionMode' | 'workMode' | 'model' | 'effort' | 'speed'> & { agentSessionId?: string | null };
+type SessionContext = Pick<ThreadRecord, 'id' | 'agent' | 'cwd' | 'permissionMode' | 'workMode' | 'model' | 'effort' | 'speed'> & { agentSessionId?: string | null; title?: string };
 export interface DraftSessionInput {
   agent: string;
   cwd: string;
@@ -138,14 +138,17 @@ type ModelQueueState = ModelQueueView & { turnId: string };
 export type ThreadView = Omit<ThreadRecord, 'worktree' | 'handover' | 'writing'> & {
   /** Writing mode, with where the person's writing habits are kept. */
   writing: (WritingState & { habits: string }) | null;
-  handover?: (NonNullable<ThreadRecord['handover']> & { automatic: boolean; /** The source started a turn after the handover. */ sourceMoved: boolean }) | null;
+  handover?: (NonNullable<ThreadRecord['handover']> & { automatic: boolean; /** The source started a turn after the handover. */ sourceMoved: boolean; /** Turns the source took on its own after the handover, left out of the merged reading. */ followups: number }) | null;
   autoHandover?: AutoHandoverView;
   /** The daemon retrying this thread's transient failure by itself; null when nothing is pending. */
   autoRetry?: RetryView | null;
   /** The daemon advancing this thread by itself (an external wait, an unfinished turn); null when nothing is pending. */
   advance?: AdvanceView | null;
   /** `doing`, on a member: its latest task while it works, the opening of its answer once it has returned. */
-  coordination?: { retired?: boolean; rootId: string; children: number; paused: boolean; doing?: string; team?: { name: string; status: import('./teams.js').TaskStatus; role: string; error?: string } };
+  coordination?: { retired?: boolean; rootId: string; children: number; paused: boolean; doing?: string;
+    /** False is configuration only, not an active collaboration. */
+    enabled?: boolean;
+    team?: { name: string; status: import('./teams.js').TaskStatus; role: string; error?: string } };
   /** Working in the hub's scratch area: a thread that is in no project. */
   scratch: boolean;
   /** The project directory no longer exists, e.g. a temporary checkout removed after a run. */
@@ -176,6 +179,7 @@ export type ThreadView = Omit<ThreadRecord, 'worktree' | 'handover' | 'writing'>
 
 interface QueuedTurn {
   assistantSay?: string;
+  dispatchRunId?: string;
   displayText?: string;
   channel?: TurnChannel;
   /** Later sends carrying a batch fold into this one instead of queueing behind it. */
@@ -356,6 +360,7 @@ export class ThreadManager {
   private readonly running = new Map<string, { turnId: string; cancelRequested: boolean; since: string }>();
   readonly inputs = new UserInputs((thread, turn, type, data) => this.emitThreadEvent(thread, turn, type, data));
   private readonly dispatchingQueues = new Set<string>();
+  /** Keep the preparing item reachable by synchronous coordination switches. */
   private readonly startingTurns = new Map<string, Promise<unknown>>();
   private readonly changingModes = new Set<string>();
   /** Turns that asked the agent for a `[进度]` line, read back when they end. */
@@ -427,6 +432,7 @@ export class ThreadManager {
     this.quotaResume.start();
     this.autoRetry.start();
     this.autoAdvance.start();
+    void this.backfillNativeTitles().catch(() => undefined);
     this.personal = new PersonalService(store, this, adapters);
     this.lark = new LarkChannel(store, this.personal);
     this.briefs = new PersonalBriefSchedule(store, () => this.personal.review.status().quietHours, () => todoStages(this, this.listTodos()));
@@ -758,7 +764,10 @@ export class ThreadManager {
       if (hubIndex < starts.length - 1) {
         // Match only through the requested boundary. Later turns may be running or divergent, and
         // they are not part of the copy being made.
-        cut = { upToSeq: starts[hubIndex + 1].seq - 1, hubIndex, hubKeys: starts.slice(0, hubIndex + 1).map((ev) => turnKey(String(ev.data.text ?? ''))) };
+        const sessionTurns = this.sessionHubTurns(thread, starts[hubIndex].seq);
+        cut = sessionTurns.complete
+          ? { upToSeq: starts[hubIndex + 1].seq - 1, hubIndex: sessionTurns.prefixCount + hubIndex, hubKeys: sessionTurns.keys }
+          : { upToSeq: starts[hubIndex + 1].seq - 1, hubIndex, hubKeys: starts.slice(0, hubIndex + 1).map((ev) => turnKey(String(ev.data.text ?? ''))) };
       }
     }
 
@@ -885,7 +894,7 @@ export class ThreadManager {
       // A second app-server can briefly see the active writer's history one turn behind. Only
       // retry that prefix case; a real text disagreement still fails immediately.
       if (delayMs) await new Promise((resolve) => setTimeout(resolve, delayMs));
-      const agentTurns = await adapter.loadHistory(thread.agentSessionId, thread.cwd);
+      const agentTurns = (await adapter.forkPoints?.(thread.agentSessionId, thread.cwd)) ?? await adapter.loadHistory(thread.agentSessionId, thread.cwd);
       const matched = matchTurns(agentTurns.map((t) => turnKey(t.text)), hubKeys, ThreadManager.SYNC_SKIP_TOLERANCE);
       const agentIndex = matched?.hubToAgent[hubIndex] ?? -1;
       if (agentIndex < 0) {
@@ -1111,31 +1120,45 @@ export class ThreadManager {
     return entry.value;
   }
 
-  private async adapterModels(adapter: AgentAdapter, refresh = false): Promise<ModelOption[]> {
-    const findAgent = () => [...this.adapters].find(([, current]) => current === adapter)?.[0];
-    adapter.onModelsChanged = models => {
-      // Instance ids can differ from adapter ids; removed/replaced instances must not publish.
-      const agent = findAgent();
-      if (!agent) return;
-      const event: StoredEvent = { threadId: '', seq: 0, turnId: null, type: 'agent.modelsChanged',
-        ts: new Date().toISOString(), data: { agent, models } };
-      for (const listener of this.listeners) listener(event);
-    };
-    const models = await adapter.models(refresh);
-    // Migrate stored threads that still hold legacy suffixed model ids (e.g. `gemini-4-carbon-high`).
-    const agent = adapter.normalizeModel ? findAgent() : undefined;
-    if (agent && adapter.normalizeModel) {
-      for (const t of [...this.store.listThreads(), ...this.store.listThreads({ archived: true })]) {
-        if (t.agent !== agent) continue;
-        const next = adapter.normalizeModel(t.model, t.effort);
-        if (next.model !== t.model || next.effort !== t.effort) {
-          this.store.updateThread(t.id, { model: next.model, effort: next.effort });
-          const ev: StoredEvent = { threadId: t.id, seq: 0, turnId: null, type: 'thread.updated', ts: new Date().toISOString(), data: {} };
-          for (const listener of this.listeners) listener(ev);
-        }
+  private splitCombinedModel(models: ModelOption[], model: string | null | undefined): { option: ModelOption; effort: EffortLevel } | null {
+    if (!model || models.some((m) => m.id === model)) return null;
+    for (const option of models) {
+      for (const effort of option.efforts ?? []) {
+        if (model === `${option.id}-${effort}`) return { option, effort };
       }
     }
-    return models;
+    return null;
+  }
+
+  private migrateCombinedModels(agent: string, models: ModelOption[]): void {
+    if (!models.length) return;
+    for (const thread of [...this.store.listThreads(), ...this.store.listThreads({ archived: true })]) {
+      if (thread.agent !== agent || !thread.model) continue;
+      const split = this.splitCombinedModel(models, thread.model);
+      if (!split) continue;
+      this.store.updateThread(thread.id, { model: split.option.id, effort: (thread.effort as EffortLevel | null) ?? split.effort });
+      this.emitThreadEvent(thread.id, null, 'thread.updated', {});
+    }
+    const saved = readModelPreferences(this.store.hubSetting<unknown>(DRAFT_MODEL_PREFERENCES_KEY, {}))[agent];
+    const split = this.splitCombinedModel(models, saved?.model);
+    if (split) this.rememberModelPreference(agent, { model: split.option.id, effort: (saved?.effort as EffortLevel | null) ?? split.effort });
+  }
+
+  private adapterModels(adapter: AgentAdapter, refresh = false): Promise<ModelOption[]> {
+    const agent = [...this.adapters].find(([, current]) => current === adapter)?.[0];
+    adapter.onModelsChanged = models => {
+      // Instance ids can differ from adapter ids; removed/replaced instances must not publish.
+      const id = [...this.adapters].find(([, current]) => current === adapter)?.[0];
+      if (!id) return;
+      this.migrateCombinedModels(id, models);
+      const event: StoredEvent = { threadId: '', seq: 0, turnId: null, type: 'agent.modelsChanged',
+        ts: new Date().toISOString(), data: { agent: id, models } };
+      for (const listener of this.listeners) listener(event);
+    };
+    return adapter.models(refresh).then(models => {
+      if (agent) this.migrateCombinedModels(agent, models);
+      return models;
+    });
   }
 
   async listModels(agent: string, refresh = false): Promise<ModelOption[]> {
@@ -1162,11 +1185,27 @@ export class ThreadManager {
     const adapter = this.adapters.get(agent);
     if (!adapter) throw new HttpError(400, `unknown agent: ${agent}`);
     const modes = adapter.capabilities.permissionModes;
-    const thread = await this.createThread({
-      agent, cwd: '', scratch: true, title: opts.title ?? 'Calli', model: opts.model ?? null,
-      permissionMode: modes.includes('ask') ? 'ask' : modes[0],
-    });
-    await this.updateThread(thread.id, { archived: true });
+    const permissionMode = modes.includes('ask') ? 'ask' : modes[0];
+    const requestedModel = opts.model ? await this.validateModel(agent, opts.model) : null;
+    const poolKey = `${agent}\0${requestedModel ?? ''}\0${permissionMode ?? ''}`;
+    const pool = this.store.hubSetting<Record<string, string>>('askOnceThreads', {});
+    const pooledId = pool[poolKey];
+    const pooled = pooledId ? this.store.getThread(pooledId) : null;
+    let thread: ThreadView;
+    if (pooled && pooled.archivedAt && pooled.agent === agent && pooled.model === requestedModel
+      && !this.running.has(pooled.id) && !this.backgroundThreads.has(pooled.id) && pooled.status !== 'running'
+      && (!this.dirs.scratchRoot || pooled.cwd.startsWith(this.dirs.scratchRoot + sep))) {
+      mkdirSync(pooled.cwd, { recursive: true });
+      this.store.updateThread(pooled.id, { agentSessionId: null, title: opts.title ?? 'Calli' });
+      thread = this.view(this.getThread(pooled.id));
+    } else {
+      thread = await this.createThread({
+        agent, cwd: '', scratch: true, title: opts.title ?? 'Calli', model: requestedModel,
+        permissionMode,
+      });
+      await this.updateThread(thread.id, { archived: true });
+      if (!pooled) this.store.saveHubSetting('askOnceThreads', { ...pool, [poolKey]: thread.id });
+    }
     this.backgroundThreads.add(thread.id);
     if (opts.recordPrompt === false) this.unrecordedQuestions.add(thread.id);
     const cancel = () => { void this.cancelTurn(thread.id).catch(() => undefined); };
@@ -1206,7 +1245,7 @@ export class ThreadManager {
       opts.signal?.throwIfAborted();
       if (timedOut) throw new HttpError(504, 'the agent took too long to answer');
       if (outcome.outcome !== 'ok') throw new HttpError(502, outcome.message ?? `the agent's turn ended: ${outcome.outcome}`);
-      return turnAnswer(this.store.listEvents(thread.id, 0, -1), turnId).trim();
+      return turnAnswer(this.store.listTurnEvents(thread.id, turnId), turnId).trim();
     } finally {
       (stop as (() => void) | null)?.();
       opts.signal?.removeEventListener('abort', cancel);
@@ -1215,8 +1254,41 @@ export class ThreadManager {
       // The answer is read from the store: the agent process and its scratch folder can go now, so
       // one question does not leave a resident process behind.
       await this.dropSession(thread.id, 'background_question_done');
+      if (this.store.getThread(thread.id)) this.store.updateThread(thread.id, { agentSessionId: null });
       if (this.dirs.scratchRoot && thread.cwd.startsWith(this.dirs.scratchRoot + sep)) rmSync(thread.cwd, { recursive: true, force: true });
     }
+  }
+
+  /**
+   * Writes a title the person or an extension gave to the agent's own session list: through the
+   * live session where it can take one, else straight into the agent's store.
+   */
+  private syncNativeTitle(id: string, title: string): void {
+    const live = this.sessions.get(id);
+    if (live?.setTitle) { void live.setTitle(title).catch(() => undefined); return; }
+    const thread = this.store.getThread(id);
+    if (!thread?.agentSessionId || this.backgroundThreads.has(id)) return;
+    void this.adapters.get(thread.agent)?.renameSessions?.([{ agentSessionId: thread.agentSessionId, cwd: thread.cwd, title }]).catch(() => undefined);
+  }
+
+  /**
+   * Once per hub: the titles named before they were written back, into each agent's own list.
+   * Titles the hub took from the first message are left alone; the agent has its own for those.
+   */
+  private async backfillNativeTitles(): Promise<void> {
+    if (this.store.hubSetting('native_titles_v1', false)) return;
+    const byAgent = new Map<string, Array<{ agentSessionId: string; cwd: string; title: string }>>();
+    for (const thread of [...this.store.listThreads(), ...this.store.listThreads({ archived: true })]) {
+      const by = this.store.titleBy(thread.id);
+      if (!thread.agentSessionId || (by !== 'user' && by !== 'auto')) continue;
+      const list = byAgent.get(thread.agent) ?? [];
+      list.push({ agentSessionId: thread.agentSessionId, cwd: thread.cwd, title: thread.title });
+      byAgent.set(thread.agent, list);
+    }
+    for (const [agent, entries] of byAgent) {
+      await this.adapters.get(agent)?.renameSessions?.(entries).catch(() => undefined);
+    }
+    this.store.saveHubSetting('native_titles_v1', true);
   }
 
   /** A title an extension gave the thread. Marked as such, so a later automatic pass may revise it. */
@@ -1226,6 +1298,7 @@ export class ThreadManager {
     this.getThread(id);
     this.store.updateThread(id, { title: clean });
     this.store.setTitleBy(id, 'auto');
+    this.syncNativeTitle(id, clean);
     this.emitThreadEvent(id, null, 'thread.updated', {});
     return this.threadView(id);
   }
@@ -1410,7 +1483,7 @@ export class ThreadManager {
     const failed = thread.status === 'error' ? this.store.lastTurnFailure(thread.id) : null;
     const failure = failed ? { code: failed.code, message: failed.message.slice(0, 500), at: failed.at } : null;
     const normalized = adapter?.normalizeModel ? adapter.normalizeModel(thread.model, thread.effort) : { model: thread.model, effort: thread.effort };
-    return { ...thread, model: normalized.model, effort: normalized.effort, failure, writing: thread.writing ? { ...thread.writing, habits: habitsPath() } : null, handover: thread.handover ? { ...thread.handover, mode: this.store.handoverMode(thread)!, automatic: thread.handover.mode === 'continue', sourceMoved: this.store.handoverSourceMoved(thread)! } : null, autoHandover: { ...this.autoHandover.view(thread.id), resume: this.quotaResume.view(thread.id) }, autoRetry: this.autoRetry.view(thread.id), advance: this.autoAdvance.view(thread.id), worktree, resumeCommand, cwdReal, waiting, waitingReason, queued, modelQueue, terminalActivity, scratch, projectGone, runningSince, coordination: this.coordination?.metadata(thread.id) };
+    return { ...thread, model: normalized.model, effort: normalized.effort, failure, writing: thread.writing ? { ...thread.writing, habits: habitsPath() } : null, handover: thread.handover ? { ...thread.handover, mode: this.store.handoverMode(thread)!, automatic: thread.handover.mode === 'continue', sourceMoved: this.store.handoverSourceMoved(thread)!, followups: this.store.handoverFollowups(thread)! } : null, autoHandover: { ...this.autoHandover.view(thread.id), resume: this.quotaResume.view(thread.id) }, autoRetry: this.autoRetry.view(thread.id), advance: this.autoAdvance.view(thread.id), worktree, resumeCommand, cwdReal, waiting, waitingReason, queued, modelQueue, terminalActivity, scratch, projectGone, runningSince, coordination: this.coordination?.metadata(thread.id) };
   }
 
   /**
@@ -1795,6 +1868,8 @@ export class ThreadManager {
     updates: {
       /** Only an explicit composer edit changes defaults for future threads. */
       rememberModelChoice?: boolean;
+      /** Exits collaboration only; human input and history remain available. */
+      disabled?: boolean;
       title?: string;
       pinned?: boolean;
       workMode?: WorkMode;
@@ -1811,6 +1886,8 @@ export class ThreadManager {
     },
   ): Promise<ThreadView> {
     const thread = this.getThread(id);
+    // Reject malformed switches before any model, progress or runtime side effects.
+    if (updates.disabled !== undefined && typeof updates.disabled !== 'boolean') throw new HttpError(400, 'disabled must be true or false');
     const rememberChoice = updates.rememberModelChoice === true &&
       (updates.model !== undefined || updates.effort !== undefined || updates.speed !== undefined);
     if (rememberChoice && updates.model !== undefined) {
@@ -1822,6 +1899,7 @@ export class ThreadManager {
       };
     }
     const patch: Record<string, unknown> = {};
+    if (updates.disabled !== undefined) patch.disabled = updates.disabled;
     if (updates.done !== undefined) {
       if (typeof updates.done !== 'boolean') throw new HttpError(400, 'done must be true or false');
       // The person's word; whatever the agent said before no longer stands.
@@ -1903,7 +1981,7 @@ export class ThreadManager {
       if (requestedModel === null) {
         // Back to the agent's own default: only a restart can do that.
         patch.model = null;
-        await this.restartForChange(thread, 'model');
+        if (thread.model !== null) await this.restartForChange(thread, 'model');
       } else {
         const model = await this.validateModel(thread.agent, requestedModel);
         patch.model = model;
@@ -1915,7 +1993,7 @@ export class ThreadManager {
     if (requestedEffort !== undefined) {
       if (requestedEffort === null) {
         patch.effort = null;
-        await this.restartForChange(thread, 'effort');
+        if (thread.effort !== null) await this.restartForChange(thread, 'effort');
       } else {
         const effort = await this.validateEffort(thread.agent, nextModel, requestedEffort);
         patch.effort = effort;
@@ -1933,12 +2011,17 @@ export class ThreadManager {
       await this.applyLive(thread, 'speed', s => s.setSpeed?.(patch.speed as string | null) ?? Promise.resolve(false));
     }
     this.store.updateThread(id, patch as any);
+    // Withdraw only collaboration mailboxes, synchronously with the persisted thread switch.
+    if (updates.disabled !== undefined) this.coordination?.threadChanged(id);
     if (rememberChoice) {
       const chosen = this.getThread(id);
       this.rememberModelPreference(thread.agent, { model: chosen.model, effort: chosen.effort, speed: chosen.speed ?? null });
     }
     // The person named it: nothing renames it for them again.
-    if (patch.title !== undefined && patch.title !== thread.title) this.store.setTitleBy(id, 'user');
+    if (typeof patch.title === 'string' && patch.title !== thread.title) {
+      this.store.setTitleBy(id, 'user');
+      this.syncNativeTitle(id, patch.title);
+    }
     this.emitThreadEvent(id, null, 'thread.updated', {});
     return this.threadView(id);
   }
@@ -1986,7 +2069,7 @@ export class ThreadManager {
   async deleteThread(id: string, opts: { agentSession?: boolean; worktree?: boolean; force?: boolean } = {}): Promise<void> {
     const thread = this.getThread(id);
     if (this.running.has(id)) throw new HttpError(409, 'cancel the running turn before deleting this thread');
-    if (this.coordination?.metadata(id)) throw new HttpError(409, '协作线程请先归档，保留成员关系与消息记录');
+    if (this.coordination?.enabled(id)) throw new HttpError(409, '协作线程请先归档，保留成员关系与消息记录');
     let doomed: { main: string; tree: ThreadWorktree } | null = null;
     if (opts.worktree) {
       const tree = thread.worktree;
@@ -2032,6 +2115,7 @@ export class ThreadManager {
     this.modelQueues.delete(id);
     this.goals.delete(id);
     this.store.deleteThread(id);
+    this.coordination?.forgetConfiguration(id);
     this.attachments.removeThread(id);
   }
 
@@ -2061,7 +2145,7 @@ export class ThreadManager {
    */
   private async modelOption(adapter: AgentAdapter, model: string | null): Promise<ModelOption | undefined> {
     const options = await this.adapterModels(adapter);
-    if (model !== null) return options.find((o) => o.id === model);
+    if (model !== null) return options.find((o) => o.id === model) ?? this.splitCombinedModel(options, model)?.option;
     return options.find((o) => o.id === 'default') ?? options.find((o) => o.isDefault);
   }
 
@@ -2177,6 +2261,45 @@ export class ThreadManager {
     }
   }
 
+  /**
+   * Every `turn.started` key the hub sent into `thread`'s underlying agent session, oldest first,
+   * including earlier segments of a `resume` handover chain whose transcript was copied forward.
+   * `prefixCount` is how many keys came from upstream segments, and `complete` is false when an
+   * ancestor thread was deleted so the session's prefix is no longer known.
+   */
+  private sessionHubTurns(thread: ThreadRecord, upToSeq?: number): { keys: string[]; prefixCount: number; complete: boolean } {
+    const ownStarts = this.store.listEventsOfType(thread.id, 'turn.started');
+    const own = (upToSeq === undefined ? ownStarts : ownStarts.filter((ev) => ev.seq <= upToSeq))
+      .map((ev) => turnKey(String(ev.data.text ?? '')));
+    const upstream: string[][] = [];
+    let cur: ThreadRecord = thread;
+    const seen = new Set<string>([thread.id]);
+    while (true) {
+      // `forkThread` copies the source's events into the fork's own log, so `cur` already holds
+      // `forkedFrom`'s turns; step past `forkedFrom` to pick up any `resume` chain behind it.
+      if (cur.forkedFrom) {
+        if (seen.has(cur.forkedFrom)) break;
+        seen.add(cur.forkedFrom);
+        const forkedSource = this.store.getThread(cur.forkedFrom);
+        if (!forkedSource) return { keys: own, prefixCount: 0, complete: cur.handover?.method !== 'resume' };
+        cur = forkedSource;
+        continue;
+      }
+      if (cur.handover?.method !== 'resume') break;
+      const { sourceId, sourceSeq } = cur.handover;
+      if (seen.has(sourceId)) break;
+      seen.add(sourceId);
+      const source = this.store.getThread(sourceId);
+      if (!source) return { keys: [...upstream.reverse().flat(), ...own], prefixCount: 0, complete: false };
+      const starts = this.store.listEventsOfType(sourceId, 'turn.started');
+      const slice = sourceSeq !== undefined ? starts.filter((ev) => ev.seq <= sourceSeq) : starts;
+      upstream.push(slice.map((ev) => turnKey(String(ev.data.text ?? ''))));
+      cur = source;
+    }
+    const prefix = upstream.reverse().flat();
+    return { keys: [...prefix, ...own], prefixCount: prefix.length, complete: true };
+  }
+
   private async doSync(thread: ThreadRecord): Promise<{ added: number; terminalActivity: boolean }> {
     const { id } = thread;
     const adapter = this.adapters.get(thread.agent);
@@ -2184,18 +2307,58 @@ export class ThreadManager {
       throw new HttpError(400, `this thread's session cannot be read back`);
     }
 
-    const agentTurns = await adapter.loadHistory(thread.agentSessionId, thread.cwd);
-    // Reading the history takes a while. A turn the hub started meanwhile is already in the agent's
-    // session, so the hub's turns are read after it, and a turn still running is left for later.
-    if (this.running.has(id)) return { added: 0, terminalActivity: this.view(thread).terminalActivity };
-    // Every turn the hub has, not one page of the log: a turn missing from this list would look
-    // new on the agent's side and be appended again on every sync.
-    const hubTexts = this.store.listEventsOfType(id, 'turn.started').map((ev) => turnKey(String(ev.data.text ?? '')));
-
-    const matched = matchTurns(agentTurns.map((t) => turnKey(t.text)), hubTexts, ThreadManager.SYNC_SKIP_TOLERANCE);
-    if (!matched) return { added: 0, terminalActivity: this.view(thread).terminalActivity }; // histories disagree
-    const fresh = agentTurns.slice(matched.agentNext);
-    if (fresh.length === 0) return { added: 0, terminalActivity: this.view(thread).terminalActivity };
+    const idleView = () => ({ added: 0, terminalActivity: this.view(this.store.getThread(id) ?? thread).terminalActivity });
+    let fresh: HistoryTurn[] = [];
+    const points = (await adapter.forkPoints?.(thread.agentSessionId, thread.cwd)) ?? null;
+    if (points !== null) {
+      if (this.running.has(id) || !this.store.getThread(id)) return idleView();
+      const hub = this.sessionHubTurns(this.getThread(id));
+      if (!hub.complete) return idleView();
+      const pointMatch = matchTurns(points.map((t) => turnKey(t.text)), hub.keys, ThreadManager.SYNC_SKIP_TOLERANCE);
+      if (pointMatch) {
+        if (pointMatch.agentNext >= points.length) return idleView();
+        // The session file has new turns at the tail; load the replay for their answers, tool calls and images.
+        const agentTurns = await adapter.loadHistory(thread.agentSessionId, thread.cwd);
+        const latestPoints = (await adapter.forkPoints?.(thread.agentSessionId, thread.cwd)) ?? points;
+        if (this.running.has(id) || !this.store.getThread(id)) return idleView();
+        const latestHub = this.sessionHubTurns(this.getThread(id));
+        if (!latestHub.complete) return idleView();
+        const latestMatch = matchTurns(latestPoints.map((t) => turnKey(t.text)), latestHub.keys, ThreadManager.SYNC_SKIP_TOLERANCE);
+        if (!latestMatch || latestMatch.agentNext >= latestPoints.length) return idleView();
+        const expected = latestPoints.slice(latestMatch.agentNext);
+        const tailCount = Math.min(agentTurns.length, expected.length);
+        const tail = tailCount > 0 ? agentTurns.slice(agentTurns.length - tailCount) : [];
+        const expectedTail = expected.slice(expected.length - tailCount);
+        if (tail.some((t, i) => turnKey(t.text) !== turnKey(expectedTail[i].text))) return idleView();
+        fresh = [
+          ...expected.slice(0, expected.length - tailCount).map((p): HistoryTurn => ({ text: p.text, images: [], events: [] })),
+          ...tail,
+        ];
+      } else {
+        // An imported post-compaction session only recorded what the replay had; match against the replay itself.
+        if (hub.keys.length === 0) return idleView();
+        const agentTurns = await adapter.loadHistory(thread.agentSessionId, thread.cwd);
+        if (this.running.has(id) || !this.store.getThread(id)) return idleView();
+        const latestHub = this.sessionHubTurns(this.getThread(id));
+        if (!latestHub.complete || latestHub.keys.length === 0) return idleView();
+        const matched = matchTurns(agentTurns.map((t) => turnKey(t.text)), latestHub.keys, ThreadManager.SYNC_SKIP_TOLERANCE);
+        if (!matched) return idleView();
+        fresh = agentTurns.slice(matched.agentNext);
+      }
+    } else {
+      const agentTurns = await adapter.loadHistory(thread.agentSessionId, thread.cwd);
+      // Reading the history takes a while. A turn the hub started meanwhile is already in the agent's
+      // session, so the hub's turns are read after it, and a turn still running is left for later.
+      if (this.running.has(id) || !this.store.getThread(id)) return idleView();
+      // Every turn the hub sent into this session, including earlier `resume` handover segments: a
+      // turn missing from this list would look new on the agent's side and be appended as terminal work.
+      const hub = this.sessionHubTurns(this.getThread(id));
+      if (!hub.complete) return idleView();
+      const matched = matchTurns(agentTurns.map((t) => turnKey(t.text)), hub.keys, ThreadManager.SYNC_SKIP_TOLERANCE);
+      if (!matched) return idleView(); // histories disagree
+      fresh = agentTurns.slice(matched.agentNext);
+    }
+    if (fresh.length === 0) return idleView();
 
     const events: StoredEvent[] = [];
     const images = fresh.map((turn) => {
@@ -2304,9 +2467,17 @@ export class ThreadManager {
     scratch?: boolean;
     /** The scheduled task that starts this thread, if any: shown as its badge. */
     schedule?: { id: string; name: string } | null;
+    /** A fresh conversation where this thread works: its exact directory, sharing its worktree. */
+    besideThread?: string;
   }, inheritedWorktree?: ThreadWorktree | null, handover?: ThreadRecord['handover']): Promise<ThreadView> {
     const adapter = this.adapters.get(input.agent);
     if (!adapter) throw new HttpError(400, `unknown agent: ${input.agent}`);
+    if (input.besideThread !== undefined) {
+      if (input.worktree || input.scratch) throw new HttpError(400, 'besideThread starts where that thread works, not in a new worktree or scratch folder');
+      const beside = this.getThread(input.besideThread);
+      input = { ...input, cwd: beside.cwd };
+      inheritedWorktree ??= beside.worktree ?? null;
+    }
     let id: string = randomUUID();
     let cwd = input.scratch === true ? this.scratchDirectory(id) : resolve(input.cwd);
     this.checkThreadDirectory(cwd);
@@ -2589,12 +2760,20 @@ export class ThreadManager {
 
     let branchSession = previous?.state === 'ready' ? previous.branchSession : null;
     if (!branchSession) {
-      const [agentTurns, hubTexts] = await Promise.all([
-        adapter.loadHistory(thread.agentSessionId, thread.cwd),
-        Promise.resolve(starts.map((ev) => turnKey(String(ev.data.text ?? '')))),
-      ]);
-      const matched = matchTurns(agentTurns.map((t) => turnKey(t.text)), hubTexts, ThreadManager.SYNC_SKIP_TOLERANCE);
-      const agentIndex = matched?.hubToAgent[hubIndex] ?? -1;
+      const sessionTurns = this.sessionHubTurns(thread);
+      const hubKeys = sessionTurns.complete ? sessionTurns.keys : starts.map((ev) => turnKey(String(ev.data.text ?? '')));
+      const targetIndex = sessionTurns.complete ? sessionTurns.prefixCount + hubIndex : hubIndex;
+      const replayed = await adapter.loadHistory(thread.agentSessionId, thread.cwd);
+      let agentTurns: Array<Pick<HistoryTurn, 'text' | 'forkRef' | 'forkBeforeRef'>> = replayed;
+      let matched = matchTurns(agentTurns.map((t) => turnKey(t.text)), hubKeys, ThreadManager.SYNC_SKIP_TOLERANCE);
+      if ((!matched || matched.hubToAgent[targetIndex] < 0) && adapter.forkPoints) {
+        const points = await adapter.forkPoints(thread.agentSessionId, thread.cwd);
+        if (points) {
+          agentTurns = points;
+          matched = matchTurns(agentTurns.map((t) => turnKey(t.text)), hubKeys, ThreadManager.SYNC_SKIP_TOLERANCE);
+        }
+      }
+      const agentIndex = matched?.hubToAgent[targetIndex] ?? -1;
       if (agentIndex < 0) throw new HttpError(409, `this turn is not in ${thread.agent}'s own history, so it cannot be edited`);
       const at = agentTurns[agentIndex];
       try {
@@ -2694,8 +2873,8 @@ export class ThreadManager {
 
   private async startTurnReady(
     threadId: string,
-    input: { voiceSummary?: string; workMode?: unknown; text?: unknown; displayText?: string; channel?: TurnChannel; coalesce?: TurnBatch; images?: unknown; videos?: unknown; queue?: unknown; mentions?: unknown; collaboration?: CoordinationSetup; handoverFrom?: string; autoContinuation?: boolean; handover?: unknown; scheduled?: unknown; review?: boolean; proactive?: unknown; fromUser?: boolean },
-    delivery?: { turnId: string; source: Record<string, unknown>; displayText: string; claim: () => void },
+    input: { voiceSummary?: string; workMode?: unknown; text?: unknown; displayText?: string; channel?: TurnChannel; coalesce?: TurnBatch; images?: unknown; videos?: unknown; queue?: unknown; mentions?: unknown; collaboration?: CoordinationSetup; handoverFrom?: string; autoContinuation?: boolean; handover?: unknown; scheduled?: unknown; review?: boolean; proactive?: unknown; fromUser?: boolean; dispatchRunId?: string },
+    delivery?: { turnId: string; source: Record<string, unknown>; displayText: string; prepare?: () => Promise<void>; claim: () => void },
     fromQueue = false,
     reservedTurnId?: string,
     beforeStart?: (turnId: string) => void,
@@ -2707,9 +2886,11 @@ export class ThreadManager {
     const originalText = typeof input.text === 'string' ? input.text.trim() : '';
     const reference = this.references.prepare(threadId, originalText, input.fromUser === true, input.handoverFrom);
     if (thread.workMode === 'plan' && /^\/goal(?:\s|$)/.test(originalText) && !['/goal', '/goal pause', '/goal clear'].includes(originalText)) throw new HttpError(409, '请切到执行模式后启动目标');
-    const mentions = Array.isArray(input.mentions) && input.mentions.length ? input.mentions : undefined;
-    if ((mentions || input.collaboration) && !this.coordination) throw new HttpError(400, '协作不可用');
-    let rawText = await this.coordination?.previewMentions(threadId, originalText, mentions, input.collaboration) ?? originalText;
+    // An exited thread still accepts the person's text, without stale collaboration setup/mentions.
+    const mentions = !thread.disabled && Array.isArray(input.mentions) && input.mentions.length ? input.mentions : undefined;
+    const collaboration = thread.disabled ? undefined : input.collaboration;
+    if ((mentions || collaboration) && !this.coordination) throw new HttpError(400, '协作不可用');
+    let rawText = await this.coordination?.previewMentions(threadId, originalText, mentions, collaboration) ?? originalText;
     const rawImages = Array.isArray(input.images) ? input.images : [];
     const storedVideos = this.attachments.videos(threadId, input.videos);
     const videoIds = storedVideos.map(v => v.id);
@@ -2752,16 +2933,16 @@ export class ThreadManager {
       }
       if (queue.length >= MAX_QUEUED) throw new HttpError(409, `at most ${MAX_QUEUED} messages can wait in a thread`);
       this.attachments.check(rawImages); // a bad image is refused now, not when its turn comes
-      const queued: QueuedTurn = { ...(personalControl ? { assistantSay: personalControl.assistantSay } : {}), voiceSummary: input.voiceSummary, workMode: thread.workMode ?? 'execute', id: randomUUID(), text: originalText, displayText: input.displayText, channel: input.channel, ...(input.coalesce ? { coalesce: input.coalesce } : {}), images: rawImages, videos: videoIds, ...(mentions ? { mentions } : {}), ...(input.collaboration ? { collaboration: input.collaboration } : {}), ...(input.fromUser ? { fromUser: true } : {}) };
+      const queued: QueuedTurn = { ...(personalControl ? { assistantSay: personalControl.assistantSay } : {}), ...(input.dispatchRunId ? { dispatchRunId: input.dispatchRunId } : {}), voiceSummary: input.voiceSummary, workMode: thread.workMode ?? 'execute', id: randomUUID(), text: originalText, displayText: input.displayText, channel: input.channel, ...(input.coalesce ? { coalesce: input.coalesce } : {}), images: rawImages, videos: videoIds, ...(mentions ? { mentions } : {}), ...(collaboration ? { collaboration } : {}), ...(input.fromUser ? { fromUser: true } : {}) };
       this.references.grant(threadId, reference.references);
       this.queues.set(threadId, [...queue, queued]);
       this.emitThreadEvent(threadId, null, 'thread.updated', {});
       return { queued: true, id: queued.id };
     }
 
-    if ((mentions || input.collaboration) && !this.coordination?.metadata(threadId)) {
+    if ((mentions || collaboration) && !this.coordination?.enabled(threadId)) {
       if (!this.coordination) throw new HttpError(400, '协作不可用');
-      await this.coordination.enable(threadId, input.collaboration);
+      await this.coordination.enable(threadId, collaboration);
     }
     rawText = this.coordination?.mentionText(threadId, reference.text, mentions) ?? reference.text;
     // Slash commands have their own argument grammar; hidden instructions become unwanted arguments.
@@ -2797,7 +2978,13 @@ export class ThreadManager {
     const personalHuman = this.personal.router.status().threadId === threadId && input.fromUser === true
       && !delivery && !input.scheduled && !input.review && !input.proactive && !input.autoContinuation;
     const context = personalHuman && !slashCommand ? await this.personal.router.context(threadId) : null;
-    const promptText = (context?.text ?? '') + text + this.attachments.videoNote(threadId, storedVideos);
+    // Refresh automatic delivery endpoints after all async preparation, then claim synchronously.
+    if (delivery?.prepare) await delivery.prepare();
+    // Recheck mentions and summaries immediately before the irreversible local commit.
+    this.coordination?.mentionText(threadId, reference.text, mentions);
+    const promptText = this.coordination?.filterInstructions(input.handoverFrom ?? threadId,
+      (context?.text ?? '') + text + this.attachments.videoNote(threadId, storedVideos))
+      ?? (context?.text ?? '') + text + this.attachments.videoNote(threadId, storedVideos);
     // Internal callers may attach protocol context. Only the person's words (or a channel
     // summary) belong in the conversation, its queue, and later replay/continuation views.
     const displayText = delivery?.displayText ?? input.displayText ?? originalText.split('\n\n[指定协作对象]')[0];
@@ -2837,6 +3024,7 @@ export class ThreadManager {
           ...(fromUser ? { fromUser: true } : {}),
           ...(personalHuman ? { personalOrigin: 'person' } : {}),
           ...(personalControl ? { assistantSay: personalControl.assistantSay } : {}),
+          ...(input.dispatchRunId ? { dispatchRunId: input.dispatchRunId } : {}),
           ...(promptText !== displayText ? { displayText } : {}),
           ...(stored.length ? { images: stored } : {}),
           ...(storedVideos.length ? { videos: storedVideos } : {}),
@@ -2879,7 +3067,7 @@ export class ThreadManager {
    * The handover chain of a thread, oldest first, ending at the thread itself. The archive is
    * included: a chain often reaches back through quiet segments, and the successor can read those too.
    */
-  private handoverChain(thread: { id: string }): ChainSegment[] {
+  handoverChain(thread: { id: string }): ChainSegment[] {
     const all = [...this.store.listThreads(), ...this.store.listThreads({ archived: true })];
     const byId = new Map(all.map((t) => [t.id, t]));
     const self = byId.get(thread.id);
@@ -3037,8 +3225,12 @@ export class ThreadManager {
    * in a summary turn first, an agent target compresses the record; either way the brief goes over,
    * not a copy of the conversation. Without it the configured method decides.
    */
-  async takeOver(id: string, agent: unknown, model: unknown, note: unknown, summary?: unknown): Promise<ThreadView> {
+  async takeOver(id: string, agent: unknown, model: unknown, note: unknown, summary?: unknown, returnTo?: unknown): Promise<ThreadView> {
     const thread = this.getThread(id);
+    if (returnTo !== undefined) {
+      if (typeof returnTo !== 'string') throw new HttpError(400, 'invalid return target');
+      agent = this.getThread(returnTo).agent;
+    }
     if (typeof agent !== 'string' || !this.adapters.has(agent) || agent === thread.agent && !model) throw new HttpError(400, 'invalid handover target');
     if (model !== undefined && typeof model !== 'string') throw new HttpError(400, 'invalid model');
     if (note !== undefined && (typeof note !== 'string' || note.length > 20_000)) throw new HttpError(400, 'invalid note');
@@ -3046,6 +3238,7 @@ export class ThreadManager {
     if (writer !== undefined && writer !== 'source' && (!writer || typeof writer !== 'object' || typeof writer.agent !== 'string' || !this.adapters.has(writer.agent)
       || writer.model !== undefined && (typeof writer.model !== 'string' || !writer.model || writer.model.length > 200))) throw new HttpError(400, 'invalid summary writer');
     if (this.running.has(id) || this.threadView(id).waiting) throw new HttpError(409, 'the thread is busy');
+    if (returnTo && !(await this.autoHandover.returnTargets(id)).some(r => r.threadId === returnTo)) throw new HttpError(409, 'that conversation cannot take the work back now');
     this.autoHandover.cancel(id);
     this.quotaResume.drop(id);
     this.autoRetry.drop(id);
@@ -3054,6 +3247,13 @@ export class ThreadManager {
     const last = this.store.listTurns(id).at(-1)?.turnId ?? null;
     const failed = last && this.store.listTurnEvents(id, last).some(e => e.type === 'turn.error') ? last : null;
     const target = { agent, ...(model ? { model } : {}) };
+    if (returnTo) {
+      const brief = writer === 'source' ? await this.autoHandoverSummary(id, agent, false) : await this.handoverSummary(id, null, { compress: writer ? [{ agent: writer.agent, ...(writer.model ? { model: writer.model } : {}) }] : true }).then(r => {
+        if (!('summary' in r)) throw new HttpError(409, 'handover summary unavailable');
+        return r.summary;
+      });
+      return this.executeReturnHandover(id, returnTo, this.returnBrief(brief), failed, note?.trim());
+    }
     if (writer === 'source') return this.executeAutoHandover(id, target, await this.autoHandoverSummary(id, agent, false), failed, note?.trim());
     if (!writer && this.autoHandover.settings().method === 'resume' && await this.canResumeHandover(id, agent, failed)) {
       const sessionId = await this.importHandoverSession(id, agent);
@@ -3075,7 +3275,7 @@ export class ThreadManager {
     // re-reads it; past this size a brief and `calli history` cost far less than carrying it over.
     if ((this.store.lastContextUsed(id) ?? 0) > RESUME_HANDOVER_MAX_CONTEXT) return false;
     // A teammate's place moves with the successor's first turn; without a failed turn to resend there is none.
-    if (!failedTurn && this.coordination?.metadata(id)) return false;
+    if (!failedTurn && this.coordination?.enabled(id)) return false;
     const agents = await this.listAgents();
     const kind = (agent: string) => agents.find(a => a.id === agent)?.adapter;
     return kind(thread.agent) !== undefined && kind(thread.agent) === kind(target);
@@ -3144,6 +3344,66 @@ export class ThreadManager {
     if (queue.length) this.setQueue(successor.id, [...(this.queues.get(successor.id) ?? []), ...queue]);
     this.startNextQueued(successor.id);
     return this.threadView(successor.id);
+  }
+
+  /**
+   * Hands the work back to an older conversation of the chain instead of opening a new one. The
+   * conversation goes on in its own native session: it gets what happened since it left as one
+   * turn (the brief), the failed turn and the waiting messages. Nothing is copied. The hub records
+   * the return on it (`handback`), so it is the chain's head again and the reading goes
+   * older part → the segments in between → its part after the return.
+   */
+  async executeReturnHandover(id: string, targetId: string, summary: string, failedTurn: string | null, note?: string): Promise<ThreadView> {
+    const head = this.getThread(id);
+    const old = this.getThread(targetId);
+    if (!old.agentSessionId) throw new HttpError(409, 'the older conversation has no session to go on in');
+    this.quotaResume.drop(id);
+    this.autoRetry.drop(id);
+    this.autoAdvance.drop(id);
+    const adapter = this.adapters.get(old.agent)!;
+    // Keep the level the head ran at, where the older conversation's agent has it.
+    if (head.permissionMode !== old.permissionMode && adapter.capabilities.permissionModes.includes(head.permissionMode as PermissionMode)) await this.updateThread(old.id, { permissionMode: head.permissionMode });
+    if (adapter.capabilities.workModes?.includes(head.workMode ?? 'execute') && (old.workMode ?? 'execute') !== (head.workMode ?? 'execute')) await this.updateThread(old.id, { workMode: head.workMode ?? 'execute' });
+    this.store.setHandback(old.id, { sourceId: head.id, afterSeq: this.store.history.latest(old.id), sourceSeq: this.store.history.latest(head.id), at: new Date().toISOString() });
+    this.personal.inherit(head.id, old.id);
+    this.autoHandover.inherit(id, old.id);
+    this.attachments.copyThread(id, old.id);
+    const failed = failedTurn ? this.store.listTurnEvents(id, failedTurn).find(e => e.type === 'turn.started') : undefined;
+    const images = ((failed?.data.images ?? []) as Array<{ id: string }>).map(img => {
+      const file = this.attachments.find(id, img.id);
+      if (!file) throw new HttpError(409, 'handover attachment unavailable');
+      return { mimeType: file.mimeType, data: readFileSync(file.path).toString('base64') };
+    });
+    const videos = ((failed?.data.videos ?? []) as Array<{ id: string }>).map(v => v.id);
+    const retry = failed ? String(failed.data.displayText ?? failed.data.text ?? '') : '';
+    const turnId = randomUUID();
+    const text = summary + (retry ? '\n\n## 继续未完成的这一轮\n\n' + retry : '') + (note ? '\n\n## 用户补充\n\n' + note : '');
+    const promptText = failed?.data.hiddenPrompt
+      ? summary + '\n\n## 继续未完成的这一轮\n\n' + String(failed.data.text) + (note ? '\n\n## 用户补充\n\n' + note : '')
+      : text;
+    try {
+      await this.startTurn(old.id, { text: promptText, ...(failed?.data.hiddenPrompt ? { displayText: text } : {}), channel: failed?.data.channel as TurnChannel | undefined, images, videos, handoverFrom: id }, {
+        turnId, source: { handover: id }, displayText: text,
+        claim: () => this.coordination?.replaceHandoverMember(id, old.id, turnId),
+      });
+    } catch (error) {
+      this.store.setHandback(old.id, null);
+      throw error;
+    }
+    const queue = this.queues.get(id) ?? [];
+    this.setQueue(id, []);
+    if (queue.length) this.setQueue(old.id, [...(this.queues.get(old.id) ?? []), ...queue]);
+    this.startNextQueued(old.id);
+    this.emitThreadEvent(id, null, 'thread.updated', {});
+    return this.threadView(old.id);
+  }
+
+  /**
+   * The brief an older conversation is handed back with: the head's summary (it carries the chain's
+   * outline, so the older conversation knows every segment since it left) under a short lead-in.
+   */
+  returnBrief(summary: string): string {
+    return `# 交回\n\n任务交回给你：你离开之后由别的会话接着做了一段，下面是自你离开后的进展。你自己的会话上下文仍在，先对照现状再继续。\n\n${summary}`;
   }
 
   async executeAutoHandover(id: string, target: HandoverTarget, summary: string, failedTurn: string | null, note?: string): Promise<ThreadView> {
@@ -3217,7 +3477,8 @@ export class ThreadManager {
 
   /** Sends the next waiting message, if there is one. Called whenever a turn has finished. */
   private startNextQueued(threadId: string): void {
-    if (this.autoHandover.queuePaused(threadId) || this.running.has(threadId) || this.startingTurns.has(threadId) || this.dispatchingQueues.has(threadId)) return;
+    // Late preparation cleanup must not read the store or dispatch more work after shutdown.
+    if (this.stopping || this.autoHandover.queuePaused(threadId) || this.running.has(threadId) || this.startingTurns.has(threadId) || this.dispatchingQueues.has(threadId)) return;
     if (this.store.getThread(threadId)?.status === 'error' && this.store.lastTurnFailure(threadId)?.code === 'session_in_use') return;
     const queue = this.queues.get(threadId);
     const next = queue?.find(q => !q.error);
@@ -3226,7 +3487,7 @@ export class ThreadManager {
     this.dispatchingQueues.add(threadId);
     if (rest.length) this.queues.set(threadId, rest);
     else this.queues.delete(threadId);
-    this.startTurn(threadId, { workMode: next.workMode, text: next.text, displayText: next.displayText, channel: next.channel, voiceSummary: next.voiceSummary, images: next.images, videos: next.videos, mentions: next.mentions, collaboration: next.collaboration, fromUser: next.fromUser }, undefined, true, undefined, undefined, next.assistantSay ? { assistantSay: next.assistantSay } : undefined).catch((err) => {
+    this.startTurn(threadId, { workMode: next.workMode, text: next.text, displayText: next.displayText, channel: next.channel, voiceSummary: next.voiceSummary, images: next.images, videos: next.videos, mentions: next.mentions, collaboration: next.collaboration, fromUser: next.fromUser, ...(next.dispatchRunId ? { dispatchRunId: next.dispatchRunId } : {}) }, undefined, true, undefined, undefined, next.assistantSay ? { assistantSay: next.assistantSay } : undefined).catch((err) => {
       // The thread was archived or deleted in the meantime, or the message is no longer acceptable.
       console.error(`could not send a queued message: ${err instanceof Error ? err.message : err}`);
       if (this.store.getThread(threadId)) this.setQueue(threadId, [
@@ -3437,7 +3698,7 @@ export class ThreadManager {
   voiceProvider(threadId: string, fallbackProviderId?: string): { providerId: string } {
     const thread = this.getThread(threadId);
     const native = this.adapters.get(thread.agent)?.capabilities.realtimeVoice;
-    if (!native && !this.coordination?.metadata(threadId) && this.running.has(threadId)) {
+    if (!native && !this.coordination?.enabled(threadId) && this.running.has(threadId)) {
       throw new HttpError(409, 'voice_target_busy');
     }
     const providerId = native ? thread.agent : fallbackProviderId;
@@ -3514,8 +3775,9 @@ export class ThreadManager {
         authorize();
         if (provider !== this.getThread(threadId).agent) {
           nativeThreadId = await this.coordination!.voiceThread(threadId, provider);
-        } else if (this.coordination && !this.coordination.metadata(threadId) && !this.running.has(threadId)) {
-          await this.coordination.enable(threadId, { permission: this.getThread(threadId).permissionMode });
+        } else if (this.coordination && !this.getThread(threadId).disabled && this.coordination.metadata(threadId)?.enabled !== false
+          && !this.coordination.enabled(threadId) && !this.running.has(threadId)) {
+          await this.coordination.enable(threadId, { permission: this.getThread(threadId).permissionMode }, true);
         }
         if (ended) throw new Error('voice_session_ended');
         authorize();
@@ -3529,7 +3791,7 @@ export class ThreadManager {
         if (this.voiceProvider(threadId, provider).providerId !== provider || this.adapters.get(provider) !== adapter) {
           throw new Error('voice_provider_changed');
         }
-        let instructions = this.coordination?.metadata(nativeThreadId)
+        let instructions = !this.getThread(threadId).disabled && this.coordination?.enabled(nativeThreadId)
           ? this.coordination.instructions(nativeThreadId, '你在处理实时语音委托。普通聊天不派发任务。用户指定其他智能体时使用协作命令；先查现有成员，后续修改继续同一成员。派发立即返回，不等待任务结束、不轮询。结果自动交回后按真实状态简短汇报，失败或待处理要明确说出。不能把已派发或本轮已返回当作需求已完成。停止播报、结束语音和停止工作是不同动作，指代不清时先澄清。')
           : undefined;
         if (instructions && nativeThreadId !== threadId) {
@@ -3622,14 +3884,17 @@ export class ThreadManager {
   }
 
   private sessionOptions(thread: SessionContext, signal?: AbortSignal): StartOptions {
+    const ephemeral = this.backgroundThreads.has(thread.id);
     return {
       signal,
+      ...(ephemeral ? { ephemeral: true } : {}),
+      ...(!ephemeral && thread.title && thread.title !== 'New thread' ? { title: thread.title } : {}),
       borrowedTool: this.borrowing?.toolForThread(thread.id),
-      coordinationEnv: this.backgroundThreads.has(thread.id) ? {} : { ...this.coordination?.environment(thread.id), ...this.borrowing?.environment(thread.id), ...this.personal.environment(thread.id, thread.cwd) },
+      coordinationEnv: ephemeral ? {} : { ...this.coordination?.environment(thread.id), ...this.borrowing?.environment(thread.id), ...this.personal.environment(thread.id, thread.cwd) },
       cwd: thread.cwd,
-      resumeId: thread.agentSessionId ?? undefined,
+      resumeId: ephemeral ? undefined : thread.agentSessionId ?? undefined,
       onSessionId: (id) => {
-        if (!id || !this.store.getThread(thread.id)) return;
+        if (!id || ephemeral || !this.store.getThread(thread.id)) return;
         this.store.updateThread(thread.id, { agentSessionId: id });
         this.emitThreadEvent(thread.id, null, 'thread.updated', {});
       },
@@ -3746,7 +4011,7 @@ export class ThreadManager {
     this.personalScopes.set(thread.id, personalScope);
     this.sessions.set(thread.id, session);
     this.sessionAdapters.set(thread.id, adapter);
-    if (session.agentSessionId && session.agentSessionId !== thread.agentSessionId) {
+    if (!this.backgroundThreads.has(thread.id) && session.agentSessionId && session.agentSessionId !== thread.agentSessionId) {
       this.store.updateThread(thread.id, { agentSessionId: session.agentSessionId });
     }
     return session;

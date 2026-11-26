@@ -1,7 +1,7 @@
-import { AutoHandoverChoice } from './AutoHandover';
+import { AutoHandoverChoice, ReturnChoice } from './AutoHandover';
 import { useEffect, useRef, useState } from 'react';
 import { copyText } from '../clipboard';
-import type { AgentInfo, Api, Thread } from '../api';
+import type { AgentInfo, Api, ReturnTarget, Thread } from '../api';
 import { AgentPicker } from './Pickers';
 import { IconCheck, IconCopy, IconEdit } from './icons';
 import { t } from '../i18n';
@@ -29,10 +29,13 @@ export function HandoverDialog({ api, thread, agents, onOpen, onClose }: Props) 
   const timer = useRef<number | undefined>(undefined);
   const [target, setTarget] = useState(() => agents.find((a) => a.id === thread.agent && a.available && !a.hidden)?.id ?? agents.find((a) => a.available && !a.hidden)?.id ?? '');
   const [targetModel, setTargetModel] = useState<string | undefined>();
+  // An earlier conversation of the chain that could take the work back, offered beside a new one.
+  const [returns, setReturns] = useState<ReturnTarget[]>([]);
+  const [choice, setChoice] = useState<'return' | 'new'>('return');
   useEffect(() => {
     if (api.demo) return;
     let active = true;
-    void api.autoHandover(thread.id).then(v => { if (active && v.targets[0]) { setTarget(v.targets[0].agent); setTargetModel(v.targets[0].model); } }).catch(() => undefined);
+    void api.autoHandover(thread.id).then(v => { if (!active) return; if (v.targets[0]) { setTarget(v.targets[0].agent); setTargetModel(v.targets[0].model); } setReturns(v.returns ?? []); }).catch(() => undefined);
     return () => { active = false; };
   }, [api, thread.id]);
   const [creating, setCreating] = useState(false);
@@ -75,14 +78,15 @@ export function HandoverDialog({ api, thread, agents, onOpen, onClose }: Props) 
     } else setError(t('handover.copyFailed'));
   };
 
+  const toOld = choice === 'return' && returns.length > 0;
   const create = async () => {
-    if (!summary || !target || creatingRef.current) return;
+    if (!toOld && (!summary || !target) || creatingRef.current) return;
     creatingRef.current = true;
     setCreating(true);
     setError('');
     try {
-      const successor = await api.createHandoverThread(thread.id, target, targetModel, 'branch', takeTeam);
-      onOpen(successor, summary);
+      if (toOld) onOpen(await api.takeOver(thread.id, { agent: returns[0].agent }, undefined, undefined, returns[0].threadId), '');
+      else onOpen(await api.createHandoverThread(thread.id, target, targetModel, 'branch', takeTeam), summary!);
       onClose();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -96,32 +100,33 @@ export function HandoverDialog({ api, thread, agents, onOpen, onClose }: Props) 
     <div className="dialog-scrim" onClick={() => { if (!creatingRef.current) onClose(); }}>
       <div className="dialog handover" role="dialog" aria-modal="true" aria-labelledby="handover-title" onClick={(e) => e.stopPropagation()}>
         <h2 id="handover-title" className="dialog-title">{t('handover.title')}</h2>
-        <p className="dialog-message">{t('handover.message')}</p>
+        <p className="dialog-message">{t(toOld ? 'handover.messageOld' : 'handover.message')}</p>
         <AutoHandoverChoice api={api} thread={thread} />
-        <div className="handover-successor">
+        {returns.length > 0 && <ReturnChoice form returns={returns} value={choice} onChange={setChoice} disabled={creating} />}
+        {!toOld && <div className="handover-successor">
           <span>{t('handover.successor')}</span>
           <fieldset disabled={creating}>
             <AgentPicker api={api} agents={agents} value={target} onChange={id => { setTarget(id); setTargetModel(undefined); }} />
           </fieldset>
-        </div>
-        {targetModel && <p className="handover-note">{targetModel}</p>}
-        {teamSize > 0 && (
+        </div>}
+        {!toOld && targetModel && <p className="handover-note">{targetModel}</p>}
+        {!toOld && teamSize > 0 && (
           <label className="dialog-option">
             <input type="checkbox" checked={takeTeam} onChange={e => setTakeTeam(e.target.checked)} disabled={creating} />
             <span>{t('handover.takeTeam', teamSize)}</span>
           </label>
         )}
-        <p className="handover-cwd" title={thread.cwd}>{thread.cwd}</p>
-        {summary ? <pre className="handover-summary" tabIndex={0}>{summary}</pre> : !error && <p className="handover-note" role="status">{t('handover.preparing')}</p>}
+        {!toOld && <p className="handover-cwd" title={thread.cwd}>{thread.cwd}</p>}
+        {toOld ? null : summary ? <pre className="handover-summary" tabIndex={0}>{summary}</pre> : !error && <p className="handover-note" role="status">{t('handover.preparing')}</p>}
         {error && <p className="panel-error" role="alert">{error}</p>}
         <div className="dialog-actions">
           {error && !summary && <button className="ghost" onClick={() => setRevision((v) => v + 1)}>{t('common.retry')}</button>}
           <button className="ghost" onClick={onClose} disabled={creating}>{t('common.close')}</button>
-          <button className="ghost" onClick={() => void copy()} disabled={!summary}>
+          {!toOld && <button className="ghost" onClick={() => void copy()} disabled={!summary}>
             {copied ? <IconCheck size={15} /> : <IconCopy size={15} />} {copied ? t('common.copied') : t('handover.copy')}
-          </button>
-          <button className="primary" onClick={() => void create()} disabled={!summary || !agents.some((a) => a.id === target && a.available && !a.hidden) || creating}>
-            <IconEdit size={15} /> {creating ? t('handover.creating') : t('handover.create')}
+          </button>}
+          <button className="primary" onClick={() => void create()} disabled={!toOld && (!summary || !agents.some((a) => a.id === target && a.available && !a.hidden)) || creating}>
+            <IconEdit size={15} /> {creating ? t('handover.creating') : toOld ? t('takeover.start') : t('handover.create')}
           </button>
         </div>
       </div>

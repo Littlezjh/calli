@@ -2454,7 +2454,8 @@ html.list-open body {
 
 /* On a phone the strip holds agent, directory and this; its icon alone tells folder from worktree. */
 @media (max-width: 640px) {
-  .workspace-btn > span {
+  .workspace-btn > span,
+  .beside-chip > span {
     display: none;
   }
 }
@@ -5023,6 +5024,7 @@ input.picker-search {
   font-size: 13px;
 }
 
+.handover-successor.stacked { flex-direction: column; align-items: flex-start; gap: 6px; }
 .handover-successor fieldset {
   min-width: 0;
   margin: 0;
@@ -7828,6 +7830,131 @@ div.file-card:hover { background: var(--surface); }
   background: var(--hover);
 }
 
+/* The viewer shares the sheet with the conversation; only narrow screens and an explicit
+   expansion cover it. Its content stays mounted in every layout, preserving the VNC session. */
+.desktop-side {
+  position: relative;
+  flex: none;
+  min-width: 0;
+  height: 100%;
+  border-left: 1px solid var(--border);
+  container-type: inline-size;
+}
+
+.desktop-side[hidden] {
+  display: none;
+}
+
+.desktop-side-page {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  width: 100%;
+  border: 0;
+  padding-top: env(safe-area-inset-top);
+  background: var(--bg);
+}
+
+.desktop-side .desktop-panel {
+  animation: none;
+  outline: none;
+}
+
+.desktop-resize {
+  position: absolute;
+  inset: 0 auto 0 -4px;
+  width: 8px;
+  z-index: 4;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.desktop-resize:hover,
+.desktop-resize:focus-visible {
+  background: var(--hover);
+}
+
+.desktop-chat-return {
+  position: relative;
+  z-index: 4;
+  flex: none;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 12px;
+  font-size: 12px;
+  background: var(--surface);
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+}
+
+.desktop-chat-return button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 0;
+  color: var(--text);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+.desktop-chat-return button:hover {
+  background: var(--hover);
+}
+
+.desktop-panel.touch .desktop-chat-return {
+  color: var(--viewer-muted);
+  background: var(--viewer-bg);
+  border-color: var(--viewer-rim);
+}
+
+.desktop-panel.touch .desktop-chat-return button {
+  color: var(--viewer-fg);
+}
+
+.desktop-chat-return.attention {
+  color: var(--warn);
+}
+
+.desktop-chat-return ~ .desktop-touch-head {
+  top: 44px;
+}
+
+.desktop-chat-return ~ .desktop-stage.touch .desktop-viewport {
+  top: 108px;
+}
+
+.desktop-side:not(.desktop-side-page) .panel-head {
+  min-height: 56px;
+  padding: 10px 12px;
+}
+
+.desktop-side:not(.desktop-side-page) .panel-title {
+  display: none;
+}
+
+@container (max-width: 500px) {
+  .desktop-panel .desktop-control span {
+    display: none;
+  }
+  .desktop-panel .desktop-control {
+    padding: 0 8px;
+  }
+  .desktop-panel .desktop-actions {
+    gap: 0;
+  }
+  .desktop-panel .desktop-actions .icon-btn {
+    width: 30px;
+    height: 32px;
+    padding: 5px;
+  }
+}
+
 .desktop-name {
   min-width: 0;
   overflow: hidden;
@@ -10393,6 +10520,7 @@ div.file-card:hover { background: var(--surface); }
   font-size: 13px;
 }
 .model-back svg { transform: rotate(180deg); }
+.model-refresh { margin-left: auto; }
 
 .context-compact {
   border-top: 1px solid var(--border);
@@ -10459,6 +10587,13 @@ div.file-card:hover { background: var(--surface); }
 .compact .agent-stack { width: 21px; height: 21px; }
 .compact .agent-stack > svg:first-child { -webkit-mask: radial-gradient(circle at -2px -2px, transparent 8px, var(--text) 8.6px); mask: radial-gradient(circle at -2px -2px, transparent 8px, var(--text) 8.6px); }
 .team-member-text { flex: 1; }
+/* A card with both a handover chain and a team: which fold is which, as the overview marks them. */
+.handover-toggle-kind { display: inline-flex; color: var(--muted); }
+/* Chain and team in one row: two compact toggles side by side, one chevron at the end for the row. */
+.handover-toggles { display: flex; align-items: center; gap: 2px; min-width: 0; }
+.handover-toggle.inline { width: auto; flex: none; padding: 0 8px 0 10px; }
+.handover-toggle.inline[aria-expanded="true"] { background: var(--hover); color: var(--text); }
+.handover-toggles-chevron { margin-left: auto; padding-right: 12px; display: inline-flex; color: var(--faint); }
 .team-note { color: var(--positive); }
 .handover-member-time { flex: none; margin-left: auto; padding-left: 6px; font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .handover-chain { width: min(420px, calc(100vw - 32px)); }
@@ -12785,7 +12920,6 @@ button.trace-step-head:hover { background: var(--hover); }
 
 /* Handover segments keep their own history clients inside one continuous document. */
 .merged-history { max-width: var(--content-w); margin: 0 auto; }
-.history-segment + .history-segment { margin-top: 16px; }
 .handover-divider { border: 0; background: none; font-family: inherit; text-align: left; cursor: pointer; width: 100%; }
 .handover-divider:hover { color: var(--text); }
 .handover-divider[aria-expanded="true"] svg:last-child { transform: rotate(90deg); }
@@ -12803,9 +12937,80 @@ button.trace-step-head:hover { background: var(--hover); }
 .handover-card-empty { padding: 2px 0 6px; color: var(--faint); font-size: 12.5px; text-align: center; }
 .chain-later { min-height: 28px; padding: 6px 0; color: var(--muted); font-size: 12px; text-align: center; }
 .chain-beginning { color: var(--muted); font-size: 12px; text-align: center; padding: 8px 0; }
-.handover-readonly { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 2px 16px; width: fit-content; max-width: calc(100% - 32px); margin: 0 auto 8px; padding: 6px 16px; color: var(--muted); font-size: 12px; text-align: center; }
-.handover-readonly.glass-control { --glass-bg: color-mix(in srgb, var(--surface) 88%, transparent); --glass-filter: blur(12px) saturate(180%); border-radius: var(--radius-lg); }
-.handover-readonly-actions { display: flex; align-items: center; justify-content: center; gap: 14px; flex-shrink: 0; }
+/* Between two segments of a chain: a hairline with the conversation's face on it, nothing else. */
+.chain-line { display: flex; flex-direction: row; align-items: center; gap: 12px; margin: 14px 0 6px; color: var(--faint); font-size: 12px; }
+.chain-line::before, .chain-line::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+.chain-line-text { display: inline-flex; align-items: center; gap: 7px; min-width: 0; max-width: 100%; }
+.chain-line-text > svg { flex: none; }
+.chain-line-title { min-width: 0; max-width: 28ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0; border: 0; background: none; color: var(--muted); font: inherit; cursor: pointer; }
+@media (hover: hover) { .chain-line-title:hover { color: var(--text); text-decoration: underline; text-underline-offset: 3px; } }
+.chain-line-meta { flex: none; white-space: nowrap; }
+@media (max-width: 640px) { .chain-line-time { display: none; } }
+#handover-choice-label { white-space: nowrap; }
+/* The same line, floated over the top of the reading once the segment's own has scrolled away: sticky with no height, so nothing moves. */
+.chain-float { position: sticky; top: -20px; z-index: 4; height: 0; overflow: visible; pointer-events: none; }
+.chain-line-float { position: absolute; top: 0; left: 0; right: 0; margin: 0; padding: 6px 0; pointer-events: auto; background: var(--bg); }
+.chain-line-float::after { order: 2; }
+.chain-line-latest { order: 3; margin-right: -4px; display: inline-grid; place-items: center; flex: none; width: 24px; height: 24px; padding: 0; border: 0; border-radius: var(--radius-pill); background: none; color: var(--muted); cursor: pointer; }
+@media (hover: hover) { .chain-line-latest:hover { background: var(--hover); color: var(--text); } }
+.row.chain-followups { display: block; color: var(--faint); font-size: 12px; text-align: center; padding: 6px 0 2px; }
+.chain-followups .text-btn { display: inline; width: auto; min-height: 0; padding: 0; background: none; font-size: 12px; text-decoration: underline; text-underline-offset: 3px; }
+/* One segment to a page: short ones leave room below, the end is a quiet line, and the pull past it is a pill. */
+.merged-history.paged { position: relative; }
+.chain-page { display: flex; flex-direction: column; min-height: var(--chain-min, 0); transition: transform 0.2s ease, opacity 0.2s ease; }
+.chain-page.chain-settling { opacity: 0; }
+.chain-end { display: flex; align-items: center; gap: 10px; margin-top: auto; padding: 28px 0 10px; color: var(--faint); font-size: 12px; }
+.chain-end::before, .chain-end::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+.chain-end-sep { color: var(--faint); }
+.chain-end-next { padding: 0; border: 0; background: none; color: var(--muted); font: inherit; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.chain-end-next:hover { color: var(--text); }
+.chain-end-next:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: var(--radius-sm); }
+.chain-status { padding: 16px 0; text-align: center; }
+.chain-older { display: flex; justify-content: center; min-height: 28px; }
+.chain-enter-next { animation: chain-in-next 0.24s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+.chain-enter-prev { animation: chain-in-prev 0.24s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+.chain-leaving-next { opacity: 0; transform: translateY(-14px); transition-duration: 0.13s; }
+.chain-leaving-prev { opacity: 0; transform: translateY(14px); transition-duration: 0.13s; }
+@keyframes chain-in-next { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+@keyframes chain-in-prev { from { opacity: 0; transform: translateY(-14px); } to { opacity: 1; transform: none; } }
+/* The pull's pill hangs from a sticky anchor with no height, so showing it moves nothing. */
+.chain-pill-anchor { position: sticky; z-index: 6; height: 0; pointer-events: none; }
+.chain-pill-anchor.top { top: 8px; }
+.chain-pill-anchor.bottom { bottom: 0; }
+.chain-pill { position: absolute; left: 50%; display: flex; align-items: center; gap: 8px; max-width: calc(100% - 16px); padding: 6px 14px 6px 8px; border: 1px solid var(--border); border-radius: var(--radius-pill); background: var(--surface); box-shadow: var(--shadow-card); color: var(--muted); font-size: 12.5px; white-space: nowrap; opacity: 0; transform: translateX(-50%); transition: opacity 0.15s; }
+.chain-pill > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.chain-pill-anchor.top .chain-pill { top: 0; }
+.chain-pill-anchor.bottom .chain-pill { bottom: 14px; padding: 6px 8px 6px 14px; }
+.chain-pill.on { opacity: 1; }
+.chain-pill.ready { color: var(--text); }
+.chain-pill-ring { flex: none; width: 24px; height: 24px; }
+.chain-pill-ring circle { fill: none; stroke-width: 2.4; }
+.chain-pill-ring .bg { stroke: var(--border); }
+.chain-pill-ring .fg { stroke: var(--muted); stroke-linecap: round; }
+.chain-pill.ready .chain-pill-ring .fg { stroke: var(--text); }
+/* Desktop only: a column of dots at the reading's side, one a segment; the current one is a short bar. */
+.chain-rail { position: sticky; top: 45%; z-index: 3; height: 0; pointer-events: none; }
+.chain-rail-dots { position: absolute; right: -14px; top: 0; display: flex; flex-direction: column; align-items: center; gap: 4px; transform: translateY(-50%); pointer-events: auto; }
+.chain-rail-dot { position: relative; width: 8px; height: 8px; padding: 0; border: 0; border-radius: var(--radius-pill); background: var(--border-strong); cursor: pointer; }
+.chain-rail-dot::after { content: ''; position: absolute; inset: -5px -6px; }
+.chain-rail-dot[aria-current="true"] { height: 20px; border-radius: 4px; background: var(--text); }
+.chain-rail-dot:hover { background: var(--muted); }
+.chain-rail-dot:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (hover: none), (pointer: coarse) { .chain-rail, .chain-end-next, .chain-end-sep { display: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .chain-page { transition: none; }
+  .chain-enter-next, .chain-enter-prev { animation: none; }
+}
+/* Beside the input, while a message is aimed at an earlier segment. */
+.send-target { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; height: 28px; padding: 0 4px 0 9px; border-radius: var(--radius-pill); background: var(--hover); color: var(--muted); font-size: 12px; }
+.send-target-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.send-target-back { display: inline-grid; place-items: center; width: 20px; height: 20px; padding: 0; border: 0; border-radius: var(--radius-pill); background: none; color: inherit; cursor: pointer; }
+@media (hover: hover) { .send-target-back:hover { background: var(--border); color: var(--text); } }
+/* Offered beside the countdown: an older conversation to go back to, or a new one. */
+.handover-choice { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 6px; margin: 4px 0 0; }
+.handover-choice button { max-width: 100%; min-height: 28px; padding: 0 10px; border: 1px solid transparent; border-radius: var(--radius-pill); background: none; color: var(--muted); font: inherit; font-size: 12.5px; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.handover-choice button[aria-checked="true"] { border-color: var(--border-strong); background: var(--hover); color: var(--text); }
+@media (hover: hover) { .handover-choice button:hover { color: var(--text); } }
 .handover-mode { border-bottom: 1px solid var(--border); margin-bottom: 4px; }
 
 /* Handover details expand per instance; the default view remains a compact list. */
@@ -13189,6 +13394,9 @@ button.trace-step-head:hover { background: var(--hover); }
 .agent-notice a { color: var(--muted); text-underline-offset: 3px; }
 .agent-notice-link { padding: 0; border: 0; background: none; color: var(--muted); font: inherit; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
 .agent-notice-link:hover { color: var(--text); }
+.agent-warning { flex-wrap: nowrap; align-items: flex-start; overflow-wrap: anywhere; }
+.agent-warning > svg { align-self: flex-start; margin-top: 3px; }
+.agent-warning.warn > svg { color: var(--warn); }
 /* A turn a channel started: a quiet centred line where a bubble would be. */
 .row.channel-note { display: flex; flex-direction: row; align-items: center; justify-content: center; gap: 6px; color: var(--muted); font-size: 12px; line-height: 1.6; }
 .row.channel-note > svg { flex-shrink: 0; }

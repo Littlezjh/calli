@@ -16,6 +16,7 @@ import { forkBlocked, useThreadActions } from './components/ThreadActions';impor
 import type { Theme } from './appearance';
 import {
   Api,
+  coordinationSettings,
   ApiError,
   AuthError,
   MAX_QUEUED,
@@ -25,6 +26,7 @@ import {
   type GeneralSettings,
   type GoalView,
   type HandoverTarget,
+  type ReturnTarget,
   type ModelOption,
   type Section,
   type SlashCommand,
@@ -34,7 +36,7 @@ import {
   type WorkdirsConfig,
 } from './api';
 import type { HubAction } from './commands';
-import { buildProjectOptions } from './projects';
+import { buildProjectOptions, projectRoot } from './projects';
 import { rootRows, withWorkdirs } from './workdirs';
 import { isBounce, useAppHistory } from './appHistory';
 import { useAppearance, useInTitlebar, useIsCompact, useListSwipe, useMinWidth, useStoredFlag } from './hooks';
@@ -54,7 +56,7 @@ import { ArchivePanel } from './components/ArchivePanel';
 import { Composer, prefillComposerDraft, type DraftNote } from './components/Composer';
 import { HandToAssistant, type MessageSnapshot } from './components/MessageActions';
 import type { ContextReference } from './context-references';
-import { CollaborationMenu } from './components/CollaborationMenu';
+import { CollaborationMenu, collaborationMembers } from './components/CollaborationMenu';
 import { DirectoryPicker } from './components/DirectoryPicker';
 import { Dialog } from './components/Dialog';
 import { HostDown, HostsPanel, MachinePicker } from './components/Hosts';
@@ -105,18 +107,20 @@ import { ThreadPeek } from './components/ThreadPeek';
 import { RemoteThreadMenu } from './extensions/RemoteThreadMenu';
 import { ExtensionView } from './extensions/ExtensionView';
 import { machineSummaries, threadMachine, parseThreadLink } from './extensions/project';
+import { threadLinkHash, type ThreadDeepLink } from './thread-deep-links';
 import { createThreadFeed } from './extensions/thread-feed';
 import { cachedAgentMarks, cachedThreads, rememberAgentMarks, rememberThreads } from './thread-cache';
 import { cachedAgents, cachedDraft, cachedModels, cachedPet, rememberAgents, rememberDraft, rememberModels, rememberPetBust, rememberPetStatus } from './host-cache';
-import { clampSidebarWidth, defaultSidebarWidth, projectDir, savedSidebarWidth, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH, type HostSource } from './sidebar';
+import { clampSidebarWidth, defaultSidebarWidth, handoverGroups, ownRows, projectDir, savedSidebarWidth, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH, type HostSource } from './sidebar';
 import { enabledViews, extensionHash, looksLikeExtensionRoute, resolveExtensionRoute } from './extensions/routes';
-import { AgentPicker, type DiscoveredAccount, type DiscoveredAgent, effortsForModel, imagesBlocked, imagesNote, modelName, speedsForModel, ModelPicker, PermissionPicker, UsageMeter, WorkspacePicker } from './components/Pickers';
+import { AgentPicker, type DiscoveredAccount, type DiscoveredAgent, effortsForModel, imagesBlocked, imagesNote, modelName, resolveModel, speedsForModel, ModelPicker, PermissionPicker, UsageMeter, WorkspacePicker } from './components/Pickers';
 import { Sidebar, SIDEBAR_SHORTCUT } from './components/Sidebar';
 import { MergedHistory } from './components/MergedHistory';
 import { currentPlan, PlanButton } from './components/PlanPanel';
-import { HandoverComposer } from './components/HandoverComposer';
+import { HandoverComposer, SendTargetMark } from './components/HandoverComposer';
 import { WritingBar } from './components/WritingBar';
 import { handoverHistoryKey, laterSegment, latestHandoverThread } from './handover';
+import type { ChainFocus } from './components/MergedHistory';
 import { TurnRuler } from './components/TurnRuler';
 import { NewProjectDialog, ProjectPicker, RootsDialog } from './components/Projects';
 import { NoteMarks, type NoteMark } from './components/NoteMarks';
@@ -124,7 +128,7 @@ import { ConnectDialog, DemoBar } from './components/ConnectDialog';
 import { DemoApi, DemoError } from './demo/DemoApi';
 import { EMPTY_MODEL_PREFERENCE, type DraftModelPreference } from '../../daemon/src/model-preferences';
 import { clampQuickSwitchBottom, savedQuickSwitchBottom, saveQuickSwitchBottom, useQuickSwitchMode } from './quick-switch';
-import { IconCheck, IconBell, AgentMark, IconActivity, IconAgents, IconArchive, IconArrowLeft, IconArrowDown, IconBack, IconClose, IconEdit, IconFolder, IconGauge, IconGlobe, IconImport, IconList, IconMenu, IconSettings, IconMore, IconOverview, IconPalette, IconPlus, IconPuzzle, IconServer, IconSidebar, IconSignIn, IconSignOut, IconSparkle, IconTerminal, IconTrace, IconLanguage, IconWaveform, IconSideChat } from './components/icons';
+import { IconCheck, IconBell, AgentMark, IconActivity, IconAgents, IconArchive, IconArrowLeft, IconArrowDown, IconBack, IconClose, IconEdit, IconFolder, IconGauge, IconGlobe, IconImport, IconList, IconMenu, IconSettings, IconMore, IconOverview, IconPalette, IconPlus, IconPuzzle, IconServer, IconSidebar, IconSignIn, IconSignOut, IconSparkle, IconTerminal, IconTrace, IconLanguage, IconWaveform, IconSideChat, IconWorktree } from './components/icons';
 import { StatReadings } from './components/SessionStats';
 import { ThreadTracePanel } from './components/TracePanel';
 import { chooseLocale, locale, LOCALES, localeChoice, t } from './i18n';
@@ -475,18 +479,11 @@ function savedMemberDefaults(key: string): Record<string, MemberDefault> {
 }
 
 function fitDraftModelPreference(value: DraftModelPreference, models: ModelOption[], effortLevels: string[], canSpeed: boolean): DraftModelPreference {
-  let rawModel = value.model;
-  let rawEffort = value.effort;
-  // Upgrade a remembered legacy suffixed model id (e.g. `gemini-4-carbon-high`) once folded models arrive.
-  if (rawModel && !rawEffort && models.length > 0 && !models.some((option) => option.id === rawModel)) {
-    const folded = models.find((option) => option.efforts?.some((level) => `${option.id}-${level}` === rawModel));
-    if (folded) {
-      rawEffort = rawModel.slice(folded.id.length + 1);
-      rawModel = folded.id;
-    }
-  }
-  const model = rawModel && models.length > 0 && !models.some((option) => option.id === rawModel) ? null : rawModel;
+  const resolved = value.model && models.length > 0 ? resolveModel(models, value.model) : undefined;
+  const impliedEffort = value.model && resolved && resolved.id !== value.model ? value.model.slice(resolved.id.length + 1) : null;
+  const model = value.model && models.length > 0 ? (resolved?.id ?? null) : value.model;
   const levels = effortsForModel(models, model, effortLevels);
+  const rawEffort = value.effort ?? impliedEffort;
   const effort = rawEffort && (levels.includes(rawEffort) || (models.length === 0 && effortLevels.length === 0)) ? rawEffort : null;
   const speeds = speedsForModel(models, model);
   const speed = canSpeed && value.speed && (models.length === 0 || speeds.some((option) => option.id === value.speed)) ? value.speed : null;
@@ -834,6 +831,8 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   const [memberPermission, setMemberPermission] = useState(() => localStorage.getItem(`${memberDefaultsKey}.permission`) ?? 'full_access');
   const [agentsOpen, setAgentsOpen] = useState(false);
   const [draftCollaboration, setDraftCollaboration] = useState(false);
+  const draftTransferSource = useRef<{ key: string; transfer: (targetKey: string) => void } | null>(null);
+  const createdDraftScope = useRef<{ id: string; hostId: string | null } | null>(null);
   const [collaborationDirectories, setCollaborationDirectories] = useState<string[]>([]);
   const [historyTurnIds, setHistoryTurnIds] = useState<string[]>([]);
   const [events, setEvents] = useState<StoredEvent[]>([]);
@@ -849,6 +848,9 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   // A new thread may start in a git worktree of its directory; offered only when the directory is in a repository.
   const [draftWorktree, setDraftWorktree] = useState(false);
   const [worktreeOffer, setWorktreeOffer] = useState<{ cwd: string; branch: string | null; changes: number } | null>(null);
+  // A new thread beside an existing one: its exact directory and worktree, until another directory is picked.
+  const [draftBeside, setDraftBeside] = useState<{ threadId: string; cwd: string; project: string; worktree: string | null } | null>(null);
+  const beside = draftBeside?.cwd === draftCwd && !draftScratch && !draftTeam ? draftBeside : null;
   const [draftSectionId, setDraftSectionId] = useState<string | null>(null);
   const [draftWorkMode, setDraftWorkMode] = useState<WorkMode>('execute');
   const [modeBusy, setModeBusy] = useState(false);
@@ -862,7 +864,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   const draftChoice = fitDraftModelPreference(modelPreferences.preferences[draftAgent] ?? EMPTY_MODEL_PREFERENCE,
     modelsByAgent[draftAgent] ?? [], draftCaps?.effortLevels ?? [], Boolean(draftCaps?.speed));
   const { model: draftModel, effort: draftEffort, speed: draftSpeed } = draftChoice;
-  const consumeDraftWarmup = useDraftWarmup(api, !selectedId && view === 'thread' && !draftTeam && !draftWorktree
+  const consumeDraftWarmup = useDraftWarmup(api, !selectedId && view === 'thread' && !draftTeam && !draftWorktree && !beside?.worktree
     && !draftCollaboration && !draftWriting && draftAgent && draftCaps?.prewarm && modelPreferences.status === 'ready'
     && (draftCwd || draftScratch) ? {
       agent: draftAgent, cwd: draftScratch ? '' : draftCwd, scratch: draftScratch,
@@ -995,6 +997,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   const [termOpen, setTermOpen] = useState(false);
   // Minimized keeps the connection: coming back shows the same desktop at once, without reconnecting.
   const [desktop, setDesktop] = useState<'closed' | 'open' | 'minimized'>('closed');
+  const [desktopControl, setDesktopControl] = useState(true);
   // Whether the machine shows a desktop (a VNC server runs on it): its entries appear only then.
   const [hasDesktop, setHasDesktop] = useState(false);
   useEffect(() => {
@@ -1035,6 +1038,8 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   const [restore, setRestore] = useState<{ text: string; nonce: number; mentions?: AgentMention[] } | null>(null);
   // Text quoted out of a message by selecting it.
   const composerDraftKey = hostId ? `host:${hostId}:${selectedId ?? (draftTeam ? `new:team:${draftTeam}` : 'new')}` : selectedId ?? (draftTeam ? `new:team:${draftTeam}` : 'new');
+  const composerScope = useRef({ selectedId, hostId, api, draftKey: composerDraftKey });
+  composerScope.current = { selectedId, hostId, api, draftKey: composerDraftKey };
   const [noteSignal, setNoteSignal] = useState<{ draftKey: string; note: DraftNote & { nonce: number } } | null>(null);
   const [messageReference, setMessageReference] = useState<{ draftKey: string; value: ContextReference; nonce: number } | null>(null);
   const [assistantMessage, setAssistantMessage] = useState<MessageSnapshot | null>(null);
@@ -1065,7 +1070,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   // The passage a side chat was opened for, if one is open.
   const [sideAsk, setSideAsk] = useState<{ text: string; nonce: number; source?: Thread } | null>(null);
   // A message waiting for the user to confirm sending into a session the terminal also used.
-  const [pendingSend, setPendingSend] = useState<{ text: string; images: PreparedImage[]; videos?: PreparedVideo[]; mentions?: AgentMention[]; resolve: () => void; reject: (e: unknown) => void } | null>(null);
+  const [pendingSend, setPendingSend] = useState<{ perform: () => Promise<void>; resolve: () => void; reject: (e: unknown) => void } | null>(null);
   const [pageHidden, setPageHidden] = useState(() => document.hidden);
   const baseTitle = useRef(document.title);
 
@@ -1112,7 +1117,23 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   const viewingEarlier = Boolean(selected && latestSegment && latestSegment.id !== selected.id);
   // Any thread that continues another one by a live link reads as one conversation, its ancestors
   // folded in above — a relay made by hand reads the same way as an automatic one.
-  const mergedHandover = !api.demo && singleSegmentId !== selectedId && Boolean((selected?.handover && !selected.handover.detached) || viewingEarlier);
+  const mergedHandover = !api.demo && singleSegmentId !== selectedId && Boolean((selected?.handover && !selected.handover.detached) || selected?.handback || viewingEarlier);
+  // Reading a chain, a message goes to the segment the reading is at; the one the page is on otherwise.
+  const [chainFocus, setChainFocus] = useState<ChainFocus | null>(null);
+  useEffect(() => { setChainFocus(null); }, [selectedId, mergedHandover]);
+  const focusedThread = mergedHandover && chainFocus && chainFocus.threadId !== selectedId ? threads.find(item => item.id === chainFocus.threadId) ?? null : null;
+  const inputThread = focusedThread ?? selected;
+  // The segment a message is aimed at is not the chain's latest: say so, quietly, beside the input.
+  const aimedAtEarlier = Boolean(mergedHandover && latestSegment && inputThread && inputThread.id !== latestSegment.id);
+  const [latestSignal, setLatestSignal] = useState(0);
+  const goLatest = () => {
+    if (!latestSegment) return;
+    if (latestSegment.id !== selectedId) { pick(latestSegment.id); return; }
+    setLatestSignal(n => n + 1);
+    stickToBottom.current = true;
+    const scroller = scrollerRef.current;
+    if (scroller) scroller.scrollTo({ top: scroller.scrollHeight });
+  };
   const selectDraftAgent = (id: string, list = agents) => {
     const caps = list.find(item => item.id === id)?.capabilities;
     setDraftAgent(id);
@@ -1127,7 +1148,13 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
     void api.coordination(selected.id).then(value => { if (!cancelled) setCoordination(value); }).catch(() => undefined);
     return () => { cancelled = true; };
   }, [api, selectedId, threads]);
-  useEffect(() => { setAgentsOpen(false); setDraftCollaboration(false); setCollaborationDirectories([]); }, [selectedId, hostId]);
+  useEffect(() => {
+    setAgentsOpen(false);
+    // Initial creation is not navigation: keep setup until its first send can be retried.
+    if (createdDraftScope.current?.id === selectedId && createdDraftScope.current.hostId === hostId) return;
+    createdDraftScope.current = null;
+    setDraftCollaboration(false); setCollaborationDirectories([]);
+  }, [selectedId, hostId]);
   const onSettings = view === 'settings';
   const onDesk = view === 'desk' && !selectedId;
   const onTodos = view === 'todos' && !selectedId;
@@ -1206,7 +1233,25 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
     void voice.start();
   }, [voiceOnSelect, selectedId, voice]);
   const startDraftVoice = async () => {
-    try { setVoiceOnSelect(await createDraftThread(true)); void refreshThreads(); }
+    const origin = { selectedId, draftKey: composerDraftKey };
+    let id: string | null = null;
+    try {
+      id = await createDraftThread(true);
+      // Selection may not have painted yet; accept only the created target or its still-current origin.
+      const scope = composerScope.current;
+      if (scope.api === api && scope.hostId === hostId && (scope.selectedId === id
+        || createdDraftScope.current?.id === id && createdDraftScope.current.hostId === hostId
+          && scope.selectedId === origin.selectedId && scope.draftKey === origin.draftKey)) setVoiceOnSelect(id);
+      void refreshThreads();
+    } catch (e) {
+      handleError(e);
+      if (!(e instanceof AuthError)) setErrorState({ text: message(e), thread: id ?? createdDraftScope.current?.id ?? selectedId });
+      void refreshThreads();
+    }
+  };
+  const startVoice = async () => {
+    if (!selectedId) return;
+    try { if (composerScope.current.selectedId === selectedId && composerScope.current.api === api) await voice.start(); }
     catch (e) { handleError(e); }
   };
 
@@ -1316,7 +1361,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   }, [timeline, planSkip]);
   const waitingOn = waiting[0] ?? null;
 
-  const topLevelThreads = useMemo(() => threads.filter((t) => !t.coordination || t.coordination.rootId === t.id || !threads.some((r) => r.id === t.coordination!.rootId)), [threads]);
+  const topLevelThreads = useMemo(() => ownRows(threads), [threads]);
   // Her conversation is reached through her, from the sidebar's own row and the desk, not listed twice.
   const listedThreads = useMemo(() => routerThreadId ? topLevelThreads.filter((t) => t.id !== routerThreadId) : topLevelThreads, [topLevelThreads, routerThreadId]);
 
@@ -1342,7 +1387,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
 
   // A takeover under way, from the button on a turn that failed because the plan ran out.
   const [takingOver, setTakingOver] = useState(false);
-  const [takeoverTarget, setTakeoverTarget] = useState<{ threadId: string; target: HandoverTarget } | null>(null);
+  const [takeoverTarget, setTakeoverTarget] = useState<{ threadId: string; target: HandoverTarget | null; back: ReturnTarget | null } | null>(null);
   // Arming or cancelling a "wait for the quota and continue" watch on that same turn.
   const [resumeBusy, setResumeBusy] = useState(false);
   const [autoRetryBusy, setAutoRetryBusy] = useState(false);
@@ -1930,6 +1975,20 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   const [overviewSignal, setOverviewSignal] = useState(0);
   const [overviewLoading, setOverviewLoading] = useState(false);
   const activeOverviewDetail = overviewDetail?.api === api && overviewDetail?.threadId === selectedId && !onPage ? overviewDetail : null;
+  const openDesktop = (control = true) => {
+    if (desktop === 'closed') setDesktopControl(control);
+    setDrawer(false);
+    setFiles(null);
+    setTraceOpen(false);
+    setGitOpen(false);
+    setAgentsOpen(false);
+    setOverviewDetail(null);
+    setDesktop('open');
+  };
+  // Auxiliary panels share one edge. Putting the desktop away preserves its connection.
+  useEffect(() => {
+    if (files || traceOpen || gitOpen || agentsOpen || activeOverviewDetail) setDesktop(value => value === 'open' ? 'minimized' : value);
+  }, [files, traceOpen, gitOpen, agentsOpen, activeOverviewDetail]);
   useLayoutEffect(() => { setOverviewDetail(null); setOverviewSignal(0); }, [api, selectedId, onPage]);
   const closeOverviewDetail = () => {
     setOverviewDetail(null);
@@ -1939,7 +1998,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   /** A side panel takes the same edge as the overview, so the panel steps aside while one is open —
    *  but the person's own switch is left alone: it comes back when the side panel closes. */
   const sideOpen = Boolean(agentsOpen && coordination) || Boolean(files) || traceOpen || gitOpen;
-  const overviewShown = overviewDock && overviewOpen && !sideOpen && !activeOverviewDetail && Boolean(selected) && hostUp;
+  const overviewShown = overviewDock && overviewOpen && !sideOpen && desktop !== 'open' && !activeOverviewDetail && Boolean(selected) && hostUp;
   /** Only the person turns the standing panel off; the switch above remembers it. */
   const closeOverview = useCallback(() => { if (overviewDock) setOverviewOpen(false); }, [overviewDock, setOverviewOpen]);
   // A page the agent wrote, rendered in a sandboxed iframe.
@@ -2068,6 +2127,8 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
       void refreshThreads();
     },
     onOpenTerminal: () => (demo ? askToConnect() : openTerminal()),
+    onOpenDesktop: hasDesktop && hostUp && !onPage ? () => openDesktop() : undefined,
+    onNewBeside: (thread) => newThread({ beside: thread }),
     onOpenGit: () => { setFiles(null); setTraceOpen(false); setAgentsOpen(false); setGitOpen(true); },
     onOpenFiles: (thread) => {
       setAgentsOpen(false);
@@ -2107,6 +2168,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
 
   // A new thread is created by its first message, or by starting voice on the draft.
   const createDraftThread = async (isNewThread: boolean) => {
+    const origin = { selectedId, draftKey: composerDraftKey, transfer: draftTransferSource.current?.key === composerDraftKey ? draftTransferSource.current.transfer : null };
     const t = await api.createThread({
       warmupId: consumeDraftWarmup(),
       agent: draftAgent,
@@ -2117,25 +2179,34 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
       effort: draftEffort,
       speed: draftSpeed,
       ...(draftSectionId && isNewThread ? { sectionId: draftSectionId } : {}),
-      ...(draftScratch ? { scratch: true } : draftWorktree && offer ? { worktree: true } : {}),
+      ...(draftScratch ? { scratch: true } : beside ? { besideThread: beside.threadId } : draftWorktree && offer ? { worktree: true } : {}),
     });
     const id = t.id;
+    // Bind migration to the returned root, never whichever composer is now on screen.
+    const targetKey = hostId ? `host:${hostId}:${id}` : id;
+    origin.transfer?.(targetKey);
+    const sameMachine = () => composerScope.current.api === api && composerScope.current.hostId === hostId;
+    const inOrigin = sameMachine() && composerScope.current.selectedId === origin.selectedId && composerScope.current.draftKey === origin.draftKey;
+    if (sameMachine()) setThreads(prev => [t, ...prev.filter(value => value.id !== id)]);
+    if (inOrigin) {
+      createdDraftScope.current = { id, hostId };
+      setSelectedId(id);
+      setDraftSectionId(null);
+      // Every worktree is a new branch; the next thread starts in place unless asked again.
+      setDraftWorktree(false);
+    }
     if (draftWriting) {
       const updated = await api.setWriting(id, draftWriting);
-      setThreads(prev => [updated, ...prev.filter(v => v.id !== updated.id)]);
-      setDraftWriting(null);
+      if (sameMachine()) setThreads(prev => [updated, ...prev.filter(v => v.id !== updated.id)]);
+      if (sameMachine() && composerScope.current.draftKey === targetKey) setDraftWriting(null);
     }
-    setSelectedId(id);
-    setDraftSectionId(null);
-    // Every worktree is a new branch; the next thread starts in place unless asked again.
-    setDraftWorktree(false);
     return id;
   };
 
   const performSend = async (text: string, images: PreparedImage[], isNewThread: boolean, mentions?: AgentMention[], videos: PreparedVideo[] = []) => {
     setError(null);
+    let id = selectedId;
     try {
-      let id = selectedId;
       if (!id && draftTeam) {
         if (videos.length) throw new Error(t('teams.attachments'));
         const task = await api.dispatchTeam(draftTeam, text, draftCwd, images.map(({ data, mimeType }) => ({ data, mimeType })));
@@ -2143,9 +2214,16 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
         setView('thread'); void refreshThreads(); return;
       }
       if (!id) id = await createDraftThread(isNewThread);
-      // Bringing an agent in with @ is itself the request to collaborate; there is no switch to find first.
-      const collaboration = (draftCollaboration || mentions?.length) && !selected?.coordination
-        ? { directories: collaborationDirectories.length ? collaborationDirectories : undefined, defaults: startingDefaults, permission: memberPermission } : undefined;
+      let policy = coordination?.rootId === id ? coordination : null;
+      if ((draftCollaboration || mentions?.length) && selected?.coordination && !policy) {
+        // Activating a saved-only configuration keeps its settings; ordinary manual turns need no policy request.
+        policy = await api.coordination(id);
+        if (!policy) throw new Error(t('collab.loadFailed'));
+      }
+      // Saved-only settings are not an active collaboration; the first real assignment enables it.
+      const initializingDraft = !selectedId || createdDraftScope.current?.id === id && createdDraftScope.current.hostId === hostId;
+      const collaboration = (draftCollaboration || mentions?.length) && (!policy || policy.enabled === false)
+        ? coordinationSettings(initializingDraft ? null : policy, { directories: collaborationDirectories.length ? collaborationDirectories : undefined, defaults: startingDefaults, permission: memberPermission }) : undefined;
       stickToBottom.current = true;
       // "queue" only matters while a turn is running: then the message waits instead of being refused.
       await api.startTurn(
@@ -2154,6 +2232,9 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
         images.map(({ data, mimeType }) => ({ data, mimeType })),
         { queue: true, mentions, collaboration, videos: await Promise.all(videos.map(async video => (await api.uploadVideo(id!, video.file)).id)) },
       );
+      if (createdDraftScope.current?.id === id && composerScope.current.api === api && composerScope.current.selectedId === id) {
+        createdDraftScope.current = null; setDraftCollaboration(false); setCollaborationDirectories([]);
+      }
       void refreshThreads();
     } catch (e) {
       // The composer keeps the draft; the dialog says it will still be there.
@@ -2161,7 +2242,11 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
         if (showcase) showcase.onInstall();
         else setConnectAsk({ reason: t('app.connectToSend') });
       }
-      else handleError(e);
+      else {
+        handleError(e);
+        if (!(e instanceof AuthError) && !(e instanceof ApiError && e.details.code === 'host_offline')) setErrorState({ text: message(e), thread: id ?? (createdDraftScope.current?.hostId === hostId ? createdDraftScope.current.id : selectedId) });
+      }
+      void refreshThreads();
       throw e;
     }
   };
@@ -2171,7 +2256,8 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
     // interleaves turns, so ask before joining in again.
     // The composer keeps the draft and its pictures until this settles, so backing out loses nothing.
     if (selectedId && selected?.terminalActivity) {
-      return new Promise<void>((resolve, reject) => setPendingSend({ text, images, videos, mentions, resolve, reject }));
+      // Confirmation may appear after navigation; keep the originating thread and scoped API closure.
+      return new Promise<void>((resolve, reject) => setPendingSend({ perform: () => performSend(text, images, false, mentions, videos), resolve, reject }));
     }
     await performSend(text, images, true, mentions, videos);
   };
@@ -2253,6 +2339,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   // The hub's "back", for a back swipe or the browser's back button (see appHistory.ts): the same
   // steps as the top-left button, one at a time. Nothing left to undo hands the swipe to the browser.
   appBack.current = () => {
+    if (desktop === 'open') { setDesktop('minimized'); return true; }
     if (listOpen) { setDrawer(false); return true; }
     if (activeOverviewDetail) { closeOverviewDetail(); return true; }
     if (onSettings) {
@@ -2417,12 +2504,27 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
       onOpen: () => openExtensionView(extensionHash(v)),
     }));
 
-  const newThread = (opts: { cwd?: string; sectionId?: string | null; scratch?: boolean } = {}) => navigate(() => {
+  const newThread = (opts: { cwd?: string; sectionId?: string | null; scratch?: boolean; beside?: Thread } = {}) => navigate(() => {
     void modelPreferences.refresh();
     if (showcase) { showcase.onInstall(); return; }
     setSelectedId(null);
     setView('thread');
     setDrawer(false);
+    // A plain "new thread" after one beside a worktree goes back to the project, not into the worktree.
+    if (draftBeside && opts.cwd === undefined && !opts.beside && draftCwd === draftBeside.cwd) setDraftCwd(draftBeside.project);
+    setDraftBeside(null);
+    if (opts.beside) {
+      const project = projectDir(opts.beside).cwd;
+      const root = opts.beside.worktree ? project : projectRoot(opts.beside.cwd);
+      setDraftBeside({ threadId: opts.beside.id, cwd: opts.beside.cwd, project: root,
+        worktree: opts.beside.worktree?.branch ?? (root !== opts.beside.cwd ? folderName(opts.beside.cwd) : null) });
+      setDraftCwd(opts.beside.cwd);
+      setDraftScratch(false);
+      setDraftWorktree(false);
+      setDraftTeam(null);
+      setDraftSectionId(opts.beside.sectionId ?? null);
+      return;
+    }
     if (opts.cwd !== undefined) {
       setDraftCwd(opts.cwd);
       setDraftScratch(false);
@@ -2430,6 +2532,37 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
     if (opts.scratch) setDraftScratch(true);
     setDraftSectionId(opts.sectionId ?? null);
   });
+
+  const searchThreads = useCallback((query: string) => api.search(query), [api]);
+  const resolveThreadLink = useCallback(async (link: ThreadDeepLink): Promise<Thread | null> => {
+    if (!token || api.demo) throw new Error(t('search.linkFailed'));
+    if (link.machine !== null) {
+      const machines = hostsLoaded ? hosts : await api.hosts().catch(error => {
+        throw new Error(error instanceof AuthError ? t('app.tokenExpired') : t('search.linkFailed'));
+      });
+      const machine = machines.find(host => host.id === link.machine);
+      if (!machine) throw new Error(t('app.machineNotFound'));
+      if (machine.status !== 'online') throw new Error(t('sidebar.hostDown'));
+    }
+    // The link's null scope is the hub, even when the selected sidebar is another machine's.
+    const target = link.machine === api.host ? api : new Api(token, '', link.machine);
+    try {
+      return await target.thread(link.id);
+    } catch (error) {
+      if (error instanceof ApiError && error.details.code === 'host_offline') throw new Error(t('sidebar.hostDown'));
+      if (error instanceof ApiError && error.status === 404) return null;
+      throw new Error(error instanceof AuthError ? t('app.tokenExpired') : t('search.linkFailed'));
+    }
+  }, [api, token, hostsLoaded, hosts]);
+  const openSearchLink = (value: string) => {
+    const link = parseThreadLink(value, window.location.href);
+    if (!link) return;
+    const sourceHash = value.startsWith('#') ? value : new URL(value).hash;
+    const preview = new URLSearchParams(sourceHash.split('?')[1]).get('preview');
+    const hash = threadLinkHash(link.id, link.machine);
+    // Follow the existing route, retaining preview but dropping tokens and unrelated parameters.
+    window.location.hash = hash + (preview ? `${hash.includes('?') ? '&' : '?'}preview=${encodeURIComponent(preview)}` : '');
+  };
 
   // A turn a search found: its thread is opened and the conversation is brought to that turn. An
   // archived thread comes back out of the archive, as it does when opened from anywhere else.
@@ -2503,6 +2636,8 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   const agentLabel = (id: string) => agents.find((a) => a.id === id)?.label ?? id;
   const capsOf = (id: string) => agents.find((a) => a.id === id)?.capabilities;
   const activeCaps = capsOf(activeAgent);
+  const sideAgent = sideAsk?.source?.agent ?? activeAgent;
+  const sideAgentInfo = agents.find((a) => a.id === sideAgent);
   const models = modelsByAgent[activeAgent] ?? [];
   const permissionModes = activeCaps?.permissionModes ?? [];
   const effortLevels = activeCaps?.effortLevels ?? [];
@@ -2551,14 +2686,6 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   };
 
   const permission = selected ? selected.permissionMode : draftPermission;
-  // A remembered model can be gone from the instance's list (an update, a removed plan): fall
-  // back to its default rather than offering a model that cannot be started.
-  const draftModels = modelsByAgent[draftAgent];
-  useEffect(() => {
-    if (draftModels?.length && draftModel && !draftModels.some((m) => m.id === draftModel || (!draftEffort && m.efforts?.some((e) => `${m.id}-${e}` === draftModel)))) {
-      setDraftModel(null);
-    }
-  }, [draftModels, draftModel, draftEffort]);
   const model = selected ? selected.model : draftTeam ? draftTeamDefinition?.entryModel ?? null : draftModel;
   const effort = selected ? selected.effort : draftEffort;
   const speed = selected ? selected.speed ?? null : draftSpeed;
@@ -2646,6 +2773,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
       : []),
     ...(selected
       ? [
+          { id: 'new-beside', label: t('actions.newBeside'), hint: t('app.cmd.newBeside'), keywords: ['new', 'here', 'same', 'worktree', 'clear', '新线程', '同目录'] },
           { id: 'rename', label: t('actions.rename'), hint: t('app.cmd.rename'), keywords: ['rename', 'name'] },
           { id: 'pin', label: selected.pinned ? t('actions.unpin') : t('actions.pin'), hint: t('app.cmd.pin'), keywords: ['pin'] },
           ...(activeCaps?.fork && !forkBlocked(selected)
@@ -2672,7 +2800,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
     if (id === 'new') return newThread();
     if (id === 'status') return setStatusOpen(true);
     if (id === 'term') return openTerminal();
-    if (id === 'desktop') return setDesktop('open');
+    if (id === 'desktop') return openDesktop();
     if (id === 'usage') return openSettings('quota');
     if (id === 'activity') return openActivity();
     if (id === 'skills') return openSkills();
@@ -2684,6 +2812,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
     if (id === 'import') return openSettings('import');
     if (id === 'appearance') return openSettings('appearance');
     if (selected && (id === 'rename' || id === 'pin' || id === 'fork' || id === 'archive')) threadActions.run(id, selected);
+    if (selected && id === 'new-beside') return newThread({ beside: selected });
     if (selected && id === 'handover') return threadActions.handover(selected);
     if (selected && id === 'chain') return threadActions.chain(selected);
   };
@@ -2704,7 +2833,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
         projects={projectOptions}
         machineLabel={host?.label ?? (hostId ? t('app.remoteMachine') : t('hosts.local'))}
         remote={Boolean(hostId)}
-        cwd={draftCwd}
+        cwd={beside?.worktree ? beside.project : draftCwd}
         scratch={draftScratch}
         scratchAvailable={scratchAvailable && !draftTeam}
         onPick={(cwd) => {
@@ -2722,7 +2851,14 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
         onPick={(id) => { if (id !== hostId) onHost(id); }}
         onManage={() => openSettings('machines')}
       />}
-      {offer && !draftScratch && !draftTeam && <WorkspacePicker branch={offer.branch} changes={offer.changes} worktree={draftWorktree} onChange={setDraftWorktree} />}
+      {beside?.worktree && (
+        <button className="context-chip beside-chip" title={beside.cwd} aria-label={t('app.besideWorktreeLeave', beside.worktree)} onClick={() => { setDraftCwd(beside.project); setDraftBeside(null); }}>
+          <IconWorktree size={13} />
+          <span>{beside.worktree}</span>
+          <IconClose size={12} />
+        </button>
+      )}
+      {offer && !draftScratch && !draftTeam && !beside?.worktree && <WorkspacePicker branch={offer.branch} changes={offer.changes} worktree={draftWorktree} onChange={setDraftWorktree} />}
       {draftSectionId && sections.some((s) => s.id === draftSectionId) && (
         <button
           className="context-chip"
@@ -2769,28 +2905,35 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
     );
   };
 
+  const rootCoordination = coordination?.rootId === selectedId ? coordination : null;
   const collaborationOptions: AgentMention[] = (!draftTeam && !selected?.coordination?.team && (selected?.coordination ? selected.coordination.rootId === selected.id : activeCaps?.coordination)) ? [
-            ...(coordination?.members.map(m => ({ id: m.id, label: m.name, kind: 'member' as const })) ?? []),
-            // An instance hidden on purpose stays out; the roster follows the hub's live list, so
-            // instances that joined after the collaboration started are offered here too.
-            ...agents.filter(a => a.available && a.capabilities.coordination && (coordination ? coordination.agents.includes(a.id) || !a.hidden : !a.hidden)).map(a => ({ id: a.id, label: a.label, kind: 'agent' as const })),
-            ...remoteAgents.map(a => ({ id: a.id, label: a.label, name: a.name, machine: a.machine, kind: 'agent' as const, host: a.host, directories: [...new Set([...recentRemoteDirs(a.host), ...a.directories])] })),
+            ...(rootCoordination ? collaborationMembers(rootCoordination) : []),
+            ...agents.filter(a => a.available && a.capabilities.coordination && (rootCoordination ? rootCoordination.agents.includes(a.id) || !a.hidden : !a.hidden))
+              .map(a => ({ id: a.id, label: a.label, kind: 'agent' as const })),
+            ...remoteAgents.map(a => ({ id: a.id, label: a.label, name: a.name, machine: a.machine, kind: 'agent' as const, host: a.host,
+              directories: [...new Set([...recentRemoteDirs(a.host), ...a.directories])] })),
           ] : [];
   const collaborationIcon = (m: AgentMention) => [...agents, ...remoteAgents].find((a) => a.id === (m.kind === 'agent' ? m.id : coordination?.members.find((v) => v.id === m.id)?.thread?.agent))?.icon;
 
-  const collaborationControl: NonNullable<ComponentProps<typeof Composer>['collaboration']> = (select, chosen, anchorRef, openSignal) => (<Popover label={t('app.collab')} panelClassName="coord-picker-panel" anchorRef={anchorRef} openSignal={openSignal}>
+  const collaborationControl: NonNullable<ComponentProps<typeof Composer>['collaboration']> = (select, chosen, anchorRef, openSignal) => {
+    return (<Popover label={t('app.collab')} panelClassName="coord-picker-panel" anchorRef={anchorRef} openSignal={openSignal}>
       {close => <CollaborationMenu options={collaborationOptions} selected={chosen} icon={collaborationIcon}
         onSelect={mention => { close(); select(mention); }}
         unavailable={selected?.coordination && !leading ? t('app.collabBack') : t('app.collabNone')}
         settings={<div className="coord-setup">
         <p>{t('app.collabHint')}</p>
-        {!selected?.coordination && <>
+        {(!selected?.coordination || selected.coordination.enabled === false) && <>
           <div className="coord-caption">{t('app.collabDirs')}</div>
           {[...new Set([activeCwd, ...workdirs].filter(Boolean))].map(dir => <button className="pop-item compact" role="menuitemcheckbox" aria-checked={(collaborationDirectories.length ? collaborationDirectories : [activeCwd]).includes(dir)} key={dir} onClick={() => setCollaborationDirectories(prev => { const current = prev.length ? prev : [activeCwd]; return current.includes(dir) ? current.filter(v => v !== dir) : [...current, dir]; })}>{(collaborationDirectories.length ? collaborationDirectories : [activeCwd]).includes(dir) ? `${t('app.chosen')} · ` : ''}{dir}</button>)}
           {!running && <button className="pop-item compact" onClick={() => {
-            if (selected) void api.configureCoordination(selected.id, { directories: collaborationDirectories.length ? collaborationDirectories : [selected.cwd], defaults: startingDefaults, permission: memberPermission }).then(value => { setCoordination(value); void refreshThreads(); close(); }).catch(handleError);
+            if (selected) void (async () => {
+              const saved = await api.coordination(selected.id);
+              if (selected.coordination && !saved) throw new Error(t('collab.loadFailed'));
+              const value = await api.configureCoordination(selected.id, coordinationSettings(saved, { directories: collaborationDirectories.length ? collaborationDirectories : [selected.cwd], defaults: startingDefaults, permission: memberPermission }));
+              if (composerScope.current.selectedId === selected.id && composerScope.current.api === api) { setCoordination(value); void refreshThreads(); close(); }
+            })().catch(handleError);
             else { setDraftCollaboration(v => !v); close(); }
-          }}>{draftCollaboration ? t('app.collabOff') : t('app.collabEnable')}</button>}
+          }}>{!selected && draftCollaboration ? t('app.collabOff') : t('app.collabEnable')}</button>}
         </>}
         {(!selected?.coordination || leading) && teamAgents.length > 0 && <>
           <div className="coord-caption">{t('app.memberPermission')}</div>
@@ -2808,6 +2951,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
         {selected?.coordination && <button className="pop-item compact" onClick={() => { setAgentsOpen(true); setFiles(null); close(); }}>{t('team.view')}</button>}
       </div>} />}
     </Popover>);
+  };
 
   const left = (<>
     <PermissionPicker
@@ -2837,7 +2981,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
       if (!alive) return;
       void api.autoHandover(selected.id).then(value => {
         if (!alive) return;
-        if (value.targets[0]) setTakeoverTarget({ threadId: selected.id, target: value.targets[0] });
+        if (value.targets[0] || value.returns?.[0]) setTakeoverTarget({ threadId: selected.id, target: value.targets[0] ?? null, back: value.returns?.[0] ?? null });
         else timer = setTimeout(probe, TAKEOVER_RETRY_MS);
       }).catch(() => { if (alive) timer = setTimeout(probe, TAKEOVER_RETRY_MS); });
     };
@@ -2845,6 +2989,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
     return () => { alive = false; if (timer) clearTimeout(timer); };
   }, [api, api.demo, outOfPlan, selected?.id]);
   const takeoverChoice = selected && takeoverTarget?.threadId === selected.id ? takeoverTarget.target : null;
+  const takeoverBack = selected && takeoverTarget?.threadId === selected.id ? takeoverTarget.back : null;
   const takeoverLabel = takeoverChoice ? [agents.find(a => a.id === takeoverChoice.agent)?.label ?? takeoverChoice.agent, takeoverChoice.model].filter(Boolean).join(' · ') : undefined;
 
   const teamWaiting = Boolean(coordination?.members.some((m) => m.thread?.waiting));
@@ -2955,11 +3100,18 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   ];
   // The same body in both shapes: the standing panel beside the conversation, and the popover a
   // narrow window still gets. Only the standing one keeps itself open behind its own rows.
+  // The conversations of the handover chain this one is in, the latest first; only a chain of two or more has a group.
+  const overviewChain = selected && latestSegment && !demo ? (() => {
+    const members = handoverGroups(threads).find(group => group.members.some(item => item.id === selected.id))?.members ?? [];
+    if (members.length < 2) return undefined;
+    return { rows: [latestSegment, ...members.filter(item => item.id !== latestSegment.id)], latestId: latestSegment.id, viewingId: inputThread?.id ?? selected.id, onOpen: (id: string) => pick(id) };
+  })() : undefined;
   const overviewBody = (close: () => void, persistent: boolean, detail?: OverviewSection) => selected && api && (
     <ThreadOverview key={`${hostId ?? ''}:${selected.id}:${detail ?? 'preview'}`}
       detail={detail} onLoadingChange={setOverviewLoading}
       onViewAll={(section, returnToPreview = true) => setOverviewDetail({ api, threadId: selected.id, section, returnToPreview })}
       api={api} threadId={selected.id} updatedAt={selected.updatedAt} active={selected.status === 'running'}
+      chain={overviewChain}
       team={overviewTeam} agents={agents} plan={topPlan} roots={threadRoots}
       loadFile={loadFile} persistent={persistent}
       onOpenMember={(member) => { setAgentsStart(member ?? null); setAgentsOpen(true); setFiles(null); }}
@@ -3052,8 +3204,10 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           onNew={() => newThread()}
           onNewIn={newThread}
           compact={compact}
-          onSearch={api ? (q) => api.search(q) : undefined}
+          onSearch={searchThreads}
           onOpenHit={(hit) => void openHit(hit)}
+          onResolveThreadLink={resolveThreadLink}
+          onOpenThreadLink={openSearchLink}
           onOpenSettings={() => showcase ? showcase.onInstall() : openSettings()}
           hosts={hosts}
           hostId={hostId}
@@ -3088,7 +3242,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           deskActive={onDesk || onRouterThread}
           petBust={petBust}
           onOpenSchedules={showcase ? undefined : openSchedules}
-          onOpenDesktop={hasDesktop ? () => { setDrawer(false); setDesktop('open'); } : undefined}
+          onOpenDesktop={hasDesktop ? () => openDesktop() : undefined}
           desktopRunning={desktop === 'minimized'}
           schedulesActive={onSchedules}
           extensionNav={extensionNav}
@@ -3116,7 +3270,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
 
       {/* A conversation under way leans toward the middle of the screen, as in Codex; a new
           thread, and the pages, stay centred where they are. */}
-      <main className={`main${selected && !onPage && hostUp && !compact ? ' lean' : ''}${overviewShown || (activeOverviewDetail && overviewDock && overviewOpen) ? ' overview-room' : ''}`} ref={mainRef}>
+      <main className={`main${selected && !onPage && hostUp && !compact && desktop !== 'open' ? ' lean' : ''}${overviewShown || (activeOverviewDetail && overviewDock && overviewOpen) ? ' overview-room' : ''}`} ref={mainRef}>
         {compact && selected && !listOpen && !onPage && hostUp && (
           <ThreadQuickSwitch threads={topLevelThreads} selectedId={selected.id} agents={agents} onSelect={pick} />
         )}
@@ -3153,6 +3307,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
             )}
             {selected?.coordination?.team && <div className={`team-task-status${['awaiting_confirm', 'needs_attention'].includes(selected.coordination.team.status) ? ' attention' : ''}`}><span className="team-task-name">{selected.coordination.team.name}</span><span> · {t(`teams.${selected.coordination.team.status}`)}</span></div>}
             {!selected && host && hostUp && <div className="topbar-sub">{host.label}</div>}
+            {mergedHandover && chainFocus?.index && chainFocus.total && chainFocus.index < chainFocus.total && <div className="topbar-sub topbar-segment">{agentLabel((focusedThread ?? selected!).agent)} · {t('handover.chain.position', chainFocus.index, chainFocus.total)}</div>}
             {busyLine && busyLine.threadId === selected?.id && <div className="topbar-sub topbar-busy">{busyLine.message}</div>}
             {atMember && (
               <button className="topbar-sub topbar-lead-link" title={t('app.backToLead')} onClick={() => pick(selected!.coordination!.rootId)}>
@@ -3173,7 +3328,10 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
                   aria-pressed={overviewOpen}
                   aria-busy={overviewLoading}
                   title={teamNeeds ? t('overview.needsYou', teamNeeds) : t('overview.label')}
-                  onClick={() => setOverviewOpen(!overviewOpen)}
+                  onClick={() => {
+                    if (desktop === 'open') { setDesktop('minimized'); setOverviewOpen(true); }
+                    else setOverviewOpen(!overviewOpen);
+                  }}
                 >
                   <IconOverview />
                   {teamNeeds > 0 && <span className="topbar-badge">{teamNeeds}</span>}
@@ -3416,8 +3574,15 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           {selected ? (
             <MergedHistory
               key={`${handoverHistoryKey(selected, threads)}:${mergedHandover}`}
-              api={api} thread={selected} merged={mergedHandover} ready={historyReady} agentLabel={agentLabel}
-              laterOf={latestSegment ? thread => laterSegment(thread, latestSegment, threads) : undefined}
+              api={api} thread={selected} chainThreads={threads} merged={mergedHandover} ready={historyReady} agentLabel={agentLabel} latestSignal={latestSignal}
+              laterOf={latestSegment ? entry => laterSegment(entry.thread, latestSegment, threads, entry.part) : undefined}
+              latest={latestSegment ?? undefined}
+              agentIcon={id => agents.find(a => a.id === id)?.icon}
+              onOpenSegment={(thread, alone) => {
+                if (alone) { setSingleSegmentId(thread.id); setSelectedId(thread.id); setView('thread'); setDrawer(false); }
+                else if (thread.id !== selected.id) pick(thread.id);
+              }}
+              onGoLatest={goLatest} onFocus={setChainFocus}
               onOpenFinds={onRouterThread ? () => openDesk(true) : undefined}
               onBrowseOlder={() => { stickToBottom.current = false; setAtBottom(false); }}
               canFork={thread => ({ enabled: Boolean(thread.agentSessionId && capsOf(thread.agent)?.fork), any: Boolean(capsOf(thread.agent)?.forkAt) })}
@@ -3505,6 +3670,10 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
                   setTakingOver(true);
                   void threadActions.takeOver(selected, takeoverChoice).catch(() => undefined).finally(() => setTakingOver(false));
                 } : undefined,
+                goBack: takeoverBack ? { title: takeoverBack.title, go: () => {
+                  setTakingOver(true);
+                  void threadActions.takeOver(selected, { agent: takeoverBack.agent }, undefined, takeoverBack.threadId).catch(() => undefined).finally(() => setTakingOver(false));
+                } } : undefined,
                 choose: () => threadActions.handover(selected),
               } : null}
               resume={!api.demo && selected.autoHandover?.resume !== undefined ? {
@@ -3546,7 +3715,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
             />
           ) : (
             <div className="empty">
-              <h2>{draftScratch ? t('app.emptyScratch') : t('app.emptyIn', folderName(draftCwd))}</h2>
+              <h2>{draftScratch ? t('app.emptyScratch') : t('app.emptyIn', folderName(beside?.worktree ? beside.project : draftCwd))}</h2>
             </div>
           )}
           {selected && <AutoHandoverNotice api={api} thread={selected} agents={agents} />}
@@ -3574,10 +3743,10 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           }} />}
         {showcase ? showcase.composer(selectedId) : <>
         {selected?.coordination?.team && selected.coordination.rootId === selected.id && ['awaiting_confirm', 'needs_attention'].includes(selected.coordination.team.status) && <div className="team-task-notice">{selected.coordination.team.status === 'needs_attention' && <span>{selected.coordination.team.error}</span>}{selected.coordination.team.status === 'awaiting_confirm' && <button className="ghost" onClick={() => void api.configureCoordination(selected.id, { action: 'confirm' }).then(value => { setCoordination(value); void refreshThreads(); }).catch(handleError)}>{t('teams.confirm')}</button>}</div>}
-        {voice.state.error ? <div className="voice-reconnect-row"><button className="voice-reconnect" onClick={() => void voice.start()}>{t('voice.reconnect')}</button><VoiceControls session={voice.state} onMute={voice.toggleMute} onStop={voice.dismissError} /></div> : viewingEarlier && latestSegment ? <HandoverComposer
-          key={latestSegment.id} api={api} thread={latestSegment} sourceId={selected!.id} label={agentLabel(latestSegment.agent)} hostId={hostId}
-          attachBlocked={capsOf(latestSegment.agent)?.images ? null : t('app.noImages', agentLabel(latestSegment.agent))}
-          onLatest={() => pick(latestSegment.id)} onRefresh={() => { setSingleSegmentId(null); void refreshThreads(); }} onError={handleError}
+        {voice.state.error ? <div className="voice-reconnect-row"><button className="voice-reconnect" onClick={() => void startVoice()}>{t('voice.reconnect')}</button><VoiceControls session={voice.state} onMute={voice.toggleMute} onStop={voice.dismissError} /></div> : focusedThread ? <HandoverComposer
+          key={focusedThread.id} api={api} thread={focusedThread} mark={<SendTargetMark label={agentLabel(focusedThread.agent)} title={focusedThread.title} icon={agents.find(a => a.id === focusedThread.agent)?.icon} onBack={goLatest} />} hostId={hostId}
+          attachBlocked={capsOf(focusedThread.agent)?.images ? null : t('app.noImages', agentLabel(focusedThread.agent))}
+          onRefresh={() => { void refreshThreads(); }} onError={handleError}
           note={noteSignal?.draftKey === composerDraftKey ? noteSignal.note : null} onNotesChange={onNotesChange}
         /> : sessionInUse && selected ? <SessionInUseNotice key={selected.id}
           onRetry={async () => { await api.retryThread(selected.id); await refreshThreads(); }}
@@ -3588,7 +3757,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           voiceControls={voice.state.active ? <VoiceControls session={voice.state} onMute={voice.toggleMute} onStop={() => void voice.stop()} /> : undefined}
           running={voice.state.active ? false : running}
           disabled={modeBusy || (!selected && (!draftCwd || modelPreferences.status !== 'ready'))}
-          placeholder={voice.state.active ? t('app.placeholder.continue') : onRouterThread && !running ? t('pet.threadPlaceholder') : demo ? t('app.placeholder.demo') : workMode === 'plan' && !running ? t('composerMenu.planOn') : writing && !running ? t('writing.placeholder') : selected ? (running ? t('sideChat.queuePlaceholder') : t('app.placeholder.continue')) : draftScratch ? t('app.placeholder.scratch') : t('app.placeholder.startIn', folderName(draftCwd))}
+          placeholder={voice.state.active ? t('app.placeholder.continue') : onRouterThread && !running ? t('pet.threadPlaceholder') : demo ? t('app.placeholder.demo') : workMode === 'plan' && !running ? t('composerMenu.planOn') : writing && !running ? t('writing.placeholder') : selected ? (running ? t('sideChat.queuePlaceholder') : aimedAtEarlier ? t('handover.chain.continueShort') : t('app.placeholder.continue')) : draftScratch ? t('app.placeholder.scratch') : t('app.placeholder.startIn', folderName(beside?.worktree ? beside.project : draftCwd))}
           onSend={voice.state.active ? async (text, images, _mentions, videos = []) => {
             try { await voice.appendText(text, images.map(img => ({ data: img.data, mimeType: img.mimeType })), await Promise.all(videos.map(async video => (await api.uploadVideo(selectedId!, video.file)).id))); }
             catch (error) { handleError(error); throw error; }
@@ -3597,9 +3766,11 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           reference={messageReference?.draftKey === composerDraftKey ? messageReference : null}
           onReferenceConsumed={id => setMessageReference(current => current?.value.id === id ? null : current)}
           mentionOptions={collaborationOptions}
+          explicitDraftTransfer
+          onDraftTransfer={transfer => { draftTransferSource.current = { key: composerDraftKey, transfer }; }}
           mentionIcon={collaborationIcon}
           collaboration={!draftTeam && !selected?.coordination?.team && (activeCaps?.coordination || selected?.coordination) ? collaborationControl : undefined}
-          collaborationActive={Boolean(selected?.coordination || draftCollaboration)}
+          collaborationActive={Boolean(selected?.coordination && selected.coordination.enabled !== false || draftCollaboration)}
           mentionExtra={(m) => { const a = agents.find((v) => v.id === m.id) ?? remoteAgents.find((v) => v.id === m.id); return a ? memberModel(a) : null; }}
           onBrowseMentionDir={(m, choose) => {
             const a = remoteAgents.find((v) => v.id === m.id);
@@ -3619,13 +3790,14 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
             onOpenHabits={path => void openFileLink(path).catch(handleError)} />}
           planMode={!draftTeam && activeCaps?.workModes?.includes('plan') ? { active: workMode === 'plan', disabled: running || modeBusy, onChange: active => void changeWorkMode(active ? 'plan' : 'execute') } : undefined}
           left={draftTeam ? undefined : left}
+          marker={aimedAtEarlier && selected && inputThread?.id === selected.id ? <SendTargetMark label={agentLabel(selected.agent)} title={selected.title} icon={agents.find(a => a.id === selected.agent)?.icon} onBack={goLatest} /> : undefined}
           right={draftTeam ? undefined : right}
           composerActions={(canVoice || canVoiceDraft) && !voice.state.active && (
             <button
               type="button"
               className={`tool-btn composer-voice${voice.state.active ? ' active' : ''}`}
               disabled={modeBusy}
-              onClick={voice.state.active ? () => void voice.stop() : canVoiceDraft ? () => void startDraftVoice() : () => void voice.start()}
+              onClick={voice.state.active ? () => void voice.stop() : canVoiceDraft ? () => void startDraftVoice() : () => void startVoice()}
               title={voice.state.active ? t('voice.end') : t('voice.start')}
               aria-label={voice.state.active ? t('voice.end') : t('voice.start')}
             >
@@ -3657,7 +3829,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
         />}
         </>}
         {/* Guided demos replace the composer, but use the same approval and question sheets. */}
-        {!viewingEarlier && waitingOn && selected && (!showcase || waitingOn.target.kind !== 'hub-plan') && (
+        {!focusedThread && waitingOn && selected && (!showcase || waitingOn.target.kind !== 'hub-plan') && (
           <ActionSheet
             key={waitingOn.target.item.key}
             target={waitingOn.target}
@@ -3711,12 +3883,12 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           onClose={() => setTraceOpen(false)}
         />
       )}
+      {desktop !== 'closed' && (
+        <DesktopPanel api={api} initialControl={desktopControl} attention={Boolean(waitingOn || error || selected?.status === 'error')} hidden={desktop === 'minimized'} onMinimize={() => setDesktop('minimized')} onClose={() => setDesktop('closed')} />
+      )}
       </div>
       {preview && api && (
         <PreviewPanel key={`${hostId ?? ''}:${preview.threadId}:${preview.path}`} api={api} threadId={preview.threadId} path={preview.path} onClose={() => setPreview(null)} onError={handleError} />
-      )}
-      {desktop !== 'closed' && (
-        <DesktopPanel api={api} hidden={desktop === 'minimized'} onMinimize={() => setDesktop('minimized')} onClose={() => setDesktop('closed')} />
       )}
       {termOpen && (
         <TerminalPanel
@@ -3796,7 +3968,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           onConfirm={() => {
             const p = pendingSend;
             setPendingSend(null);
-            performSend(p.text, p.images, false, p.mentions, p.videos).then(p.resolve, p.reject);
+            p.perform().then(p.resolve, p.reject);
           }}
         />
       )}
@@ -3817,7 +3989,9 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
       {sideAsk && (
         <SideChat
           api={api}
-          agent={sideAsk.source?.agent ?? activeAgent}
+          agent={sideAgent}
+          agentInfo={sideAgentInfo}
+          models={modelsByAgent[sideAgent] ?? []}
           agentLabel={agentLabel(sideAsk.source?.agent ?? activeAgent)}
           cwd={sideAsk.source?.cwd ?? activeCwd}
           permissionMode={sideAsk.source?.permissionMode ?? permission}
@@ -3862,7 +4036,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           const id = `note-${Date.now()}`;
           if (range) noteRanges.current.set(id, range);
           // Messages go to the chain's latest conversation; a passage from another one says where it is.
-          const source = noteSource(range, viewingEarlier ? latestSegment?.id : selectedId);
+          const source = noteSource(range, inputThread?.id ?? selectedId);
           setNoteSignal({ draftKey: composerDraftKey, note: { id, quote, comment, nonce: Date.now(), ...(file ? { file } : {}), ...(source ? { source } : {}) } });
           if (file) setFilesNotePulse((v) => v + 1);
         }}

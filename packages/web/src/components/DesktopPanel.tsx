@@ -1,7 +1,7 @@
 /// <reference path="../novnc.d.ts" />
-// The machine's Linux desktop, through the VNC server already running there. On a computer it is
-// view only until the person takes control, so a stray click cannot disturb an agent working on
-// it. On a touch screen it opens ready to use, as Codex's remote desktop does: the finger clicks
+// The machine's Linux desktop, through the VNC server already running there. A conversation opens
+// it view only, beside the chat when there is room. The machine entry opens ready to control.
+// On a touch screen the finger clicks
 // where it lands, one finger scrolls, the phone's own keyboard types, and copy and paste are one
 // tap each; view only and the touchpad are kept behind the menu. The picture is scaled to the
 // window; the desktop's own resolution is never changed from here.
@@ -10,7 +10,7 @@ import type RFB from '@novnc/novnc';
 import type { Api } from '../api';
 import { copyText } from '../clipboard';
 import { clampZoom, fillZoom, fitSize, isTap, LONG_PRESS_MS, pointerDelta, scrollAxis, scrollForZoom, softwareKeyboardUp, TAP_SLOP_PX, textEdit, twoFingerKind, type Size } from '../desktopTouch';
-import { useIsTouch } from '../hooks';
+import { useIsCompact, useIsTouch } from '../hooks';
 import { t } from '../i18n';
 import { Dialog } from './Dialog';
 import { Popover } from './Popover';
@@ -27,6 +27,7 @@ import {
   IconDesktop,
   IconEye,
   IconFit,
+  IconExternal,
   IconKeyboard,
   IconKeys,
   IconLaptop,
@@ -41,6 +42,8 @@ import {
 
 interface Props {
   api: Api;
+  initialControl?: boolean;
+  attention?: boolean;
   /** Minimized: out of sight, still connected, so coming back needs no reconnect. */
   hidden?: boolean;
   onMinimize: () => void;
@@ -185,17 +188,54 @@ function savePassword(host: string | null, password: string | null): void {
   }
 }
 
-export function DesktopPanel({ api, hidden = false, onMinimize, onClose }: Props) {
+export function DesktopPanel({ api, hidden = false, initialControl = true, attention = false, onMinimize, onClose }: Props) {
   // Bumped by Reconnect: a new ticket and a new connection.
   const [nonce, setNonce] = useState(0);
   const [phase, setPhase] = useState<Phase>('connecting');
   const [failure, setFailure] = useState('');
   const [asking, setAsking] = useState<null | 'first' | 'wrong'>(null);
   const touch = useIsTouch();
-  // The desktop opens ready to use, as Chrome Remote Desktop does: a hover moves the machine's
-  // cursor, a click lands there, typing goes straight in; the Control button steps back to
-  // just watching.
-  const [control, setControl] = useState(true);
+  // The conversation opens a viewer; the machine's existing entry opens ready to control.
+  const [control, setControl] = useState(initialControl);
+  const compact = useIsCompact();
+  const sideRef = useRef<HTMLElement>(null);
+  const [room, setRoom] = useState(0);
+  const [expanded, setExpanded] = useState(false);
+  const [width, setWidth] = useState<number | null>(() => {
+    try {
+      const saved = Number(localStorage.getItem('calli.desktop.width'));
+      return Number.isFinite(saved) && saved >= 320 ? saved : null;
+    } catch { return null; }
+  });
+  const page = compact || room < 800 || expanded;
+  const panelWidth = Math.max(320, Math.min(width ?? room * 0.55, room - 440));
+  const drag = useRef<{ x: number; width: number } | null>(null);
+  const resize = (value: number) => {
+    const next = Math.round(Math.max(320, Math.min(value, room - 440)));
+    setWidth(next);
+    try { localStorage.setItem('calli.desktop.width', String(next)); } catch { /* Optional preference. */ }
+  };
+  useLayoutEffect(() => {
+    const shell = sideRef.current?.parentElement;
+    if (!shell) return;
+    const sidebar = shell.querySelector<HTMLElement>(':scope > .sidebar');
+    const read = () => {
+      const taken = sidebar && getComputedStyle(sidebar).position !== 'absolute' ? sidebar.getBoundingClientRect().width : 0;
+      setRoom(shell.clientWidth - taken);
+    };
+    read();
+    const observer = new ResizeObserver(read);
+    observer.observe(shell);
+    if (sidebar) observer.observe(sidebar);
+    return () => observer.disconnect();
+  }, []);
+  // Keep the conversation mounted, including its draft and scroll, while a narrow viewer covers it.
+  useLayoutEffect(() => {
+    if (hidden || !page) return;
+    const siblings = [...(sideRef.current?.parentElement?.children ?? [])].filter((el): el is HTMLElement => el instanceof HTMLElement && el !== sideRef.current && !el.inert);
+    siblings.forEach(el => { el.inert = true; });
+    return () => siblings.forEach(el => { el.inert = false; });
+  }, [hidden, page]);
   const [fit, setFit] = useState(true);
   // On a touch screen: the picture's zoom (1 fits it whole), the desktop's own size, the room it
   // is shown in, and in control whether the finger points (the default) or the screen is a touchpad.
@@ -219,6 +259,7 @@ export function DesktopPanel({ api, hidden = false, onMinimize, onClose }: Props
   const keyboardRef = useRef(false);
   keyboardRef.current = keyboard;
   const panelRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => { if (initialControl) panelRef.current?.focus({ preventScroll: true }); }, []);
   const [restHeight, setRestHeight] = useState(0);
   // The keys a phone keyboard lacks, in a strip over the pills when asked for from the menu. Ctrl,
   // latched there, goes with the next key.
@@ -255,8 +296,8 @@ export function DesktopPanel({ api, hidden = false, onMinimize, onClose }: Props
   const clipWaitRef = useRef<((text: string) => void) | null>(null);
   const screenRef = useRef<HTMLDivElement>(null);
   const rfbRef = useRef<RFB | null>(null);
-  const viewRef = useRef({ control, fit });
-  viewRef.current = { control, fit };
+  const viewRef = useRef({ control, fit, hidden });
+  viewRef.current = { control, fit, hidden };
   // A password the server turned down: the next connection asks again, saying so.
   const wrongRef = useRef(false);
   const pendingRef = useRef<string | null>(null);
@@ -283,7 +324,8 @@ export function DesktopPanel({ api, hidden = false, onMinimize, onClose }: Props
         rfbRef.current = rfb;
         rfb.background = 'transparent';
         rfb.resizeSession = false;
-        rfb.viewOnly = !viewRef.current.control;
+        rfb.viewOnly = viewRef.current.hidden || !viewRef.current.control;
+        rfb.focusOnClick = !viewRef.current.hidden;
         rfb.scaleViewport = viewRef.current.fit;
         rfb.clipViewport = !viewRef.current.fit;
         rfb.dragViewport = !viewRef.current.fit && !viewRef.current.control;
@@ -291,8 +333,6 @@ export function DesktopPanel({ api, hidden = false, onMinimize, onClose }: Props
           wrongRef.current = false;
           savePassword(api.host, pendingRef.current);
           phaseNow('connected');
-          // The keyboard lands in the desktop right away, without a click into it first.
-          if (viewRef.current.control) rfb?.focus();
         });
         rfb.addEventListener('clipboard', (e) => {
           const text = (e as CustomEvent<{ text: string }>).detail.text;
@@ -306,7 +346,7 @@ export function DesktopPanel({ api, hidden = false, onMinimize, onClose }: Props
             copyWantedRef.current = 0;
             void copyText(text).then((ok) => {
               setClipFresh(!ok);
-              rfbRef.current?.focus();
+              if (screen.contains(document.activeElement)) rfbRef.current?.focus();
             });
           } else {
             setClipFresh(true);
@@ -357,13 +397,16 @@ export function DesktopPanel({ api, hidden = false, onMinimize, onClose }: Props
   useEffect(() => {
     const rfb = rfbRef.current;
     if (!rfb) return;
-    rfb.viewOnly = !control;
+    rfb.viewOnly = hidden || !control;
+    rfb.focusOnClick = !hidden;
     // On a touch screen the picture always fits its box; zooming makes the box bigger.
     rfb.scaleViewport = touch || fit;
     rfb.clipViewport = !touch && !fit;
     // At full size the picture is panned by dragging, while dragging is not the desktop's own.
     rfb.dragViewport = !touch && !fit && !control;
-    if (control && !touch && !hidden) rfb.focus();
+    // Reconnecting or restoring a viewer must not take focus away from a chat being typed.
+    if (control && !touch && !hidden && panelRef.current?.contains(document.activeElement)) rfb.focus();
+    if (hidden) rfb.blur();
   }, [control, fit, phase, touch, hidden]);
 
   // The desktop's size, from noVNC's canvas, and the room the picture has: both decide the zoom.
@@ -425,20 +468,21 @@ export function DesktopPanel({ api, hidden = false, onMinimize, onClose }: Props
   const toggleZoomRef = useRef(toggleZoom);
   toggleZoomRef.current = toggleZoom;
 
-  // A phone opens with the picture big enough to work on: filled to the height, the rest of its
+  // The machine entry on a phone opens with the picture big enough to work on: filled to the height, the rest of its
   // width under a finger's pan. Chosen once, when the desktop's size is first known, and only if
   // no hand has zoomed already; a double tap still finds the whole picture, and a pinch's zoom
-  // stays. On a computer screen the whole picture remains the fit.
+  // stays. The conversation's viewer and computer screens start with the whole picture visible.
   const openedRef = useRef(false);
   useEffect(() => {
     if (!touch || openedRef.current || phase !== 'connected' || !fb.w || !fitted.w) return;
     openedRef.current = true;
+    if (!initialControl) return;
     const fill = fillZoom(fb, box);
     if (fill <= 1.05 || zoomRef.current !== 1) return;
     pendingScrollRef.current = { left: (fitted.w * fill - box.w) / 2, top: 0 };
     zoomRef.current = fill;
     setZoom(fill);
-  }, [touch, phase, fb, fitted.w, box]);
+  }, [touch, phase, fb, fitted.w, box, initialControl]);
 
   // View only on a touch screen: one finger scrolls the view (the browser's own), two pinch to
   // zoom it, a double tap zooms in on a spot or back out. Nothing reaches the desktop.
@@ -1046,8 +1090,18 @@ export function DesktopPanel({ api, hidden = false, onMinimize, onClose }: Props
   );
 
   return (
-    <div className={`dialog-scrim term-scrim${touch ? ' desktop-scrim-touch' : ''}`} hidden={hidden}>
-      <div className={`panel term-panel desktop-panel${touch ? ' touch' : ''}`} role="dialog" aria-modal="true" aria-label={t('desktop.title')} ref={panelRef}>
+    <aside className={`desktop-side${page ? ' desktop-side-page' : ''}`} style={page ? undefined : { width: panelWidth }} hidden={hidden} ref={sideRef} aria-label={t('desktop.title')}>
+      {!page && <div className="desktop-resize" role="separator" tabIndex={0} aria-label={t('common.resize')} aria-orientation="vertical" aria-valuemin={320} aria-valuemax={Math.max(320, room - 440)} aria-valuenow={Math.round(panelWidth)}
+        onPointerDown={e => { drag.current = { x: e.clientX, width: panelWidth }; e.currentTarget.setPointerCapture(e.pointerId); e.preventDefault(); }}
+        onPointerMove={e => { if (drag.current) resize(drag.current.width + drag.current.x - e.clientX); }}
+        onPointerUp={e => { drag.current = null; e.currentTarget.releasePointerCapture(e.pointerId); }}
+        onPointerCancel={() => { drag.current = null; }}
+        onKeyDown={e => { if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); resize(panelWidth + (e.key === 'ArrowLeft' ? 24 : -24)); } }} />}
+      <div className={`panel term-panel desktop-panel${touch ? ' touch' : ''}`} role="region" aria-label={t('desktop.title')} ref={panelRef} tabIndex={-1}>
+        {(page || attention) && <div className={`desktop-chat-return${attention ? ' attention' : ''}`}>
+          <button type="button" onClick={onMinimize}><IconArrowLeft size={18} />{t('desktop.returnToChat')}</button>
+          {attention && <span role="status">{t('desktop.needsYou')}</span>}
+        </div>}
         {touch ? (
           // A touch screen, as Codex lays it out: close, the machine (its menu holds the rest), reconnect.
           <header className="desktop-touch-head">
@@ -1166,15 +1220,17 @@ export function DesktopPanel({ api, hidden = false, onMinimize, onClose }: Props
                 <IconDesktop size={20} /> {t('desktop.title')}
               </h2>
               {machine && (
-                <span className="desktop-name" title={machine}>
+                <span className="desktop-name" title={`${machine} · ${t('desktop.shared')}`}>
                   {machine}
                 </span>
               )}
             </div>
             <div className="desktop-actions">
+              {!compact && room >= 800 && <button className="icon-btn" aria-label={expanded ? t('desktop.restore') : t('desktop.expand')} title={expanded ? t('desktop.restore') : t('desktop.expand')} onClick={() => setExpanded(v => !v)}><IconExternal size={18} /></button>}
               <button
                 className={`desktop-control${control ? ' on' : ''}`}
                 aria-pressed={control}
+                aria-label={control ? t('desktop.viewOnly') : t('desktop.control')}
                 title={t('desktop.controlHint')}
                 disabled={!live}
                 onClick={() => setControl((c) => !c)}
@@ -1372,7 +1428,7 @@ export function DesktopPanel({ api, hidden = false, onMinimize, onClose }: Props
           />
         )}
       </div>
-    </div>
+    </aside>
   );
 }
 

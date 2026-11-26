@@ -20,6 +20,7 @@ test('the compact thread menu preserves nested actions, keyboard return and the 
       const thread = await (await api(daemon, '/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'codex', cwd: daemon.workdir, title: `Menu ${width} ${theme}` }) })).json();
       const context = await browser.newContext({ viewport: { width, height: mobile ? 844 : 1000 }, isMobile: mobile, hasTouch: mobile, colorScheme: theme });
       try {
+        await context.grantPermissions(['clipboard-read', 'clipboard-write']);
         const page = await context.newPage(); page.setDefaultTimeout(12000);
         const errors = []; page.on('pageerror', error => errors.push(error.message));
         await page.route('**/api/agents/*/quota*', route => route.fulfill({ json: { checkedAt: new Date().toISOString(), windows: [
@@ -49,11 +50,11 @@ test('the compact thread menu preserves nested actions, keyboard return and the 
         await open();
         await root.locator('.quota-preview[aria-busy=false]').waitFor();
         assert.deepEqual(await root.locator(':scope > .menu-cell .menu-label').allTextContents(),
-          mobile ? ['文件', '打开终端', '置顶', '标记为未读', '重命名', '复制', '分叉与交接', '归档', '永久删除'] : ['文件', '打开终端', '置顶', '标记为未读', '重命名', '复制', '分叉与交接', '轨迹', '归档', '永久删除']);
+          mobile ? ['文件', 'Git', '打开终端', '置顶', '标记为未读', '重命名', '复制', '分叉与交接', '归档', '永久删除'] : ['文件', 'Git', '打开终端', '置顶', '标记为未读', '重命名', '复制', '分叉与交接', '轨迹', '归档', '永久删除']);
         // Thread items now sit at the first level instead of behind "整理", so the page menu grew
-        // by a row; it still fits a phone screen without scrolling.
+        // by a row; the existing Git action adds another. It still fits without scrolling.
         const pageMenu = await root.boundingBox();
-        assert.ok(pageMenu.height <= (mobile ? 565 : 515), 'the page menu stays within the accepted footprint');
+        assert.ok(pageMenu.height <= (mobile ? 609 : 551), 'the page menu stays within the accepted footprint');
         assert.ok(pageMenu.y + pageMenu.height <= page.viewportSize().height, 'the whole page menu is on screen');
         assert.equal(await root.locator('.menu-row').first().evaluate(el => el.offsetHeight), mobile ? 44 : 36);
         assert.equal(await root.getByRole('meter').count(), 2, 'only the main pair occupies the root menu');
@@ -64,10 +65,42 @@ test('the compact thread menu preserves nested actions, keyboard return and the 
         if (shots) await page.screenshot({ path: join(shots, `menu-root-${width}-${theme}.png`) });
 
         await openList();
-        assert.deepEqual(await root.locator(':scope > .menu-cell .menu-label').allTextContents(), ['置顶', '标记为未读', '重命名', '移到分区', '关联到计划', '归档', '永久删除']);
+        assert.deepEqual(await root.locator(':scope > .menu-cell .menu-label').allTextContents(), ['置顶', '标记为未读', '重命名', '复制深度链接', '移到分区', '关联到计划', '归档', '永久删除']);
         assert.equal(await root.getByRole('meter').count(), 0, 'a row menu carries no quota header');
         if (shots) await page.screenshot({ path: join(shots, `menu-list-${width}-${theme}.png`) });
-        await page.keyboard.press('Escape'); await root.waitFor({ state: 'detached' });
+        // Copy the stable Calli identity, not the native session, and strip the old page's secrets.
+        await page.evaluate(() => history.replaceState(null, '', '/?token=not-a-credential#/settings'));
+        await root.getByRole('menuitem', named('复制深度链接')).click();
+        await root.waitFor({ state: 'detached' });
+        assert.equal(await page.evaluate(() => navigator.clipboard.readText()), `${daemon.base}/#/thread/${thread.id}`);
+        await page.evaluate(() => history.replaceState(null, '', '/'));
+        if (width === 320 && theme === 'light') {
+          // A refused Clipboard API uses the same HTTP/iOS fallback; failure stays visible.
+          await page.evaluate(() => {
+            const write = navigator.clipboard.writeText.bind(navigator.clipboard);
+            const exec = document.execCommand.bind(document);
+            window.copyFallback = { calls: 0, fail: false, restore: () => { navigator.clipboard.writeText = write; document.execCommand = exec; } };
+            navigator.clipboard.writeText = async () => { throw new Error('Clipboard permission refused'); };
+            document.execCommand = command => {
+              if (command === 'copy') { window.copyFallback.calls++; if (window.copyFallback.fail) return false; }
+              return exec(command);
+            };
+          });
+          await openList(); await root.getByRole('menuitem', named('复制深度链接')).click();
+          await root.waitFor({ state: 'detached' });
+          assert.equal(await page.evaluate(() => navigator.clipboard.readText()), `${daemon.base}/#/thread/${thread.id}`);
+          assert.equal(await page.evaluate(() => window.copyFallback.calls), 1);
+          await page.evaluate(() => { window.copyFallback.fail = true; });
+          await openList(); await root.getByRole('menuitem', named('复制深度链接')).click();
+          const failedCopy = page.getByRole('dialog', named('复制深度链接'));
+          await failedCopy.getByText('复制失败，请手动选中文字复制', { exact: true }).waitFor();
+          assert.equal(await failedCopy.getByLabel('复制深度链接').inputValue(), `${daemon.base}/#/thread/${thread.id}`);
+          const failureBounds = await failedCopy.boundingBox();
+          assert.ok(failureBounds.x >= 0 && failureBounds.x + failureBounds.width <= width + 1);
+          if (shots) await page.screenshot({ path: join(shots, 'menu-copy-failure-phone.png') });
+          await failedCopy.getByRole('button', named('关闭')).click();
+          await page.evaluate(() => window.copyFallback.restore());
+        }
 
         // The child has its own keyboard scope. Escape returns one level and restores the trigger.
         await open();
@@ -114,10 +147,15 @@ test('the compact thread menu preserves nested actions, keyboard return and the 
         await open();
         await root.getByRole('menuitem', named('复制')).click();
         await branch.getByRole('menuitem', named('工作目录')).waitFor();
-        assert.equal(await branch.getByRole('menuitem').count(), 5, 'back plus every original copy action');
+        assert.equal(await branch.getByRole('menuitem').count(), 6, 'back, deep link and every original copy action');
         await page.waitForFunction(() => document.activeElement?.classList.contains('menu-back'));
         await page.keyboard.press('Escape');
         await page.waitForFunction(() => document.activeElement?.dataset.menuId === 'copy');
+        await root.getByRole('menuitem', named('复制')).click();
+        await branch.getByRole('menuitem', named('复制深度链接')).click();
+        await root.waitFor({ state: 'detached' });
+        assert.equal(await page.evaluate(() => navigator.clipboard.readText()), `${daemon.base}/#/thread/${thread.id}`);
+        await open();
         await root.getByRole('menuitem', named('分叉与交接')).click();
         await branch.getByRole('menuitem', named('分叉')).waitFor();
         await branch.getByRole('menuitem', named('交接')).waitFor();
