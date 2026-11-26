@@ -1149,9 +1149,6 @@ export function Composer({
     }, SEND_CLICK_SUPPRESS_MS);
   };
   const sendPointerDown = (e: ReactPointerEvent<HTMLButtonElement>) => {
-    if (sendClickReset.current !== null) window.clearTimeout(sendClickReset.current);
-    sendClickReset.current = null;
-    suppressSendClick.current = false;
     if (e.pointerType === 'mouse' || !canSend) return;
     // On phones, letting the button take focus can make the keyboard close and swallow the click.
     e.preventDefault();
@@ -1328,12 +1325,21 @@ export function Composer({
             e.currentTarget.style.setProperty('--lg-my', `${e.clientY - r.top}px`);
           }}
           onPointerDownCapture={(e) => {
+            if (sendClickReset.current !== null) window.clearTimeout(sendClickReset.current);
+            sendClickReset.current = null;
+            suppressSendClick.current = false;
             if (e.pointerType === 'mouse') return;
             if (boxPress.current !== null) window.clearTimeout(boxPress.current);
             boxPress.current = window.setTimeout(endBoxPress, 1500);
           }}
-          onClickCapture={() => {
+          onClickCapture={(e) => {
             if (boxPress.current !== null) window.setTimeout(endBoxPress, 0);
+            // Queuing on pointerup unmounts the send button before the browser's compatibility
+            // click arrives, sliding adjacent bar controls under the finger.
+            if (e.detail !== 0 && suppressSendClick.current) {
+              e.preventDefault();
+              e.stopPropagation();
+            }
           }}
           onFocus={() => {
             leaving.current?.();
@@ -1583,12 +1589,8 @@ export function Composer({
             <div className="spacer" />
             {!collapsed && right}
             {composerActions}
-            {running && !slow && (
-              <button className="send-btn stop" onClick={onStop} aria-label={t('composer.stop')} title={t('composer.stopTurn')}>
-                <IconStop size={16} />
-              </button>
-            )}
-            {/* While a turn runs the send button appears once there is something to queue, or while a slow send is in flight. */}
+            {/* While a turn runs the send button appears beside stop once there is something to queue,
+                keeping stop anchored in its corner so sending never pulls stop under the finger. */}
             {(voiceControls ? hasContent || slow : !running || hasContent || slow) && (
               <button
                 className={`send-btn${slow ? ' sending' : ''}`}
@@ -1596,19 +1598,17 @@ export function Composer({
                 onPointerMove={sendPointerMove}
                 onPointerUp={sendPointerUp}
                 onPointerCancel={sendPointerCancel}
-                onClick={(e) => {
-                  // Keyboard and assistive activation have no pointer click count.
-                  if (e.detail !== 0 && suppressSendClick.current) {
-                    e.preventDefault();
-                    return;
-                  }
-                  void submit();
-                }}
+                onClick={() => { void submit(); }}
                 disabled={!canSend}
                 aria-label={slow ? t('composer.sending') : taker ? t('composer.takeoverSend', taker.label) : running && !immediate ? t('composer.queueSend') : t('common.send')}
                 title={slow ? t('composer.sendingEllipsis') : taker ? t('composer.takeoverSend', taker.label) : queueFull ? t('composer.queueMax', MAX_QUEUED) : running ? immediate ? t('composer.goalNow') : t('composer.afterTurn') : undefined}
               >
                 {slow ? <span className="send-spinner" aria-hidden="true" /> : <IconSend size={16} />}
+              </button>
+            )}
+            {running && !slow && (
+              <button className="send-btn stop" onClick={onStop} aria-label={t('composer.stop')} title={t('composer.stopTurn')}>
+                <IconStop size={16} />
               </button>
             )}
           </div>
