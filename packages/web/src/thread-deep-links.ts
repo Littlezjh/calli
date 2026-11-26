@@ -54,15 +54,59 @@ export function isThreadLinkQuery(value: string): boolean {
   return /^(?:https?:\/\/\S*)?#\/thread(?:\/|$|\?)/i.test(value.trim());
 }
 
+const UUID_PREFIX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+const COPY_INVISIBLES = /[\xAD\u{200B}-\u{200F}\u{2060}\u{FEFF}]/gu;
+const COPY_HYPHENS = /[\u{2010}-\u{2015}\u{2212}\u{FE63}\u{FF0D}]/gu;
+const ATTACHED_PROSE = /^(?:[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\u{2013}\u{2014}\u{2026}]|:+$)/u;
+
+/** Repair only a temporary UUID identity, never deployment paths, machines or the user's text. */
+function normalizeThreadLinkCandidate(candidate: string): { value: string; hasUuid: boolean } {
+  const unchanged = { value: candidate, hasUuid: false };
+  const hashAt = candidate.indexOf('#');
+  if (!candidate.startsWith('#/thread/', hashAt)) return unchanged;
+  const start = hashAt + '#/thread/'.length;
+  const queryAt = candidate.indexOf('?', start);
+  const end = queryAt < 0 ? candidate.length : queryAt;
+  let id: string;
+  try { id = decodeURIComponent(candidate.slice(start, end)); }
+  catch { return unchanged; }
+  const cleaned = id.replace(COPY_INVISIBLES, '');
+  const uuid = UUID_PREFIX.exec(cleaned.replace(COPY_HYPHENS, '-'))?.[0];
+  if (!uuid) return unchanged;
+  const suffix = cleaned.slice(uuid.length);
+  // Unsafe syntax anywhere in prose must survive strict validation, not disappear with the suffix.
+  if (suffix && (!ATTACHED_PROSE.test(suffix) || /[\s/\\?#\u0000-\u001f\u007f]/.test(suffix))) return { value: candidate, hasUuid: true };
+  return { value: candidate.slice(0, start) + uuid.toLowerCase() + candidate.slice(end), hasUuid: true };
+}
+
 /** Find explicitly typed links without treating a fragment inside another URI as a local link. */
 export function threadLinkCandidates(text: string): string[] {
   const found: string[] = [];
-  const pattern = /https?:\/\/[^\s<>"'`，。；：、！？（）【】「」『』]+|#\/thread(?:[/?][^\s<>"'`，。；：、！？（）【】「」『』]*|(?=\s|$))/gi;
-  for (const match of text.matchAll(pattern)) {
-    // Chinese prose commonly touches the URL; URI slashes still cannot introduce a local hash.
-    if (match.index && !/[\s([<'"，。；：、！？（【「『]/.test(text[match.index - 1]) && text.charCodeAt(match.index - 1) < 128) continue;
-    const candidate = match[0].replace(/[)\]}>.,;!?]+$/, '');
-    if (isThreadLinkQuery(candidate)) found.push(candidate);
+  // Keep embedded BOMs available to UUID repair while other whitespace still separates links.
+  const pattern = /https?:\/\/(?:[^\s<>"'`，。；：、！？（）【】「」『』]|\u{FEFF})+|#\/thread(?:[/?](?:[^\s<>"'`，。；：、！？（）【】「」『』]|\u{FEFF})*|(?=\s|$))/giu;
+  for (let match; (match = pattern.exec(text));) {
+    // Smart quotes inside a query are identity characters, unless the original text supplies a wrapper.
+    const closingQuote = text[match.index - 1] === '“' ? '”' : text[match.index - 1] === '‘' ? '’' : '';
+    const normalize = (value: string) => {
+      const candidate = value.replace(/[)\]}>.,;!?]+$/, '');
+      return normalizeThreadLinkCandidate(closingQuote && candidate.endsWith(closingQuote) ? candidate.slice(0, -1) : candidate);
+    };
+    let candidate = normalize(match[0]);
+    for (const boundary of match[0].matchAll(/\u{FEFF}/gu)) {
+      // Repaired ID BOMs are copy noise; keep the query attached to their repaired prefix.
+      if (!candidate.value.includes('\u{FEFF}')) break;
+      const prefix = normalize(match[0].slice(0, boundary.index));
+      if (candidate.value.startsWith(`${prefix.value}?`)) continue;
+      // BOMs inside a complete UUID stay together, even when later suffix syntax is invalid.
+      if (!candidate.hasUuid || prefix.hasUuid || !isThreadLinkQuery(prefix.value)) {
+        candidate = prefix;
+        pattern.lastIndex = match.index + boundary.index + 1; // Resume after a real separator instead of losing later links.
+        break;
+      }
+    }
+    // Even an ignored URI fragment must resume at a BOM; URI slashes still cannot introduce a local hash.
+    if (match.index && !/[\s([<'"`，。；：、！？（【「『]/.test(text[match.index - 1]) && text.charCodeAt(match.index - 1) < 128) continue;
+    if (isThreadLinkQuery(candidate.value)) found.push(candidate.value);
   }
   return [...new Set(found)];
 }

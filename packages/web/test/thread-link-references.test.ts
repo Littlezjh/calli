@@ -5,6 +5,7 @@ import { readDrafts, writeDraft } from '../src/drafts';
 import { threadDeepLink, threadLinkHash } from '../src/thread-deep-links';
 
 const deployment = 'https://calli.example/app/?token=not-copied#/thread/recipient';
+const uuid = '123e4567-e89b-42d3-a456-426614174000';
 const threadReference = (sourceId: string, id = `snapshot-${sourceId}`, snapshotSeq = 10): ContextReference => ({
   id, kind: 'thread', sourceId, snapshotSeq, title: sourceId, path: '/project', at: '2026-11-17T00:00:00Z',
 });
@@ -26,6 +27,129 @@ test('send resolution preserves the original URL and body while deduplicating li
   assert.equal(resolved.length, 4);
   assert.deepEqual(splitReferences(withReferences(resolved, body)), { references: resolved, body });
   assert.deepEqual(mergeReferences([selected], [threadReference('selected', 'new-selection', 100)]), [selected]);
+});
+
+test('tolerant UUID variants resolve once without rewriting body, drafts or frozen snapshots', async () => {
+  // Only request identities are normalized; the user can reload and resend their unchanged words.
+  const link = threadDeepLink(uuid, null, deployment);
+  const copiedId = `${uuid.slice(0, 8)}\u{200B}${uuid.slice(8)}`.replace(/-/g, '‑').toUpperCase();
+  const body = `${link}对这个增加配置，支持修改。\n“${link.replace(uuid, encodeURIComponent(copiedId))}”\n${threadLinkHash(uuid, null)}继续说明`;
+  const created: string[] = [];
+  const source = { host: null, createReference: async (input: { kind: 'thread'; sourceId: string }) => {
+    created.push(input.sourceId);
+    assert.equal(input.sourceId, uuid);
+    return threadReference(input.sourceId, 'frozen', 7);
+  } };
+  const references = await resolveThreadLinkReferences({ body, deployment, source });
+  assert.deepEqual(created, [uuid]);
+  assert.deepEqual(splitReferences(withReferences(references, body)), { body, references });
+  let value = '{}';
+  const storage = { getItem: () => value, setItem: (_key: string, next: string) => { value = next; } };
+  writeDraft(storage, 'recipient', { text: body, notes: [], references });
+  const saved = readDrafts(storage).recipient;
+  assert.equal(saved.text, body);
+  const retried = await resolveThreadLinkReferences({ body: saved.text, references: saved.references, deployment, source });
+  assert.deepEqual(created, [uuid], 'retry reuses the frozen snapshot instead of creating another');
+  assert.equal(retried[0].id, 'frozen');
+  assert.equal(retried[0].snapshotSeq, 7);
+});
+
+test('tolerant UUID matching never grants a foreign machine or guesses a missing identity', async () => {
+  // All link boundaries are checked before any create, and an unknown source gets no fallback search.
+  let created: string[] = [];
+  const source = { host: null, createReference: async (input: { kind: 'thread'; sourceId: string }) => {
+    created.push(input.sourceId);
+    throw new Error('thread not found');
+  } };
+  for (const body of [
+    `${threadLinkHash(uuid, null)}继续说明?machine=remote`,
+    `${threadLinkHash(uuid, null)}?machine=remote继续说明`,
+  ]) await assert.rejects(resolveThreadLinkReferences({ body, deployment, source }), failure('remote'));
+  for (const body of [
+    `https://foreign.example/app/#/thread/${uuid}继续说明`,
+    `https://calli.example/other/#/thread/${uuid}继续说明`,
+    `${threadLinkHash(uuid, null)}%2Fextra`,
+    `${threadLinkHash(uuid, null)}?machine=%ZZ`,
+  ]) await assert.rejects(resolveThreadLinkReferences({ body, deployment, source }), failure('invalid'));
+  assert.deepEqual(created, []);
+  const bare = await resolveThreadLinkReferences({ body: `An ordinary ID: ${uuid}`, deployment, source });
+  assert.deepEqual(bare, []);
+  assert.deepEqual(created, []);
+  for (const id of [uuid, uuid.slice(0, -1), `${uuid}a`, `${uuid}g`]) {
+    created = [];
+    await assert.rejects(resolveThreadLinkReferences({ body: threadLinkHash(id, null), deployment, source }), failure('unavailable'));
+    assert.deepEqual(created, [id], 'missing/ambiguous IDs are queried exactly once, never truncated or searched');
+  }
+});
+
+test('smart quotes and BOM-separated remote links fail before any creates', async () => {
+  // A delimiter cannot silently reinterpret a nonlocal machine or hide a later remote link.
+  const created: string[] = [];
+  const source = { host: null, createReference: async (input: { kind: 'thread'; sourceId: string }) => {
+    created.push(input.sourceId);
+    return threadReference(input.sourceId);
+  } };
+  const link = threadLinkHash(uuid, null);
+  const copied = link.replace(uuid, `${uuid.slice(0, 8)}\u{FEFF}${uuid.slice(8)}`);
+  for (const body of [
+    `${link}?machine=“remote”`, `“${link}?machine=remote”`,
+    `${link}\u{FEFF}?machine=remote`, `${copied}\u{FEFF}?machine=remote`,
+    `${copied}\u{FEFF}?machine=remote\u{FEFF}#/thread/other?machine=remote`,
+    `${link}\u{FEFF}#/thread/other?machine=remote`,
+    `${copied}\u{FEFF}#/thread/other?machine=remote`,
+    `ftp://foreign.example/${copied}\u{FEFF}#/thread/other?machine=remote`,
+    `“${copied}”\u{FEFF}请看#/thread/other?machine=remote`,
+  ]) {
+    await assert.rejects(resolveThreadLinkReferences({ body, deployment, source }), failure('remote'), body);
+    assert.deepEqual(created, [], body);
+  }
+});
+
+test('unsafe CJK suffixes reject the whole body without partial snapshots', async () => {
+  // Forbidden suffix syntax is not prose, even after a complete copied UUID.
+  const created: string[] = [];
+  const source = { host: null, createReference: async (input: { kind: 'thread'; sourceId: string }) => {
+    created.push(input.sourceId);
+    return threadReference(input.sourceId);
+  } };
+  const copied = `${uuid.slice(0, 8)}\u{FEFF}${uuid.slice(8)}`;
+  for (const suffix of [
+    '继续/extra', '继续%2Fextra', '继续\\extra', '继续%3Fmachine=remote',
+    '继续%23fragment', '继续#fragment', '继续%00', '继续%0Aextra',
+    '以及https://foreign.example/app/#/thread/other', '以及#/thread/other?machine=remote',
+  ]) for (const id of [uuid, copied]) {
+    const body = `#/thread/valid #/thread/${id}${suffix}`;
+    await assert.rejects(resolveThreadLinkReferences({ body, deployment, source }), failure('invalid'), body);
+    assert.deepEqual(created, [], body);
+  }
+});
+
+test('quoted remote and BOM-separated local links keep exact identities and frozen snapshots', async () => {
+  // Correct wrappers remain usable; repaired duplicates reuse the already selected source snapshot.
+  for (const [body, host] of [
+    [`“#/thread/${uuid}?machine=remote”`, 'remote'],
+    [`“#/thread/${uuid}\u{FEFF}?machine=remote”`, 'remote'],
+    [`‘#/thread/${uuid}?machine=remote’`, 'remote'],
+    [`#/thread/${uuid}?machine=“remote”`, '“remote”'],
+    [`“#/thread/${uuid}?machine=“remote””`, '“remote”'],
+  ]) {
+    const created: string[] = [];
+    const references = await resolveThreadLinkReferences({ body, deployment,
+      source: { host, createReference: async input => { created.push(input.sourceId); return threadReference(input.sourceId); } },
+    });
+    assert.deepEqual(created, [uuid], body);
+    assert.deepEqual(splitReferences(withReferences(references, body)), { body, references });
+  }
+  const created: string[] = [];
+  const frozen = threadReference(uuid, 'frozen', 7);
+  const copied = `${uuid.slice(0, 8)}\u{FEFF}${uuid.slice(8)}`.replace(/-/g, '‑').toUpperCase();
+  const body = `“#/thread/${copied}”\u{FEFF}#/thread/other\u{FEFF}#/thread/${uuid}`;
+  const references = await resolveThreadLinkReferences({ body, deployment, references: [frozen],
+    source: { host: null, createReference: async input => { created.push(input.sourceId); return threadReference(input.sourceId); } },
+  });
+  assert.deepEqual(created, ['other']);
+  assert.deepEqual(references, [frozen, threadReference('other')]);
+  assert.deepEqual(splitReferences(withReferences(references, body)), { body, references });
 });
 
 test('ordinary external URLs and quoted assistant text are not resolved implicitly', async () => {

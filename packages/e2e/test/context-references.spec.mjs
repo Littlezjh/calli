@@ -247,6 +247,99 @@ test('typed deep links resolve only on send and keep snapshots through failure, 
   } finally { await browser.close(); await daemon.stop(); rmSync(fixtureDir, { recursive: true, force: true }); }
 });
 
+test('pasted UUID variants preserve input and resolve once across four layouts', { timeout: 180000 }, async t => {
+  // Clipboard text is never rewritten; failures/reloads retain it and retries keep the first snapshot.
+  const daemon = await startDaemon();
+  const browser = await launchBrowser();
+  const post = async (path, body, method = 'POST') => {
+    const response = await api(daemon, path, { method, body: JSON.stringify(body) });
+    assert.ok(response.ok, `${path}: ${await response.clone().text()}`);
+    return response.json();
+  };
+  try {
+    await post('/api/handover-settings', { enabled: false, resume: false, threshold: 90, orders: {} }, 'PUT');
+    const source = await post('/api/threads', { agent: 'pi', cwd: daemon.workdir, title: 'Clipboard UUID source' });
+    for (const mobile of [false, true]) for (const theme of ['light', 'dark']) await t.test(`${mobile ? 'mobile' : 'desktop'} ${theme}`, async () => {
+      const title = `Clipboard UUID ${mobile} ${theme}`;
+      const thread = await post('/api/threads', { agent: 'pi', cwd: daemon.workdir, title });
+      const context = await browser.newContext({ viewport: mobile ? { width: 390, height: 844 } : { width: 1440, height: 1000 }, isMobile: mobile, hasTouch: mobile });
+      try {
+        await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: daemon.base });
+        const page = await context.newPage();
+        const errors = [];
+        page.on('pageerror', error => errors.push(error.message));
+        await openUi(page, daemon);
+        await page.evaluate(({ id, theme }) => { location.hash = `#/thread/${id}`; document.documentElement.dataset.theme = theme; }, { id: thread.id, theme });
+        await page.locator('.topbar-title', { hasText: title }).waitFor();
+        const composer = page.locator('.composer');
+        const input = composer.locator('textarea').first();
+        const send = composer.locator('.send-btn:not(.stop)');
+        const created = [];
+        await page.route('**/api/context-references', async route => {
+          if (route.request().method() === 'POST') created.push(route.request().postDataJSON().sourceId);
+          await route.continue();
+        });
+        const hash = `#/thread/${source.id}`;
+        const bomId = `${source.id.slice(0, 8)}\u{FEFF}${source.id.slice(8)}`.replace(/-/g, '‑').toUpperCase();
+        for (const [body, error] of [
+          [`https://foreign.example/#/thread/${source.id}继续说明`, '会话链接无效或不属于当前 Calli。'],
+          [`${hash}以及https://foreign.example/#/thread/other`, '会话链接无效或不属于当前 Calli。'],
+          [`${hash}继续%3Fmachine=remote`, '会话链接无效或不属于当前 Calli。'],
+          [`${hash}?machine=“remote”`, '暂不支持引用另一台机器的完整会话，请在来源机器的会话中发送。'],
+          [`#/thread/${bomId}\u{FEFF}?machine=remote`, '暂不支持引用另一台机器的完整会话，请在来源机器的会话中发送。'],
+          [`#/thread/${bomId}\u{FEFF}#/thread/other?machine=remote`, '暂不支持引用另一台机器的完整会话，请在来源机器的会话中发送。'],
+          [`ftp://foreign.example/#/thread/${bomId}\u{FEFF}#/thread/other?machine=remote`, '暂不支持引用另一台机器的完整会话，请在来源机器的会话中发送。'],
+        ]) {
+          await input.fill(body);
+          await send.click();
+          await page.getByText(error, { exact: true }).waitFor();
+          assert.equal(await input.inputValue(), body);
+          assert.deepEqual(created, [], 'unsafe boundaries fail before creating any snapshot');
+        }
+        const link = `${daemon.base}/#/thread/${source.id}`;
+        const copiedId = `${source.id.slice(0, 8)}\u{200B}${source.id.slice(8)}`.replace(/-/g, '‑').toUpperCase();
+        const body = `${link}对这个增加配置，保留原文。\n“${link.replace(source.id, encodeURIComponent(copiedId))}”\n#/thread/${source.id}继续说明\n“#/thread/${bomId}”\u{FEFF}${hash}`;
+        await input.fill('');
+        await page.evaluate(text => navigator.clipboard.writeText(text), body);
+        await input.focus();
+        await page.keyboard.press('Control+V');
+        await page.waitForFunction(expected => document.querySelector('.composer textarea')?.value === expected, body);
+        assert.equal(await input.inputValue(), body);
+        assert.deepEqual(created, [], 'pasting never creates a reference');
+        assert.equal(await composer.locator('.context-reference').count(), 0);
+        await page.route(`**/api/threads/${thread.id}/turns`, route => route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'clipboard send failed' }) }), { times: 1 });
+        await send.click();
+        await page.getByText('clipboard send failed', { exact: true }).waitFor();
+        await composer.locator('.context-reference').waitFor();
+        assert.deepEqual(created, [source.id], 'all pasted variants identify the same source');
+        assert.equal(await input.inputValue(), body);
+        const saved = await page.evaluate(id => JSON.parse(localStorage.getItem('calli.drafts'))[id], thread.id);
+        assert.equal(saved.text, body);
+        assert.equal(saved.references.length, 1);
+        const snapshot = saved.references[0];
+        assert.equal(snapshot.sourceId, source.id);
+        await page.reload();
+        await page.locator('.sidebar-inner').waitFor({ state: 'attached' });
+        await page.evaluate(({ id, theme }) => { location.hash = `#/thread/${id}`; document.documentElement.dataset.theme = theme; }, { id: thread.id, theme });
+        await composer.locator('.context-reference').waitFor();
+        assert.equal(await input.inputValue(), body);
+        const accepted = page.waitForResponse(response => response.url().endsWith(`/api/threads/${thread.id}/turns`) && response.request().method() === 'POST');
+        await send.click();
+        const response = await accepted;
+        assert.equal(response.status(), 202, await response.text());
+        await page.locator('.row.user .context-reference').waitFor();
+        assert.deepEqual(created, [source.id], 'reload and retry reuse the same snapshot');
+        const events = await (await api(daemon, `/api/threads/${thread.id}/events`)).json();
+        const started = events.findLast(event => event.type === 'turn.started');
+        assert.ok(started.data.displayText.includes(body), 'the actual sent text retains every original character');
+        assert.ok(started.data.displayText.includes(JSON.stringify(snapshot)), 'the original snapshot boundary is retained');
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+        assert.deepEqual(errors, []);
+      } finally { await context.close(); }
+    });
+  } finally { await browser.close(); await daemon.stop(); }
+});
+
 test('a link lookup finishing after a thread switch never writes into or sends the new draft', { timeout: 60000 }, async () => {
   // Hold only the reference response, then move to another composer before dispatch finishes.
   const daemon = await startDaemon();
